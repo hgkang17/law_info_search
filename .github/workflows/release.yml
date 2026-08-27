@@ -44,13 +44,21 @@ jobs:
       - name: Prepare release assets, source, and build information
         shell: pwsh
         run: |
+          # GitHub은 Release 자산 이름에서 한글과 공백을 잘라내므로 업로드용
+          # 사본은 반드시 ASCII 이름(law-search-ai.exe)으로 만든다. 이 이름이
+          # utils/constants.py의 UPDATE_ASSET_NAME과 정확히 같아야 한다.
           $source = "dist\국가법령정보 통합검색.exe"
-          $releaseExe = "dist\국가법령정보 통합검색.exe"
-          $checksum = "dist\국가법령정보 통합검색.exe.sha256"
+          $releaseExe = "dist\law-search-ai.exe"
+          $checksum = "dist\law-search-ai.exe.sha256"
           $sourceArchive = "dist\law-search-ai-source-$env:GITHUB_REF_NAME.zip"
           $buildInfo = "dist\law-search-ai-build-info.txt"
+          Copy-Item -LiteralPath $source -Destination $releaseExe -Force
+          $assetName = python -c "from utils.constants import UPDATE_ASSET_NAME; print(UPDATE_ASSET_NAME)"
+          if ($assetName.Trim() -ne "law-search-ai.exe") {
+            throw "UPDATE_ASSET_NAME $assetName does not match the uploaded asset name law-search-ai.exe"
+          }
           $hash = (Get-FileHash -LiteralPath $releaseExe -Algorithm SHA256).Hash.ToLowerInvariant()
-          Set-Content -LiteralPath $checksum -Value "$hash  국가법령정보 통합검색.exe" -Encoding utf8
+          Set-Content -LiteralPath $checksum -Value "$hash  law-search-ai.exe" -Encoding utf8
           git archive --format=zip --output=$sourceArchive HEAD
           $pythonVersion = python --version
           $pysideVersion = python -c "import PySide6; print(PySide6.__version__)"
@@ -71,8 +79,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = $env:GITHUB_REF_NAME
-          $exe = "dist\국가법령정보 통합검색.exe"
-          $checksum = "dist\국가법령정보 통합검색.exe.sha256"
+          $exe = "dist\law-search-ai.exe"
+          $checksum = "dist\law-search-ai.exe.sha256"
           $sourceArchive = "dist\law-search-ai-source-$tag.zip"
           $buildInfo = "dist\law-search-ai-build-info.txt"
           gh release create $tag $exe $checksum $sourceArchive $buildInfo --verify-tag --generate-notes --title $tag

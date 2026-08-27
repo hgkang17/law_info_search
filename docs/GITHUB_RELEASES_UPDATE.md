@@ -36,8 +36,8 @@ EXE에는 업데이트 확인 코드가 없거나 버전 번호 체계가 달라
 4. GitHub Actions의 `Windows Release` 작업이 다음 네 파일을 빌드하여
    정식 Release에 올립니다.
 
-   - `국가법령정보 통합검색.exe`
-   - `국가법령정보 통합검색.exe.sha256`
+   - `law-search-ai.exe`
+   - `law-search-ai.exe.sha256`
    - `law-search-ai-source-v버전.zip`
    - `law-search-ai-build-info.txt`
 
@@ -46,6 +46,19 @@ EXE에는 업데이트 확인 코드가 없거나 버전 번호 체계가 달라
 태그와 `APP_VERSION`이 다르면 빌드는 의도적으로 실패합니다. 릴리스 EXE나
 SHA-256 파일 이름도 바꾸면 앱이 안전하지 않은 릴리스로 판단하여 설치하지
 않습니다.
+
+### 자산 이름에 한글ㆍ공백을 쓰지 않는 이유
+
+GitHub은 Release에 올라온 자산 이름에서 한글과 공백을 잘라냅니다. 실제로
+`국가법령정보 통합검색.exe`를 올리면 `default.exe`가 되고
+`국가법령정보 통합검색.exe.sha256`은 `exe.sha256`이 됩니다. 앱은
+`utils/constants.py`의 `UPDATE_ASSET_NAME`과 **정확히 같은 이름**의 자산만
+찾으므로, 이름이 깨지면 자동 업데이트가 조용히 실패합니다.
+
+그래서 배포 자산은 사람이 보는 프로그램 이름과 분리해 ASCII 이름
+`law-search-ai.exe`로 올립니다. 사용자가 내려받은 EXE 파일명을 마음대로
+바꿔도 업데이트는 계속 동작합니다. 교체는 현재 실행 중인 EXE의 경로를
+기준으로 하기 때문입니다.
 
 소스 ZIP과 빌드 정보는 자동 업데이트에 사용하지 않지만, Release EXE와 정확히
 같은 소스ㆍ도구 버전을 보존하고 수정한 Qt/PySide6로 다시 빌드할 수 있게 하는
@@ -71,8 +84,15 @@ SHA-256 파일을 정확히 맞춰야 합니다.
 
 ```powershell
 python -m PyInstaller --noconfirm --clean "국가법령정보 통합검색.spec"
-$hash = (Get-FileHash -LiteralPath "dist\국가법령정보 통합검색.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
-Set-Content -LiteralPath "dist\국가법령정보 통합검색.exe.sha256" -Value "$hash  국가법령정보 통합검색.exe" -Encoding utf8
+Copy-Item -LiteralPath "dist\국가법령정보 통합검색.exe" -Destination "dist\law-search-ai.exe" -Force
+$hash = (Get-FileHash -LiteralPath "dist\law-search-ai.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+Set-Content -LiteralPath "dist\law-search-ai.exe.sha256" -Value "$hash  law-search-ai.exe" -Encoding utf8
+```
+
+업로드가 끝나면 자산 이름이 깨지지 않았는지 반드시 확인합니다.
+
+```powershell
+gh release view v버전 -R hgkang17/law_info_search --json assets
 ```
 
 GitHub Release는 반드시 Draft/Pre-release가 아닌 정식 Release로 발행하고 위
