@@ -91,6 +91,14 @@ def _codex_usage_label(usage: object) -> str:
     return f"토큰 {entered:,} 넣고 {produced:,} 받음"
 
 
+class CodexConnectionLost(LlmError):
+    """app-server 프로세스가 사라져 이번 대화를 이어 갈 수 없다.
+
+    다른 실패와 나눠 두어야 한다. 이 경우에만 새로 연결해 다시 물어볼 수
+    있고, 인증ㆍ한도 같은 실패는 다시 물어도 똑같이 실패하기 때문이다.
+    """
+
+
 class CodexAppServerChat(ChatSession):
     """하나의 app-server 프로세스와 thread를 유지하는 대화."""
 
@@ -233,14 +241,18 @@ class CodexAppServerChat(ChatSession):
     def _write(self, payload: dict[str, Any]) -> None:
         process = self._process
         if process is None or process.stdin is None or process.poll() is not None:
-            raise LlmError(self._process_error("Codex 연결이 종료되었습니다."))
+            raise CodexConnectionLost(
+                self._process_error("Codex 연결이 종료되었습니다.")
+            )
         line = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         try:
             with self._write_lock:
                 process.stdin.write(line + "\n")
                 process.stdin.flush()
         except (BrokenPipeError, OSError) as error:
-            raise LlmError(self._process_error("Codex에 메시지를 보내지 못했습니다.")) from error
+            raise CodexConnectionLost(
+                self._process_error("Codex에 메시지를 보내지 못했습니다.")
+            ) from error
 
     def _notify(self, method: str, params: dict[str, Any]) -> None:
         self._write({"method": method, "params": params})
@@ -256,7 +268,9 @@ class CodexAppServerChat(ChatSession):
         while True:
             line = process.stdout.readline()
             if not line:
-                raise LlmError(self._process_error("Codex 연결이 예기치 않게 끝났습니다."))
+                raise CodexConnectionLost(
+                    self._process_error("Codex 연결이 예기치 않게 끝났습니다.")
+                )
             try:
                 message = json.loads(line)
             except json.JSONDecodeError:
@@ -324,6 +338,30 @@ class CodexAppServerChat(ChatSession):
         return ""
 
     def send(self, message: str) -> Iterator[str | Progress]:
+        """한 번 물어본다. 연결이 끊겨 있으면 새로 열어 한 번만 다시 묻는다.
+
+        app-server는 대화를 쉬는 동안에도 사라질 수 있다. 다른 AI 탭을
+        보다가 돌아와 물으면 그 자리에서 "연결이 예기치 않게 끝났습니다"만
+        나와, 사용자는 같은 질문을 손으로 다시 넣어야 했다.
+
+        답 글자가 한 자라도 나온 뒤에 끊긴 것은 다시 묻지 않는다. 화면에
+        같은 답이 두 번 쌓이기 때문이다.
+        """
+        produced: list[bool] = [False]
+        try:
+            yield from self._run_turn(message, produced)
+            return
+        except CodexConnectionLost:
+            if produced[0]:
+                raise
+        # 남은 파이프와 프로세스를 확실히 정리한 뒤 새로 연다.
+        self.close()
+        yield Progress("Codex 연결이 끊겨 다시 연결하는 중…", "tool")
+        yield from self._run_turn(message, produced)
+
+    def _run_turn(
+        self, message: str, produced: list[bool]
+    ) -> Iterator[str | Progress]:
         self._ensure_started()
         if not self._thread_id:
             raise LlmError("Codex 대화가 시작되지 않았습니다.")
@@ -366,6 +404,7 @@ class CodexAppServerChat(ChatSession):
                     delta = str(params.get("delta") or "")
                     if delta:
                         full_text += delta
+                        produced[0] = True
                         yield delta
                 elif method == "item/started":
                     started = _item_progress(params.get("item"))
@@ -395,6 +434,7 @@ class CodexAppServerChat(ChatSession):
 
         if not full_text and completed_text:
             full_text = completed_text
+            produced[0] = True
             yield completed_text
         if not full_text.strip():
             raise LlmError("Codex가 빈 답변을 돌려주었습니다.")
