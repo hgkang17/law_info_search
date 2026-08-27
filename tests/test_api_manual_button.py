@@ -33,15 +33,21 @@ def test_manual_and_every_image_it_uses_exist() -> None:
         assert (MANUAL_DIR / source).is_file(), source
 
 
-def test_every_manual_file_is_bundled_into_the_exe() -> None:
-    """spec의 datas에서 빠지면 개발 중에만 보이고 exe에서는 사라진다."""
+def test_runtime_manual_files_are_bundled_into_the_exe() -> None:
+    """HTML 안내와 그 그림이 빠지면 개발 중에만 보이고 exe에서는 사라진다."""
     spec = SPEC.read_text(encoding="utf-8")
+    html = API_KEY_MANUAL_PATH.read_text(encoding="utf-8")
+    sources = re.findall(r'<img[^>]+src="([^"]+)"', html)
+    runtime_files = [
+        API_KEY_MANUAL_PATH,
+        *(MANUAL_DIR / name for name in sources),
+    ]
 
-    for path in sorted(MANUAL_DIR.iterdir()):
+    for path in runtime_files:
         assert f'("메뉴얼/{path.name}", "메뉴얼")' in spec, path.name
 
 
-def test_help_button_floats_over_the_header_instead_of_taking_space(qt_app) -> None:
+def test_help_button_floats_inside_the_api_box(qt_app) -> None:
     window = LawSearchWindow()
     try:
         window.resize(1400, 900)
@@ -49,17 +55,23 @@ def test_help_button_floats_over_the_header_instead_of_taking_space(qt_app) -> N
         qt_app.processEvents()
 
         button = window.api_manual_button
-        header = window._header_card
+        api_compact = window._api_compact
 
         # 레이아웃에 들어가면 그만큼 인증키 칸이 밀린다.
-        assert header.layout().indexOf(button) == -1
-        assert button.parent() is header
+        assert api_compact.layout().indexOf(button) == -1
+        assert button.parent() is api_compact
         assert button.width() <= 24 and button.height() <= 24
+        assert button.x() >= 0 and button.y() >= 0
+        assert button.x() + button.width() <= api_compact.width()
+        assert button.y() + button.height() <= api_compact.height()
+        assert not button.geometry().intersects(
+            window.save_api_checkbox.geometry()
+        )
     finally:
         window.close()
 
 
-def test_help_button_follows_the_right_edge_when_the_window_resizes(qt_app) -> None:
+def test_help_button_follows_the_api_box_edge_when_the_window_resizes(qt_app) -> None:
     window = LawSearchWindow()
     try:
         window.show()
@@ -68,10 +80,12 @@ def test_help_button_follows_the_right_edge_when_the_window_resizes(qt_app) -> N
             window.resize(width, 900)
             qt_app.processEvents()
             button = window.api_manual_button
-            header = window._header_card
-            margins.append(header.width() - (button.x() + button.width()))
+            api_compact = window._api_compact
+            margins.append(
+                api_compact.width() - (button.x() + button.width())
+            )
 
-        # 창 크기가 바뀌어도 오른쪽 모서리에서 같은 거리에 붙어 있어야 한다.
+        # 창 크기가 바뀌어도 인증키 박스 오른쪽 안쪽에 붙어 있어야 한다.
         assert len(set(margins)) == 1, margins
         assert margins[0] > 0
     finally:

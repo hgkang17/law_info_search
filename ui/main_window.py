@@ -175,13 +175,16 @@ class LawSearchWindow(QMainWindow):
         return True
 
     def _place_api_manual_button(self) -> None:
-        """물음표 단추를 머리말 카드 오른쪽 위 모서리에 붙인다."""
+        """물음표 단추를 인증키 박스 안쪽 오른쪽 위에 붙인다."""
         button = getattr(self, "api_manual_button", None)
-        header = getattr(self, "_header_card", None)
-        if button is None or header is None:
+        api_compact = getattr(self, "_api_compact", None)
+        if button is None or api_compact is None:
             return
-        margin = 8
-        button.move(header.width() - button.width() - margin, margin)
+        margin = 6
+        button.move(
+            api_compact.width() - button.width() - margin,
+            margin,
+        )
         button.raise_()
 
     def _open_api_manual(self, *_args: object) -> None:
@@ -197,7 +200,7 @@ class LawSearchWindow(QMainWindow):
 
     def eventFilter(self, watched, event) -> bool:
         if (
-            watched is getattr(self, "_header_card", None)
+            watched is getattr(self, "_api_compact", None)
             and event.type() == QEvent.Type.Resize
         ):
             self._place_api_manual_button()
@@ -322,8 +325,11 @@ class LawSearchWindow(QMainWindow):
 
         api_compact = QFrame()
         api_compact.setObjectName("apiCompact")
+        self._api_compact = api_compact
         api_layout = QHBoxLayout(api_compact)
-        api_layout.setContentsMargins(12, 8, 12, 8)
+        # 오른쪽 40px은 박스 안쪽 물음표 단추 자리다. 단추를 레이아웃에
+        # 넣지는 않아 인증키 입력칸·표시·저장 사이 간격은 그대로 유지한다.
+        api_layout.setContentsMargins(12, 8, 40, 8)
         api_layout.setSpacing(8)
 
         api_label = QLabel("법제처 API 인증키")
@@ -359,10 +365,9 @@ class LawSearchWindow(QMainWindow):
         api_layout.addWidget(self.api_reveal_button)
         api_layout.addWidget(self.save_api_checkbox)
         header_layout.addWidget(api_compact)
-        # 인증키 발급 안내 단추. 레이아웃에 넣으면 그만큼 인증키 칸이
-        # 밀리므로, 머리말 카드의 자식으로만 두고 오른쪽 위 모서리에 겹쳐
-        # 그린다. 자리를 차지하지 않아 옆 단추들이 움직이지 않는다.
-        self.api_manual_button = QPushButton("?", header)
+        # 인증키 발급 안내 단추. 인증키 박스의 자식으로 두되 레이아웃에는
+        # 넣지 않고, 확보한 오른쪽 여백의 위쪽에 겹쳐 그린다.
+        self.api_manual_button = QPushButton("?", api_compact)
         self.api_manual_button.setObjectName("apiManualButton")
         self.api_manual_button.setFixedSize(20, 20)
         self.api_manual_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -371,7 +376,7 @@ class LawSearchWindow(QMainWindow):
         self.api_manual_button.clicked.connect(self._open_api_manual)
         self.api_manual_button.raise_()
         self._header_card = header
-        header.installEventFilter(self)
+        api_compact.installEventFilter(self)
         root.addWidget(header)
 
         self.tabs = QStackedWidget()
