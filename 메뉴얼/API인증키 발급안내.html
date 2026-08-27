@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>법제처 API 인증키 발급 안내</title>
+<style>
+  :root {
+    --ink: #17324b;
+    --muted: #5b7186;
+    --line: #d8e2ea;
+    --card: #ffffff;
+    --bg: #eef3f7;
+    --accent: #17607f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 32px 20px 64px;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Malgun Gothic", "맑은 고딕", system-ui, sans-serif;
+    line-height: 1.7;
+  }
+  main { max-width: 900px; margin: 0 auto; }
+  h1 {
+    margin: 0 0 6px;
+    font-size: 25px;
+    letter-spacing: -0.4px;
+  }
+  .lead { margin: 0 0 28px; color: var(--muted); }
+  .lead a { color: var(--accent); font-weight: 600; }
+  .step {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 20px 22px 22px;
+    margin-bottom: 18px;
+  }
+  .step h2 {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0 0 10px;
+    font-size: 17px;
+  }
+  .num {
+    flex: none;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    font-size: 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .step p { margin: 0 0 12px; }
+  .step ul { margin: 0 0 12px; padding-left: 20px; }
+  .step li { margin-bottom: 4px; }
+  img {
+    display: block;
+    width: 100%;
+    height: auto;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+  }
+  .note {
+    background: #fff8e6;
+    border: 1px solid #f0dca8;
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin: 0 0 18px;
+  }
+  .note strong { color: #8a6100; }
+  code {
+    background: #e6edf3;
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-family: Consolas, monospace;
+  }
+  footer {
+    margin-top: 26px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+<main>
+
+<h1>법제처 API 인증키 발급 안내</h1>
+<p class="lead">
+  이 프로그램은 법제처 <b>국가법령정보 공동활용</b> OPEN API로 법령을 불러옵니다.
+  인증키는 무료이며, 아래 순서대로 하시면 됩니다.
+  사이트 주소는 <a href="https://open.law.go.kr">open.law.go.kr</a> 입니다.
+</p>
+
+<div class="note">
+  <strong>먼저 알아 두실 것</strong><br>
+  인증키(OC)는 <b>본인이 직접 정하는 아이디 형태의 값</b>입니다.
+  가입 신청서에 원하는 값을 적어 넣으면 그것이 그대로 인증키가 됩니다.
+</div>
+
+<section class="step">
+  <h2><span class="num">1</span>국가법령정보 공동활용 사이트 접속</h2>
+  <p>
+    <a href="https://open.law.go.kr">open.law.go.kr</a>에 들어가서
+    오른쪽 위 <b>로그인</b>을 누릅니다.
+  </p>
+  <img src="1. 로그인.JPG" alt="국가법령정보 공동활용 첫 화면에서 로그인 위치">
+</section>
+
+<section class="step">
+  <h2><span class="num">2</span>사용자 가입</h2>
+  <p>
+    계정이 없으면 로그인 화면 아래쪽 <b>사용자 가입</b>을 누릅니다.
+    이미 계정이 있으면 로그인한 뒤 3번으로 넘어가시면 됩니다.
+  </p>
+  <img src="2. 사용자 가입.JPG" alt="회원 로그인 화면의 사용자 가입 단추">
+</section>
+
+<section class="step">
+  <h2><span class="num">3</span>OPEN API 신청</h2>
+  <p>가입 서식에서 아래 항목을 꼭 채웁니다.</p>
+  <ul>
+    <li><b>openAPI를 신청합니다</b> 체크</li>
+    <li><b>API인증키(OC)</b> — 쓰고 싶은 값을 적고 <b>중복확인</b>을 누릅니다.
+      이 값이 곧 인증키입니다. (영문ㆍ숫자 조합, 예: 본인 아이디)</li>
+    <li><b>도메인주소</b> — 홈페이지가 없으면 <b>도메인 없음</b>을 고릅니다.</li>
+    <li><b>활용 목적</b> — 어떤 일에 쓸 것인지 적습니다.
+      내용이 비어 있거나 공란이면 승인이 취소될 수 있습니다.</li>
+    <li><b>공동활용 법령종류</b> — 필요한 항목을 고릅니다.
+      잘 모르겠으면 <b>전체선택</b>을 하시면 됩니다.</li>
+  </ul>
+  <img src="3. 신청.JPG" alt="OPEN API 신청 정보 입력 화면">
+</section>
+
+<section class="step">
+  <h2><span class="num">4</span>프로그램에 인증키 입력</h2>
+  <p>
+    발급받은 인증키를 프로그램 오른쪽 위 <b>법제처 API 인증키</b> 칸에 적고,
+    옆의 <b>저장</b>을 체크하면 다음에 켤 때 다시 넣지 않아도 됩니다.
+  </p>
+  <ul>
+    <li>인증키는 기본으로 가려집니다. <b>표시</b>를 누르면 잠깐 확인할 수 있습니다.</li>
+    <li>신청한 값이 기억나지 않으면 사이트의
+      <b>마이페이지 → API인증키관리</b>에서 확인할 수 있습니다.</li>
+  </ul>
+  <img src="4. 입력.JPG" alt="프로그램 상단의 법제처 API 인증키 입력 칸">
+</section>
+
+<footer>
+  인증키 발급과 승인은 법제처에서 처리합니다. 신청 직후 바로 쓰지 못할 수도
+  있으니, 검색이 되지 않으면 잠시 뒤 다시 시도해 주세요.
+</footer>
+
+</main>
+</body>
+</html>

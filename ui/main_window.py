@@ -7,8 +7,8 @@ from pathlib import Path
 import sys
 import time
 
-from PySide6.QtCore import QEvent, QSettings, Qt, QTimer
-from PySide6.QtGui import QColor, QFont, QIcon, QPixmap
+from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, QUrl
+from PySide6.QtGui import QColor, QDesktopServices, QFont, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -44,6 +44,7 @@ from storage.paths import (
 from storage.recent import RecentSearchManager
 from ui.about import AboutDialog
 from ui.assets import (
+    API_KEY_MANUAL_PATH,
     CHECK_ICON_PATH,
     LOGO_PATH,
     SPIN_DOWN_ICON_PATH,
@@ -173,7 +174,33 @@ class LawSearchWindow(QMainWindow):
         current_page._exit_reading_mode()
         return True
 
+    def _place_api_manual_button(self) -> None:
+        """물음표 단추를 머리말 카드 오른쪽 위 모서리에 붙인다."""
+        button = getattr(self, "api_manual_button", None)
+        header = getattr(self, "_header_card", None)
+        if button is None or header is None:
+            return
+        margin = 8
+        button.move(header.width() - button.width() - margin, margin)
+        button.raise_()
+
+    def _open_api_manual(self, *_args: object) -> None:
+        """인증키 발급 안내를 기본 웹 브라우저로 연다."""
+        if not API_KEY_MANUAL_PATH.is_file():
+            QMessageBox.warning(
+                self,
+                "안내 파일 없음",
+                "인증키 발급 안내 파일을 찾지 못했습니다.",
+            )
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(API_KEY_MANUAL_PATH)))
+
     def eventFilter(self, watched, event) -> bool:
+        if (
+            watched is getattr(self, "_header_card", None)
+            and event.type() == QEvent.Type.Resize
+        ):
+            self._place_api_manual_button()
         event_type = event.type()
         if (
             event_type == QEvent.Type.MouseButtonPress
@@ -332,6 +359,19 @@ class LawSearchWindow(QMainWindow):
         api_layout.addWidget(self.api_reveal_button)
         api_layout.addWidget(self.save_api_checkbox)
         header_layout.addWidget(api_compact)
+        # 인증키 발급 안내 단추. 레이아웃에 넣으면 그만큼 인증키 칸이
+        # 밀리므로, 머리말 카드의 자식으로만 두고 오른쪽 위 모서리에 겹쳐
+        # 그린다. 자리를 차지하지 않아 옆 단추들이 움직이지 않는다.
+        self.api_manual_button = QPushButton("?", header)
+        self.api_manual_button.setObjectName("apiManualButton")
+        self.api_manual_button.setFixedSize(20, 20)
+        self.api_manual_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.api_manual_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.api_manual_button.setToolTip("법제처 API 인증키 발급 방법 보기")
+        self.api_manual_button.clicked.connect(self._open_api_manual)
+        self.api_manual_button.raise_()
+        self._header_card = header
+        header.installEventFilter(self)
         root.addWidget(header)
 
         self.tabs = QStackedWidget()
@@ -1416,6 +1456,26 @@ class LawSearchWindow(QMainWindow):
                 border-radius: 6px;
                 padding: 0 9px;
                 font-size: 9pt;
+            }
+            QPushButton#apiManualButton {
+                /* 전역 QPushButton의 min-height가 이겨서 세로로 늘어난다.
+                   작은 동그라미로 두려면 여기서 못 박아야 한다. */
+                min-width: 20px;
+                max-width: 20px;
+                min-height: 20px;
+                max-height: 20px;
+                background: rgba(255, 255, 255, 0.12);
+                border: 1px solid rgba(255, 255, 255, 0.35);
+                border-radius: 10px;
+                color: #eaf3fb;
+                font-size: 11px;
+                font-weight: 700;
+                padding: 0;
+            }
+            QPushButton#apiManualButton:hover {
+                background: #eaf3fb;
+                border-color: #eaf3fb;
+                color: #173b63;
             }
             QPushButton#apiRevealButton {
                 min-height: 30px;

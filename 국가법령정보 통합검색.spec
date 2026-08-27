@@ -26,6 +26,13 @@ datas = [
     ("licenses/LICENSE.kordoc-MIT.txt", "licenses"),
     ("licenses/LICENSE.korean-law-mcp-MIT.txt", "licenses"),
     ("licenses/LICENSE.project-MIT.txt", "licenses"),
+    # 인증키 발급 안내(물음표 단추). HTML과 그림이 같은 폴더에 있어야
+    # 브라우저가 그림을 찾는다.
+    ("메뉴얼/API인증키 발급안내.html", "메뉴얼"),
+    ("메뉴얼/1. 로그인.JPG", "메뉴얼"),
+    ("메뉴얼/2. 사용자 가입.JPG", "메뉴얼"),
+    ("메뉴얼/3. 신청.JPG", "메뉴얼"),
+    ("메뉴얼/4. 입력.JPG", "메뉴얼"),
     ("checkbox_check.svg", "."),
     ("favorite_plus.svg", "."),
     ("spin_up.svg", "."),

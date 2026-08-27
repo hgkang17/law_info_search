@@ -17,6 +17,12 @@ SEARCH_API_REFRESH_TOOLTIP = (
 LOGO_PATH = APP_DIR / "molit_law_logo.svg"
 
 
+# API 인증키 발급 안내. 물음표 단추가 기본 웹 브라우저로 연다.
+# onefile EXE에서는 APP_DIR이 실행 중 풀린 임시 폴더를 가리킨다.
+MANUAL_DIR = APP_DIR / "메뉴얼"
+API_KEY_MANUAL_PATH = MANUAL_DIR / "API인증키 발급안내.html"
+
+
 CHECK_ICON_PATH = APP_DIR / "checkbox_check.svg"
 
 
