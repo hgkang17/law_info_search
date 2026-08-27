@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 import sys
 
 
@@ -45,7 +46,11 @@ def main() -> int:
     from ui.main_window import LawSearchWindow
     from ui.theme import register_bundled_pretendard_fonts
     from utils.constants import APP_VERSION, FONT_FAMILY
-    from utils.updater import cleanup_staged_executable, consume_startup_option
+    from utils.updater import (
+        cleanup_staged_executable,
+        consume_startup_option,
+        install_location_hint,
+    )
 
     # 내부 옵션은 Qt가 해석하지 않도록 QApplication 생성 전에 제거한다.
     startup_arguments = sys.argv[:]
@@ -91,10 +96,20 @@ def main() -> int:
             ),
         )
     elif update_error:
-        QTimer.singleShot(
-            500,
-            lambda: QMessageBox.critical(window, "업데이트 실패", update_error),
-        )
+
+        def show_update_error() -> None:
+            # 교체 도우미는 한 줄짜리 사유만 넘겨 준다. 무엇을 하면 되는지는
+            # 지금 EXE가 어디에 있는지를 보고 여기서 덧붙인다.
+            box = QMessageBox(window)
+            box.setIcon(QMessageBox.Icon.Critical)
+            box.setWindowTitle("업데이트 실패")
+            box.setText(update_error)
+            box.setInformativeText(install_location_hint(Path(sys.executable)))
+            box.addButton("확인", QMessageBox.ButtonRole.AcceptRole)
+            window._localize_message_box(box)
+            box.exec()
+
+        QTimer.singleShot(500, show_update_error)
     return app.exec()
 
 

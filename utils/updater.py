@@ -17,6 +17,7 @@ import subprocess
 import sys
 import time
 from typing import Callable, Protocol
+import uuid
 from urllib.parse import urlparse
 
 import requests
@@ -287,6 +288,63 @@ def download_release(
         raise UpdateError("업데이트 파일을 저장하지 못했습니다.") from error
 
 
+def _is_protected_location(path: Path) -> bool:
+    """관리자만 쓸 수 있는 자리인지. Windows가 지키는 폴더들이다."""
+    try:
+        resolved = Path(path).resolve()
+    except OSError:
+        return False
+    parent = resolved.parent
+    # 드라이브 최상위(C:\)에 그대로 둔 경우도 일반 사용자는 쓰지 못한다.
+    if parent == parent.parent:
+        return True
+    lowered = str(parent).lower()
+    for name in (
+        "program files",
+        "program files (x86)",
+        "programdata",
+        "windows",
+    ):
+        marker = os.sep + name
+        if lowered.endswith(marker) or (marker + os.sep) in lowered:
+            return True
+    return False
+
+
+def install_location_hint(path: Path) -> str:
+    """왜 교체가 막혔는지, 무엇을 하면 되는지 사람 말로 돌려준다."""
+    if _is_protected_location(path):
+        return (
+            "이 폴더는 관리자 권한이 있어야 파일을 바꿀 수 있습니다. "
+            "프로그램을 바탕화면이나 문서 폴더로 옮긴 뒤 다시 시도해 주세요."
+        )
+    return (
+        "백신 실시간 검사나 클라우드 동기화 폴더가 파일을 붙잡고 있을 수 "
+        "있습니다. 프로그램을 완전히 닫고 다시 시도하거나, 바탕화면이나 "
+        "문서 폴더로 옮긴 뒤 시도해 주세요. 디스크 여유 공간도 확인해 "
+        "주세요."
+    )
+
+
+def executable_location_is_writable() -> bool:
+    """지금 EXE가 있는 폴더에 우리가 파일을 쓸 수 있는지 미리 확인한다.
+
+    76MB를 다 내려받고 나서야 권한이 없다는 것을 아는 일이 없도록,
+    업데이트를 시작하기 전에 같은 폴더에 임시 파일을 만들어 본다.
+    """
+    if not can_self_update():
+        return True
+    folder = Path(sys.executable).resolve().parent
+    probe = folder / f".{uuid.uuid4().hex}.update-probe"
+    try:
+        probe.touch()
+    except OSError:
+        return False
+    finally:
+        probe.unlink(missing_ok=True)
+    return True
+
+
 def can_self_update() -> bool:
     return bool(getattr(sys, "frozen", False) and sys.platform == "win32")
 
@@ -349,6 +407,19 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _discard_candidate(candidate: Path) -> None:
+    """실패한 임시 파일을 치운다. 못 치워도 그것 때문에 터지지 않는다.
+
+    백신이 방금 만든 파일을 잡고 있으면 지우는 것마저 실패한다. 여기서
+    다시 예외가 나면 정작 사용자가 알아야 할 원래 실패 사유가 가려진다.
+    원본 EXE는 손대지 않았으므로 임시 파일이 남아도 프로그램은 멀쩡하다.
+    """
+    try:
+        candidate.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def install_staged_executable(
     source: Path, target: Path, expected_sha256: str = ""
 ) -> None:
@@ -376,12 +447,15 @@ def install_staged_executable(
             raise UpdateError("복사된 업데이트 파일 검증에 실패했습니다.")
         os.replace(candidate, target)
     except UpdateError:
-        candidate.unlink(missing_ok=True)
+        _discard_candidate(candidate)
         raise
     except OSError as error:
-        candidate.unlink(missing_ok=True)
+        _discard_candidate(candidate)
+        # 이 문구는 교체 도우미가 명령줄 인자로 넘겨 주므로 한 줄로 둔다.
+        # 사람이 읽을 안내는 받는 쪽에서 경로를 보고 덧붙인다.
+        reason = getattr(error, "strerror", "") or str(error)
         raise UpdateError(
-            "기존 실행 파일을 교체하지 못했습니다. 쓰기 권한을 확인해 주세요."
+            f"기존 실행 파일을 교체하지 못했습니다: {target} ({reason})"
         ) from error
 
 

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from html import escape
+from pathlib import Path
+import sys
 import time
 
 from PySide6.QtCore import QEvent, QSettings, Qt, QTimer
@@ -71,6 +73,8 @@ from utils.updater import (
     ReleaseInfo,
     UpdateError,
     can_self_update,
+    executable_location_is_writable,
+    install_location_hint,
     is_newer_version,
     launch_staged_update,
     staged_update_path,
@@ -1020,6 +1024,25 @@ class LawSearchWindow(QMainWindow):
     def _start_update_download(self, release: ReleaseInfo) -> None:
         running = self._update_download_worker
         if running is not None and running.isRunning():
+            return
+        # 76MB를 다 받고 나서야 권한이 없다는 것을 알면 시간만 버린다.
+        # 프로그램이 있는 자리에 파일을 쓸 수 있는지 먼저 확인한다.
+        if not executable_location_is_writable():
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Icon.Warning)
+            box.setWindowTitle("업데이트할 수 없음")
+            box.setText(
+                "지금 자리에서는 프로그램 파일을 바꿀 수 없어 업데이트를 "
+                "시작하지 않았습니다."
+            )
+            box.setInformativeText(
+                f"위치: {Path(sys.executable).parent}"
+                f"{chr(10)}{chr(10)}"
+                f"{install_location_hint(Path(sys.executable))}"
+            )
+            box.addButton("확인", QMessageBox.ButtonRole.AcceptRole)
+            self._localize_message_box(box)
+            box.exec()
             return
         destination = staged_update_path(release)
         dialog = QProgressDialog(

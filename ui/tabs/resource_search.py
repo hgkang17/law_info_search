@@ -31,7 +31,6 @@ from ui.widgets import (
     SearchHighlightDelegate,
     StableHorizontalTableWidget,
     TabStripScrollArea,
-    build_dismissible_banner,
     build_restore_view_button,
     replace_search_term_backgrounds,
     configure_adaptive_result_rows,
@@ -354,10 +353,8 @@ class ResourceSearchTab(QWidget):
                 self._keyword_page_selector(self.category_target)
         else:
             self.content_stack.setCurrentWidget(self.resource_body)
-        # 목록 검색용 검색줄과 안내문은 키워드검색 화면이 자기 것을 갖고
-        # 있어 그대로 두면 두 번 겹쳐 보인다.
+        # 목록 검색용 검색줄은 키워드검색 화면이 자기 것을 갖고 있어 겹친다.
         self.search_card.setVisible(not self.is_keyword_category)
-        self.description_label.setVisible(not self.is_keyword_category)
 
     def select_category(self, target: str) -> bool:
         """대상 이름으로 카테고리를 고른다. 없으면 그대로 두고 False."""
@@ -396,15 +393,7 @@ class ResourceSearchTab(QWidget):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(12)
 
-        description_row = build_dismissible_banner(
-            "법령·행정규칙·자치법규는 목록에서 선택해 본문을 조회할 수 있습니다. "
-            "별표·서식은 PDF를 바로 미리보기하고 원본 다운로드 링크도 제공합니다.",
-            self.recent_search_manager.settings,
-            "law_search_banner_dismissed",
-        )
         self.root_layout = root
-        self.description_label = description_row
-        root.addWidget(description_row)
 
         self.category_tabs = PairedCategoryBar()
         self.category_tabs.setObjectName("resourceSubTabs")
@@ -1083,7 +1072,6 @@ class ResourceSearchTab(QWidget):
 
         self._reading_mode = expanded
         for widget in (
-            self.description_label,
             self.category_tabs,
             self.search_card,
             self.recent_search_bar,
