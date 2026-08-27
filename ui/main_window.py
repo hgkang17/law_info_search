@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QProgressDialog,
     QPushButton,
     QSizePolicy,
+    QSpacerItem,
     QStackedWidget,
     QTableWidgetItem,
     QTabBar,
@@ -956,21 +957,53 @@ class LawSearchWindow(QMainWindow):
             return
 
         box = QMessageBox(self)
-        box.setIcon(QMessageBox.Icon.Question)
-        box.setWindowTitle("업데이트")
-        box.setText("업데이트 버전이 있습니다.")
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setWindowTitle("새 업데이트")
+        box.setText(
+            f"새 버전 {value.version}을 사용할 수 있습니다.\n"
+            f"현재 버전: {APP_VERSION}"
+        )
         box.setInformativeText(
-            f"현재 {APP_VERSION} → 새 버전 {value.version}. "
-            "업데이트 하시겠습니까?"
+            "지금 업데이트하면 파일을 안전하게 확인한 뒤 프로그램을 다시 시작합니다."
         )
         if value.notes.strip():
             box.setDetailedText(value.notes.strip())
         confirm_button = box.addButton("확인", QMessageBox.ButtonRole.AcceptRole)
         box.addButton("취소", QMessageBox.ButtonRole.RejectRole)
         box.setDefaultButton(confirm_button)
+        self._localize_message_box(box)
         box.exec()
         if box.clickedButton() is confirm_button:
             self._start_update_download(value)
+
+    @staticmethod
+    def _localize_message_box(box: QMessageBox, minimum_width: int = 380) -> None:
+        """상세 보기 단추를 한글로 바꾸고 단추 글자가 잘리지 않게 넓힌다.
+
+        setDetailedText가 만드는 단추는 Qt가 직접 붙이는 것이라 우리가 이름을
+        정할 수 없고, 번역 파일 없이는 "Show Details..."로 나온다. 역할이
+        ActionRole인 단추가 그것 하나뿐이라 그것을 찾아 이름을 바꾼다.
+
+        QMessageBox는 글의 폭에만 맞춰 창을 잡아서, 단추가 늘어나면 이름이
+        잘린다. 눈에 보이지 않는 빈 칸을 격자 맨 아래에 깔아 최소 폭을 준다.
+        """
+        for button in box.buttons():
+            if box.buttonRole(button) == QMessageBox.ButtonRole.ActionRole:
+                button.setText("자세히")
+        layout = box.layout()
+        if layout is not None:
+            layout.addItem(
+                QSpacerItem(
+                    minimum_width,
+                    0,
+                    QSizePolicy.Policy.Minimum,
+                    QSizePolicy.Policy.Expanding,
+                ),
+                layout.rowCount(),
+                0,
+                1,
+                layout.columnCount(),
+            )
 
     def _update_check_failed(self, message: str) -> None:
         if not self._update_check_silent:
