@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>제미나이 API 키 발급 안내</title>
+<style>
+  :root {
+    --ink: #17324b;
+    --muted: #5b7186;
+    --line: #d8e2ea;
+    --card: #ffffff;
+    --bg: #eef3f7;
+    --accent: #17607f;
+    --link: #0b57d0;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    padding: 32px 20px 64px;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Malgun Gothic", "맑은 고딕", system-ui, sans-serif;
+    line-height: 1.7;
+  }
+  main { max-width: 900px; margin: 0 auto; }
+  h1 {
+    margin: 0 0 6px;
+    font-size: 25px;
+    letter-spacing: -0.4px;
+  }
+  .lead { margin: 0 0 24px; color: var(--muted); }
+  a { color: var(--link); }
+  .lead a { font-weight: 600; }
+  .step {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 20px 22px 22px;
+    margin-bottom: 18px;
+  }
+  .step h2 {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0 0 10px;
+    font-size: 17px;
+  }
+  .num {
+    flex: none;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    font-size: 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .step p { margin: 0 0 12px; }
+  .step ul { margin: 0 0 12px; padding-left: 20px; }
+  .step li { margin-bottom: 4px; }
+  figure { margin: 14px 0 0; }
+  img {
+    display: block;
+    width: 100%;
+    height: auto;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: #fff;
+  }
+  figcaption {
+    margin-top: 6px;
+    color: var(--muted);
+    font-size: 12px;
+    text-align: center;
+  }
+  .note {
+    background: #fff8e6;
+    border: 1px solid #f0dca8;
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin: 0 0 18px;
+  }
+  .note strong { color: #8a6100; }
+  .safe-note {
+    background: #edf7f8;
+    border-color: #c8e4e7;
+  }
+  .safe-note strong { color: #145f68; }
+  .button-link {
+    display: inline-block;
+    margin-top: 2px;
+    padding: 7px 13px;
+    border-radius: 6px;
+    background: var(--accent);
+    color: #fff;
+    font-weight: 700;
+    text-decoration: none;
+  }
+  footer {
+    margin-top: 26px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  @media (max-width: 600px) {
+    body { padding: 22px 12px 44px; }
+    .step { padding: 17px 15px 18px; }
+    h1 { font-size: 22px; }
+  }
+  @media print {
+    body { padding: 0; background: #fff; }
+    .step { break-inside: avoid; }
+    a { color: inherit; }
+  }
+</style>
+</head>
+<body>
+<main>
+
+<h1>제미나이 API 키 발급 안내</h1>
+<p class="lead">
+  이 프로그램에서 <b>Gemini</b>를 사용하려면 Google AI Studio의 API 키가
+  필요합니다. Google 계정으로 로그인한 뒤 아래 순서대로 진행하세요.
+</p>
+
+<div class="note safe-note">
+  <strong>API 키는 비밀번호처럼 관리하세요.</strong><br>
+  다른 사람에게 보내거나 인터넷·문서·화면 캡처에 공개하지 마세요.
+  발급 자체에는 비용이 없지만, 무료 한도를 넘거나 유료 결제를 연결하면
+  사용량에 따라 비용이 발생할 수 있습니다.
+</div>
+
+<section class="step">
+  <h2><span class="num">1</span>Google AI Studio의 API 키 화면 열기</h2>
+  <p>
+    아래 버튼으로 Google AI Studio의 <b>API 키</b> 화면을 열고 Google 계정으로
+    로그인합니다. 화면 오른쪽 위의 <b>API 키 만들기</b>를 누릅니다.
+  </p>
+  <p>
+    <a class="button-link" href="https://aistudio.google.com/api-keys"
+       target="_blank" rel="noopener noreferrer">Google AI Studio 열기</a>
+  </p>
+  <figure>
+    <img src="Gemini 1. API 키 화면.JPG"
+         alt="Google AI Studio API 키 화면의 API 키 만들기 단추">
+    <figcaption>오른쪽 위의 ‘API 키 만들기’를 누릅니다.</figcaption>
+  </figure>
+</section>
+
+<section class="step">
+  <h2><span class="num">2</span>키 이름과 프로젝트 선택</h2>
+  <p><b>새 키 만들기</b> 창에서 다음 항목을 정한 뒤 <b>키 만들기</b>를 누릅니다.</p>
+  <ul>
+    <li><b>키 이름 지정</b> — 알아보기 쉬운 이름을 적습니다. 예: <b>Gemini API Key</b></li>
+    <li><b>가져온 프로젝트 선택</b> — 사용할 Google Cloud 프로젝트를 고릅니다.
+      처음 사용하는 계정은 기본 프로젝트와 키가 자동으로 만들어질 수도 있습니다.</li>
+  </ul>
+  <p>
+    기존 Google Cloud 프로젝트가 목록에 없다면 왼쪽의
+    <b>프로젝트 → 프로젝트 가져오기</b>에서 먼저 가져오세요.
+  </p>
+  <figure>
+    <img src="Gemini 2. 새 키 만들기.JPG" loading="lazy"
+         alt="Google AI Studio 새 키 만들기 창에서 이름과 프로젝트를 선택하는 화면">
+    <figcaption>키 이름과 프로젝트를 확인한 뒤 ‘키 만들기’를 누릅니다.</figcaption>
+  </figure>
+</section>
+
+<section class="step">
+  <h2><span class="num">3</span>생성된 API 키 복사</h2>
+  <p>
+    키가 만들어지면 목록에 새 항목이 나타납니다. 해당 키의 <b>복사 아이콘</b>을
+    누르거나 키 이름을 열어 <b>키 복사</b>를 누릅니다.
+  </p>
+  <ul>
+    <li>복사한 키 전체를 메신저, 이메일 또는 메모 문서에 따로 남기지 마세요.</li>
+    <li>키가 노출되었다면 AI Studio에서 기존 키를 삭제하고 새 키를 만드세요.</li>
+  </ul>
+  <figure>
+    <img src="Gemini 3. 생성된 키.JPG" loading="lazy"
+         alt="Google AI Studio API 키 목록에 생성된 키와 복사 아이콘이 표시된 화면">
+    <figcaption>안내 이미지에는 보안을 위해 전체 API 키를 표시하지 않았습니다.</figcaption>
+  </figure>
+</section>
+
+<section class="step">
+  <h2><span class="num">4</span>프로그램에 API 키 입력</h2>
+  <p>
+    프로그램 왼쪽 메뉴에서 <b>AI 에이전트</b>를 열고, 제공자를
+    <b>Gemini</b>로 선택합니다. 위쪽의 <b>Gemini API 설정</b>을 누른 뒤
+    복사한 키를 <b>Gemini API 키</b> 칸에 붙여 넣고 <b>저장하고 닫기</b>를 누릅니다.
+  </p>
+  <ul>
+    <li><b>갱신</b> — 사용할 수 있는 모델 목록을 다시 불러옵니다.</li>
+    <li><b>내 사용량 확인</b> — AI Studio에서 사용량과 한도를 확인합니다.</li>
+  </ul>
+  <figure>
+    <img src="Gemini 4. 프로그램 입력.JPG" loading="lazy"
+         alt="프로그램의 Gemini API 설정 창에서 키를 입력하는 화면">
+    <figcaption>API 키를 붙여 넣고 ‘저장하고 닫기’를 누릅니다.</figcaption>
+  </figure>
+</section>
+
+<footer>
+  Google의 화면·요금·무료 한도는 변경될 수 있습니다.
+  최신 내용은
+  <a href="https://ai.google.dev/gemini-api/docs/api-key"
+     target="_blank" rel="noopener noreferrer">Google 공식 API 키 안내</a>와
+  <a href="https://aistudio.google.com/rate-limit"
+     target="_blank" rel="noopener noreferrer">AI Studio 사용량 화면</a>에서 확인하세요.
+</footer>
+
+</main>
+</body>
+</html>
