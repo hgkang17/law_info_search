@@ -1,0 +1,43 @@
+# 캐시·개인 열람 기록 (개인 검색·조회 내역이라 공개 저장소에 올리지 않음)
+\# law 캐시/
+markdown/
+
+# 빌드 산출물·백업
+_build/
+build/
+dist/
+백업/
+*.exe
+
+# 파이썬 캐시
+__pycache__/
+*.pyc
+.pytest_cache/
+.pytest-*/
+
+# 로컬 설정·임시 파일
+.claude/
+.impeccable/
+.vscode/
+대화_요약.md
+# 외부 저장소에서 받아 오는 AI 도구 스킬. skills-lock.json으로 다시 받을
+# 수 있고 프로젝트 소스가 아니라 저장소에 올리지 않는다.
+.agents/
+skills-lock.json
+.settings-test-*/
+tabbar_debug.png
+
+# 성능 측정 결과(로컬 전용)
+perf_baseline_result.json
+
+# 별표 원문 파서(kordoc). package.json으로 다시 받을 수 있어
+# node_modules는 저장소에 올리지 않는다.
+kordoc_parser/node_modules/
+
+# AI 실험 갈래에서 쓰는 가상환경
+.venv/
+venv/
+
+# API 키가 흘러 들어갈 수 있는 자리
+.env
+*.key

@@ -1,0 +1,157 @@
+from __future__ import annotations
+
+import os
+from types import SimpleNamespace
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication
+
+from ui.dialogs import LawReferencePopup
+from ui.main_window import LawSearchWindow
+from ui.tabs.resource_search import ResourceSearchTab
+
+
+def test_reference_popup_drag_cursor_stays_visible_when_unpinned() -> None:
+    _app = QApplication.instance() or QApplication([])
+    popup = LawReferencePopup(lambda _url: None)
+
+    assert popup.pin_button.isChecked() is False
+    assert popup.drag_bar.cursor().shape() == Qt.CursorShape.SizeAllCursor
+    assert popup.arrow_drag_bar.cursor().shape() == Qt.CursorShape.SizeAllCursor
+    for button in (
+        popup.favorite_button,
+        popup.refresh_button,
+        popup.pin_button,
+        popup.close_button,
+    ):
+        assert button.cursor().shape() == Qt.CursorShape.PointingHandCursor
+
+    popup.pin_button.setChecked(True)
+    popup.pin_button.setChecked(False)
+
+    assert popup.drag_bar.cursor().shape() == Qt.CursorShape.SizeAllCursor
+    assert popup.arrow_drag_bar.cursor().shape() == Qt.CursorShape.SizeAllCursor
+
+
+def test_reference_popup_refresh_button_tracks_request_and_emits_popup() -> None:
+    app = QApplication.instance() or QApplication([])
+    popup = LawReferencePopup(lambda _url: None)
+    emitted: list[object] = []
+    popup.refreshRequested.connect(emitted.append)
+
+    assert not popup.refresh_button.isEnabled()
+    popup.reference_request = {
+        "law_id": "009419",
+        "law_name": "국토의 계획 및 이용에 관한 법률 시행령",
+        "jo": "003500",
+    }
+    popup.set_content("시행령 제35조", "<p>저장 본문</p>")
+    assert popup.refresh_button.isEnabled()
+
+    popup.refresh_button.click()
+    app.processEvents()
+    assert emitted == [popup]
+
+    popup.set_loading("시행령 제35조", "API 갱신 중")
+    assert not popup.refresh_button.isEnabled()
+    popup.set_error("일시 오류")
+    assert popup.refresh_button.isEnabled()
+
+
+def test_reference_popup_favorite_button_tracks_exact_unit() -> None:
+    app = QApplication.instance() or QApplication([])
+    popup = LawReferencePopup(lambda _url: None)
+    emitted: list[object] = []
+    favorite = False
+    popup.favoriteRequested.connect(emitted.append)
+    popup.favorite_checker = lambda request: favorite and (
+        request.get("hang") == "000100"
+    )
+    popup.reference_request = {
+        "law_id": "009294",
+        "law_name": "국토의 계획 및 이용에 관한 법률",
+        "jo": "001000",
+        "hang": "000100",
+        "ho": "000200",
+        "mok": "",
+    }
+
+    popup.set_content("제10조제1항제2호", "<p>본문</p>")
+    assert popup.favorite_button.isEnabled()
+    assert popup.favorite_button.text() == "☆"
+
+    popup.show()
+    app.processEvents()
+    QTest.mouseClick(popup.favorite_button, Qt.MouseButton.LeftButton)
+    app.processEvents()
+    assert emitted == [popup]
+
+    popup.set_favorite_pending()
+    assert not popup.favorite_button.isEnabled()
+    assert popup.favorite_button.text() == "…"
+
+    favorite = True
+    popup._refresh_favorite_button()
+    assert popup.favorite_button.text() == "★"
+
+
+def test_cached_reference_popup_reopens_without_api() -> None:
+    _app = QApplication.instance() or QApplication([])
+    shown: list[tuple[str, str]] = []
+    popup = SimpleNamespace(
+        reference_key="",
+        reference_request={},
+        show_content_at=lambda title, html, _position: shown.append((title, html)),
+    )
+    status_messages: list[str] = []
+    tab = SimpleNamespace(
+        _reference_popup_states={},
+        _reference_popup_for_request=lambda: popup,
+        status_label=SimpleNamespace(setText=status_messages.append),
+    )
+    record = {
+        "name": "국토의 계획 및 이용에 관한 법률 시행령 제4조",
+        "html": "<p>저장된 제4조</p>",
+        "reference_key": "009419:000400:::",
+        "reference_request": {
+            "law_id": "009419",
+            "law_name": "국토의 계획 및 이용에 관한 법률 시행령",
+            "jo": "000400",
+        },
+        "row": {"target": "law_reference"},
+    }
+
+    ResourceSearchTab.open_cached_reference_popup(tab, record)
+
+    assert shown == [
+        (
+            "국토의 계획 및 이용에 관한 법률 시행령 제4조",
+            "<p>저장된 제4조</p>",
+        )
+    ]
+    assert popup.reference_request["jo"] == "000400"
+    assert status_messages[-1].endswith("API 호출 없음")
+
+
+def test_saved_reference_opens_popup_without_leaving_saved_history() -> None:
+    opened: list[object] = []
+    navigation_changes: list[int] = []
+    resource_tab = SimpleNamespace(open_cached_reference_popup=opened.append)
+    window = SimpleNamespace(
+        resource_tab=resource_tab,
+        navigation=SimpleNamespace(setCurrentRow=navigation_changes.append),
+    )
+    record = {
+        "kind": "detail_snapshot",
+        "row": {"target": "law_reference"},
+        "html": "<p>saved reference</p>",
+    }
+
+    result = LawSearchWindow._route_saved_record(window, record)
+
+    assert opened == [record]
+    assert navigation_changes == []
+    assert result is resource_tab

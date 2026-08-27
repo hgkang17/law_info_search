@@ -1,0 +1,11 @@
+# 화면. 법령프로그램 본체와 같은 스택을 써서 나중에 옮겨 붙이기 쉽게 한다.
+PySide6==6.11.1
+
+# 법제처 OpenAPI와 Gemini REST 호출. Gemini는 CLI가 아니라 HTTPS API라
+# SDK 없이 이것만으로 부른다. SDK를 쓰면 받는 사람이 따로 설치해야 하고
+# exe로 묶어 배포할 때도 같이 들어가지 않아 아예 못 쓴다.
+requests>=2.31.0
+
+# 법령검색 MCP 서버 (mcp_server/server.py). Claude Desktopㆍ ChatGPT
+# Desktop이 로컬 프로세스로 띄워 stdio로 대화한다.
+mcp[cli]>=1.12.0

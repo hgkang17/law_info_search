@@ -1,0 +1,78 @@
+name: Windows Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install build dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: Verify tag matches application version
+        shell: pwsh
+        run: |
+          $appVersion = python -c "from utils.constants import APP_VERSION; print(APP_VERSION)"
+          $tagVersion = $env:GITHUB_REF_NAME.TrimStart('v', 'V')
+          if ($appVersion.Trim() -ne $tagVersion) {
+            throw "Tag $env:GITHUB_REF_NAME does not match APP_VERSION $appVersion"
+          }
+
+      - name: Build onefile executable
+        shell: pwsh
+        run: python -m PyInstaller --noconfirm --clean "국가법령정보 통합검색.spec"
+
+      - name: Prepare release assets, source, and build information
+        shell: pwsh
+        run: |
+          $source = "dist\국가법령정보 통합검색.exe"
+          $releaseExe = "dist\국가법령정보 통합검색.exe"
+          $checksum = "dist\국가법령정보 통합검색.exe.sha256"
+          $sourceArchive = "dist\law-search-ai-source-$env:GITHUB_REF_NAME.zip"
+          $buildInfo = "dist\law-search-ai-build-info.txt"
+          $hash = (Get-FileHash -LiteralPath $releaseExe -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content -LiteralPath $checksum -Value "$hash  국가법령정보 통합검색.exe" -Encoding utf8
+          git archive --format=zip --output=$sourceArchive HEAD
+          $pythonVersion = python --version
+          $pysideVersion = python -c "import PySide6; print(PySide6.__version__)"
+          $pyinstallerVersion = python -m PyInstaller --version
+          @(
+            "Release: $env:GITHUB_REF_NAME"
+            "Commit: $env:GITHUB_SHA"
+            "Python: $pythonVersion"
+            "PySide6: $pysideVersion"
+            "PyInstaller: $pyinstallerVersion"
+            "Build command: python -m PyInstaller --noconfirm --clean 국가법령정보 통합검색.spec"
+            "Qt/PySide6 source offer: docs/QT_SOURCE_OFFER.md"
+          ) | Set-Content -LiteralPath $buildInfo -Encoding utf8
+
+      - name: Create GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $exe = "dist\국가법령정보 통합검색.exe"
+          $checksum = "dist\국가법령정보 통합검색.exe.sha256"
+          $sourceArchive = "dist\law-search-ai-source-$tag.zip"
+          $buildInfo = "dist\law-search-ai-build-info.txt"
+          gh release create $tag $exe $checksum $sourceArchive $buildInfo --verify-tag --generate-notes --title $tag

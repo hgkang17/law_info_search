@@ -1,0 +1,10 @@
+{
+  "name": "law-annex-kordoc-parser",
+  "private": true,
+  "type": "module",
+  "description": "별표 HWP/HWPX/PDF를 Markdown으로 바꾸는 로컬 kordoc 헬퍼",
+  "dependencies": {
+    "kordoc": "^4.7.2",
+    "pdfjs-dist": "4.10.38"
+  }
+}
