@@ -21,7 +21,17 @@ def main() -> int:
     # 있게 한다. Qt를 임포트하기 전에 갈라야 서버 시작이 빠르고 GUI 초기화도
     # 일어나지 않는다.
     if "--mcp-server" in sys.argv[1:]:
-        from mcp_server.server import mcp
+        # 여기서 그냥 터지면 PyInstaller가 영문 예외 상자를 띄운다. MCP를
+        # 띄운 쪽에는 표준오류만 보이므로, 무엇이 잘못됐는지 한 줄로 남기고
+        # 조용히 끝낸다.
+        try:
+            from mcp_server.server import mcp
+        except Exception as error:
+            print(
+                f"법령검색 MCP 서버를 시작하지 못했습니다: {error}",
+                file=sys.stderr,
+            )
+            return 1
 
         mcp.run()
         return 0

@@ -8,4 +8,7 @@ requests>=2.31.0
 
 # 법령검색 MCP 서버 (mcp_server/server.py). Claude Desktopㆍ ChatGPT
 # Desktop이 로컬 프로세스로 띄워 stdio로 대화한다.
-mcp[cli]>=1.12.0
+# 2.x에서 FastMCP가 MCPServer로 바뀌면서 mcp.server.fastmcp가 사라졌다.
+# 상한을 열어 두면 빌드 기계가 2.x를 받아 배포 EXE의 MCP 서버만 죽는다.
+# 2.x로 옮길 때는 mcp_server/server.py의 API도 함께 고쳐야 한다.
+mcp[cli]>=1.12.0,<2
