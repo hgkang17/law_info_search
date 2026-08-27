@@ -301,7 +301,18 @@ class LawSearchWindow(QMainWindow):
         self.api_input.setPlaceholderText("인증키 입력")
         self.api_input.setFixedWidth(110)
         self.api_input.setClearButtonEnabled(True)
+        # 인증키는 화면 공유나 어깨너머로 그대로 노출되므로 기본은 가려 둔다.
+        # 옆의 표시 단추로만 잠깐 확인한다.
+        self.api_input.setEchoMode(QLineEdit.EchoMode.Password)
         self.api_input.setText(self.oc)
+        self.api_reveal_button = QPushButton("표시")
+        self.api_reveal_button.setObjectName("apiRevealButton")
+        self.api_reveal_button.setCheckable(True)
+        self.api_reveal_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.api_reveal_button.setToolTip(
+            "인증키를 화면에 보이거나 다시 가립니다."
+        )
+        self.api_reveal_button.toggled.connect(self._api_reveal_toggled)
         self.save_api_checkbox = QCheckBox("저장")
         self.save_api_checkbox.setObjectName("apiSaveCheck")
         self.save_api_checkbox.setToolTip(
@@ -313,6 +324,7 @@ class LawSearchWindow(QMainWindow):
 
         api_layout.addWidget(api_label)
         api_layout.addWidget(self.api_input)
+        api_layout.addWidget(self.api_reveal_button)
         api_layout.addWidget(self.save_api_checkbox)
         header_layout.addWidget(api_compact)
         root.addWidget(header)
@@ -944,23 +956,20 @@ class LawSearchWindow(QMainWindow):
             return
 
         box = QMessageBox(self)
-        box.setIcon(QMessageBox.Icon.Information)
-        box.setWindowTitle("새 업데이트")
-        box.setText(
-            f"새 버전 {value.version}을 사용할 수 있습니다.\n"
-            f"현재 버전: {APP_VERSION}"
-        )
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("업데이트")
+        box.setText("업데이트 버전이 있습니다.")
         box.setInformativeText(
-            "지금 업데이트하면 파일을 안전하게 확인한 뒤 프로그램을 다시 시작합니다."
+            f"현재 {APP_VERSION} → 새 버전 {value.version}. "
+            "업데이트 하시겠습니까?"
         )
         if value.notes.strip():
             box.setDetailedText(value.notes.strip())
-        install_button = box.addButton(
-            "지금 업데이트", QMessageBox.ButtonRole.AcceptRole
-        )
-        box.addButton("나중에", QMessageBox.ButtonRole.RejectRole)
+        confirm_button = box.addButton("확인", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("취소", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(confirm_button)
         box.exec()
-        if box.clickedButton() is install_button:
+        if box.clickedButton() is confirm_button:
             self._start_update_download(value)
 
     def _update_check_failed(self, message: str) -> None:
@@ -1342,6 +1351,26 @@ class LawSearchWindow(QMainWindow):
                 border-radius: 6px;
                 padding: 0 9px;
                 font-size: 9pt;
+            }
+            QPushButton#apiRevealButton {
+                min-height: 30px;
+                max-height: 30px;
+                min-width: 38px;
+                padding: 0 6px;
+                background: #2f5f8d;
+                border: 1px solid #4c7195;
+                border-radius: 6px;
+                color: #eaf3fb;
+                font-size: 9pt;
+                font-weight: 600;
+            }
+            QPushButton#apiRevealButton:hover {
+                background: #396fa3;
+            }
+            QPushButton#apiRevealButton:checked {
+                background: #eaf3fb;
+                border-color: #aec4d7;
+                color: #173b63;
             }
             QCheckBox#apiSaveCheck {
                 background: transparent;
@@ -3264,6 +3293,15 @@ class LawSearchWindow(QMainWindow):
                 self._store_api_key(self.oc)
             except (OSError, RuntimeError, ValueError):
                 self.save_api_checkbox.setChecked(False)
+
+    def _api_reveal_toggled(self, checked: bool) -> None:
+        """인증키를 잠깐 보이게 하거나 다시 가린다."""
+        self.api_input.setEchoMode(
+            QLineEdit.EchoMode.Normal
+            if checked
+            else QLineEdit.EchoMode.Password
+        )
+        self.api_reveal_button.setText("숨김" if checked else "표시")
 
     def _api_save_toggled(self, checked: bool) -> None:
         self.oc = self.api_input.text().strip()
