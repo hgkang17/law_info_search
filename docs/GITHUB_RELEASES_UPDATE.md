@@ -36,10 +36,10 @@ EXE에는 업데이트 확인 코드가 없거나 버전 번호 체계가 달라
 4. GitHub Actions의 `Windows Release` 작업이 다음 네 파일을 빌드하여
    정식 Release에 올립니다.
 
-   - `law-search-ai.exe`
-   - `law-search-ai.exe.sha256`
-   - `law-search-ai-source-v버전.zip`
-   - `law-search-ai-build-info.txt`
+   - `law_info_search.exe`
+   - `law_info_search.exe.sha256`
+   - `law_info_search-source-v버전.zip`
+   - `law_info_search-build-info.txt`
 
 5. Actions 작업이 성공한 뒤 프로그램에서 `업데이트 확인`을 눌러 시험합니다.
 
@@ -56,7 +56,7 @@ GitHub은 Release에 올라온 자산 이름에서 한글과 공백을 잘라냅
 찾으므로, 이름이 깨지면 자동 업데이트가 조용히 실패합니다.
 
 그래서 배포 자산은 사람이 보는 프로그램 이름과 분리해 ASCII 이름
-`law-search-ai.exe`로 올립니다. 사용자가 내려받은 EXE 파일명을 마음대로
+`law_info_search.exe`로 올립니다. 사용자가 내려받은 EXE 파일명을 마음대로
 바꿔도 업데이트는 계속 동작합니다. 교체는 현재 실행 중인 EXE의 경로를
 기준으로 하기 때문입니다.
 
@@ -84,9 +84,9 @@ SHA-256 파일을 정확히 맞춰야 합니다.
 
 ```powershell
 python -m PyInstaller --noconfirm --clean "국가법령정보 통합검색.spec"
-Copy-Item -LiteralPath "dist\국가법령정보 통합검색.exe" -Destination "dist\law-search-ai.exe" -Force
-$hash = (Get-FileHash -LiteralPath "dist\law-search-ai.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
-Set-Content -LiteralPath "dist\law-search-ai.exe.sha256" -Value "$hash  law-search-ai.exe" -Encoding utf8
+Copy-Item -LiteralPath "dist\국가법령정보 통합검색.exe" -Destination "dist\law_info_search.exe" -Force
+$hash = (Get-FileHash -LiteralPath "dist\law_info_search.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+Set-Content -LiteralPath "dist\law_info_search.exe.sha256" -Value "$hash  law_info_search.exe" -Encoding utf8
 ```
 
 업로드가 끝나면 자산 이름이 깨지지 않았는지 반드시 확인합니다.

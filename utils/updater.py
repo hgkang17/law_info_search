@@ -108,7 +108,7 @@ def _request_headers(*, binary: bool = False) -> dict[str, str]:
         ),
         "X-GitHub-Api-Version": GITHUB_API_VERSION,
         # HTTP 헤더는 latin-1로 인코딩되므로 한글 프로그램명은 넣지 않는다.
-        "User-Agent": f"law-search-ai/{APP_VERSION}",
+        "User-Agent": f"law_info_search/{APP_VERSION}",
     }
 
 

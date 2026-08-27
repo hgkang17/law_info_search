@@ -33,7 +33,7 @@ Claude나 ChatGPT가 법령 내용을 답할 때 기억에 의존하지 않고 �
 ## 준비물
 
 1. 이 저장소를 내려받은 폴더의 절대경로
-   (예: `D:\path\to\law-search-ai`)
+   (예: `D:\path\to\law_info_search`)
 2. 국가법령정보 공동활용 OC 인증키 (https://open.law.go.kr, 무료 발급)
 3. 파이썬과 의존 패키지
 
@@ -55,7 +55,7 @@ pip install -r requirements.txt
     "법령검색": {
       "command": "C:\\Users\\사용자이름\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
       "args": [
-        "D:\\path\\to\\law-search-ai\\mcp_server\\server.py"
+        "D:\\path\\to\\law_info_search\\mcp_server\\server.py"
       ],
       "env": {
         "LAW_API_KEY": "발급받은 OC 인증키"
@@ -79,7 +79,7 @@ ChatGPT Desktop은 설정 화면에서 직접 등록한다(JSON 파일을 손으
 4. 명령어에 아래 한 줄을 넣는다 (경로는 자기 것으로 바꾼다):
 
 ```
-C:\Users\사용자이름\AppData\Local\Programs\Python\Python311\python.exe "D:\path\to\law-search-ai\mcp_server\server.py"
+C:\Users\사용자이름\AppData\Local\Programs\Python\Python311\python.exe "D:\path\to\law_info_search\mcp_server\server.py"
 ```
 
 5. 환경변수에 `LAW_API_KEY` = 발급받은 OC 인증키를 추가한다.

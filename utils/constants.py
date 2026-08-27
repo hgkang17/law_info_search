@@ -17,4 +17,4 @@ CONTACT_EMAIL = "hakang17@naver.com"
 # GitHub은 Release 자산 이름에서 한글과 공백을 잘라내므로(예: "국가법령정보
 # 통합검색.exe" -> "default.exe") 자산 이름에 한글이나 공백을 쓰지 않는다.
 GITHUB_REPOSITORY = "hgkang17/law_info_search"
-UPDATE_ASSET_NAME = "law-search-ai.exe"
+UPDATE_ASSET_NAME = "law_info_search.exe"
