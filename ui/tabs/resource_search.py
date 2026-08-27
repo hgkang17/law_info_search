@@ -258,6 +258,10 @@ class ResourceSearchTab(QWidget):
         self._pending_three_stage_article: dict[str, str] = {}
         self._current_three_stage_articles: list[dict[str, object]] = []
         self._three_stage_buttons: list[QPushButton] = []
+        # 법령 전문 안의 각 ``제N조`` 왼쪽에 놓는 조문 즐겨찾기 별표.
+        # 3단비교 단추와 같은 조문 앵커를 쓰지만, 비교 자료가 없어도 모든
+        # 조문에 보여야 하므로 별도 목록으로 관리한다.
+        self._article_favorite_buttons: list[QPushButton] = []
         self._three_stage_anchor_positions: dict[str, int] = {}
         self._three_stage_position_pending = False
         self._pending_three_stage_link_request: dict[str, str] | None = None
@@ -274,6 +278,7 @@ class ResourceSearchTab(QWidget):
         # 즐겨찾기 탭에서 별을 풀어도 열려 있는 본문 탭의 별표가 따라간다.
         self.law_cache.changed.connect(self._refresh_document_tab_favorites)
         self.law_cache.changed.connect(self._refresh_reference_popup_favorites)
+        self.law_cache.changed.connect(self._refresh_inline_article_favorites)
         self.reference_popup = LawReferencePopup(
             self._detail_link_clicked, self
         )
@@ -1975,11 +1980,15 @@ class ResourceSearchTab(QWidget):
         return None
 
     def _clear_three_stage_buttons(self) -> None:
-        """본문 옆 3단비교 버튼만 걷어낸다. 문서 여백은 건드리지 않는다."""
-        for button in self._three_stage_buttons:
+        """본문 조문 옆 3단비교·즐겨찾기 단추를 걷어낸다."""
+        for button in (
+            *self._three_stage_buttons,
+            *self._article_favorite_buttons,
+        ):
             button.hide()
             button.deleteLater()
         self._three_stage_buttons = []
+        self._article_favorite_buttons = []
         self._three_stage_anchor_positions = {}
 
     def _set_three_stage_articles(
@@ -2018,6 +2027,19 @@ class ResourceSearchTab(QWidget):
 
         viewport = self.detail_view.viewport()
         for article in self._current_three_stage_articles:
+            favorite_button = QPushButton("☆", viewport)
+            favorite_button.setObjectName("articleFavoriteButton")
+            favorite_button.setFixedSize(18, 18)
+            favorite_button.setCursor(Qt.CursorShape.PointingHandCursor)
+            favorite_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            favorite_button.clicked.connect(
+                lambda _checked=False, item=dict(article): (
+                    self._toggle_inline_article_favorite(item)
+                )
+            )
+            favorite_button.hide()
+            self._article_favorite_buttons.append(favorite_button)
+
             button = QPushButton("3단비교", viewport)
             button.setObjectName("threeStageArticleButton")
             # 글자 크기는 유지하고 버튼 안쪽 여백만 줄인다.
@@ -2061,8 +2083,71 @@ class ResourceSearchTab(QWidget):
             cursor.setPosition(position)
             block_format = cursor.blockFormat()
             block_format.setTopMargin(14.0)
+            # 별이 제N조 글자와 겹치지 않도록 조문 첫 블록에만 자리를 낸다.
+            # 문서 전체 왼쪽 여백을 바꾸면 제목·기본정보까지 함께 밀린다.
+            block_format.setLeftMargin(max(24.0, block_format.leftMargin()))
             cursor.setBlockFormat(block_format)
+        self._refresh_inline_article_favorites()
         self._schedule_three_stage_button_positions()
+
+    def _refresh_inline_article_favorites(self) -> None:
+        """본문의 조문별 별표를 저장 상태와 맞춘다."""
+        if not hasattr(self, "_article_favorite_buttons"):
+            return
+        for article, button in zip(
+            self._current_three_stage_articles,
+            self._article_favorite_buttons,
+        ):
+            law_id = str(article.get("law_id") or "")
+            jo = str(article.get("jo") or "")
+            law_name = str(article.get("law_name") or "")
+            row = self._law_row(law_id, law_name) if law_id and jo else None
+            favorite = bool(
+                row is not None
+                and self.law_cache.is_article_favorite(row, jo)
+            )
+            label = str(article.get("label") or self._law_reference_label(jo))
+            button.setText("★" if favorite else "☆")
+            button.setEnabled(row is not None)
+            button.setToolTip(
+                f"{label} 즐겨찾기를 "
+                + ("해제합니다." if favorite else "추가합니다.")
+            )
+            button.setAccessibleName(button.toolTip())
+            button.setStyleSheet(
+                "QPushButton#articleFavoriteButton {"
+                f"color: {'#e2a400' if favorite else '#aeb9c5'};"
+                "border:none; background:transparent; padding:0;"
+                "font-size:14px; min-width:18px; max-width:18px;"
+                "min-height:18px; max-height:18px;}"
+                "QPushButton#articleFavoriteButton:hover {color:#e2a400;}"
+            )
+
+    def _toggle_inline_article_favorite(
+        self, article: dict[str, object]
+    ) -> None:
+        """법령 전문의 제N조 왼쪽 별표로 그 조문만 즐겨찾기 토글."""
+        law_id = str(article.get("law_id") or "")
+        jo = str(article.get("jo") or "")
+        law_name = str(article.get("law_name") or "")
+        label = str(article.get("label") or self._law_reference_label(jo))
+        row = self._law_row(law_id, law_name) if law_id and jo else None
+        if row is None:
+            self.status_label.setText("이 조문은 즐겨찾기에 걸 수 없습니다.")
+            return
+        favorite = self.law_cache.is_article_favorite(row, jo)
+        if favorite:
+            if self.law_cache.set_article_favorite(row, jo, label, False):
+                self.status_label.setText(f"{label} 즐겨찾기를 해제했습니다.")
+            else:
+                self.status_label.setText(
+                    f"즐겨찾기 해제에 실패했습니다: {self.law_cache.last_error}"
+                )
+        else:
+            self.add_article_favorite_by_id(
+                law_id, jo, label, law_name
+            )
+        self._refresh_inline_article_favorites()
 
     @staticmethod
     def _inline_subordinate_href(links: list[dict[str, str]]) -> str:
@@ -2319,9 +2404,36 @@ class ResourceSearchTab(QWidget):
         self._three_stage_position_pending = False
         viewport = self.detail_view.viewport()
         if not self.detail_view.isVisible() or not viewport.isVisible():
-            for button in self._three_stage_buttons:
+            for button in (
+                *self._three_stage_buttons,
+                *self._article_favorite_buttons,
+            ):
                 button.hide()
             return
+        for article, button in zip(
+            self._current_three_stage_articles,
+            self._article_favorite_buttons,
+        ):
+            position = self._three_stage_anchor_positions.get(article["anchor"])
+            if position is None:
+                button.hide()
+                continue
+            cursor = QTextCursor(self.detail_view.document())
+            cursor.setPosition(position)
+            rect = self.detail_view.cursorRect(cursor)
+            button_x = max(1, rect.left() - button.width() - 4)
+            button_y = rect.top()
+            visible = (
+                rect.bottom() >= 0
+                and button_y <= viewport.height()
+                and self.detail_stack.currentIndex() == 0
+            )
+            if not visible:
+                button.hide()
+                continue
+            button.move(button_x, button_y)
+            button.show()
+            button.raise_()
         for article, button in zip(
             self._current_three_stage_articles,
             self._three_stage_buttons,

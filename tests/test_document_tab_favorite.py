@@ -257,6 +257,51 @@ def test_reference_popup_star_saves_article_with_real_mouse_click(tmp_path) -> N
     assert popup.favorite_button.text() == "★"
 
 
+def test_full_law_body_has_article_favorite_stars_on_heading_left(tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    tab = _tab(tmp_path)
+    payload = {
+        "법령": {
+            "기본정보": {
+                "법령명_한글": ROW["name"],
+                "법령ID": ROW["id"],
+            },
+            "조문": {
+                "조문단위": [
+                    {"조문번호": "1", "조문내용": "제1조(목적) 이 법은…"},
+                    {"조문번호": "2", "조문내용": "제2조(정의) 뜻은…"},
+                ]
+            },
+        }
+    }
+    assert tab.law_cache.save(dict(ROW), payload)
+    tab.resize(1200, 760)
+    tab.show()
+    tab.open_cached_law({"row": dict(ROW), "payload": payload})
+    tab._set_reading_mode(True)
+    app.processEvents()
+
+    assert len(tab._article_favorite_buttons) == 2
+    first_star = tab._article_favorite_buttons[0]
+    assert first_star.text() == "☆"
+    assert first_star.isVisible()
+    anchor = tab._current_three_stage_articles[0]["anchor"]
+    position = tab._three_stage_anchor_positions[anchor]
+    cursor = tab.detail_view.textCursor()
+    cursor.setPosition(position)
+    heading_rect = tab.detail_view.cursorRect(cursor)
+    assert first_star.geometry().right() < heading_rect.left()
+
+    first_star.click()
+    assert tab.law_cache.is_article_favorite(ROW, "000100")
+    assert first_star.text() == "★"
+    assert tab._article_favorite_buttons[1].text() == "☆"
+
+    first_star.click()
+    assert not tab.law_cache.is_article_favorite(ROW, "000100")
+    assert first_star.text() == "☆"
+
+
 def test_star_toggles_saved_document(tmp_path) -> None:
     tab = _tab(tmp_path)
     tab.law_cache.save_snapshot(ROW, html="<p>본문</p>", plain_text="본문")
