@@ -161,7 +161,7 @@ class LawSearchWindow(QMainWindow):
     def _handle_mouse_back(self) -> bool:
         """마우스 뒤로가기 버튼으로 현재 크게 보기 화면을 닫는다."""
         current_page = self.tabs.currentWidget()
-        if current_page is getattr(self, "ai_container", None):
+        if current_page is self.resource_tab and self.resource_tab.is_keyword_category:
             current_page = self.ai_tabs.currentWidget()
         if current_page is None or not getattr(current_page, "_reading_mode", False):
             return False
@@ -378,9 +378,10 @@ class LawSearchWindow(QMainWindow):
         self.ai_container = ai_container
         ai_layout = QVBoxLayout(ai_container)
         ai_layout.setContentsMargins(0, 0, 0, 0)
-        self.ai_tabs = QTabWidget()
+        # 연관검색ㆍ직접검색 전환은 법령검색 탭의 카테고리 바가 맡으므로
+        # 여기서는 탭바 없는 스택만 둔다.
+        self.ai_tabs = QStackedWidget()
         self.ai_tabs.setObjectName("aiSubTabs")
-        self.ai_tabs.setDocumentMode(True)
         self.ai_search_tab = AiLawSearchTab(
             "ai_search",
             lambda: self.api_input.text(),
@@ -399,9 +400,13 @@ class LawSearchWindow(QMainWindow):
         # 키워드검색 탭은 링크만 넘겨 같은 화면을 재사용한다.
         self.ai_search_tab.reference_tab = self.resource_tab
         self.ai_related_tab.reference_tab = self.resource_tab
-        self.ai_tabs.addTab(self.ai_related_tab, "연관법령")
-        self.ai_tabs.addTab(self.ai_search_tab, "직접검색")
+        self.ai_tabs.addWidget(self.ai_related_tab)
+        self.ai_tabs.addWidget(self.ai_search_tab)
         ai_layout.addWidget(self.ai_tabs)
+        # 키워드검색 화면을 법령검색 탭 안으로 넣는다. 왼쪽 주 메뉴에서는
+        # 빠지고 카테고리 바의 연관검색ㆍ직접검색으로만 들어간다.
+        self.resource_tab.attach_keyword_page(ai_container)
+        self.resource_tab._keyword_page_selector = self._select_keyword_page
         # AI 검토 화면은 메뉴 목록이 아니라 별도 단추로 연다. 목록의 줄
         # 번호와 페이지 번호가 1:1로 묶여 있어 중간에 끼우면 기존 이동이
         # 모두 어긋난다.
@@ -437,7 +442,6 @@ class LawSearchWindow(QMainWindow):
         for page in (
             self.favorites_tab,
             self.resource_tab,
-            ai_container,
             self.central_tab,
             self.expc_tab,
             self.prec_tab,
@@ -484,7 +488,6 @@ class LawSearchWindow(QMainWindow):
             (
                 "★\n즐겨찾기",
                 "법령\n검색",
-                "키워드\n검색",
                 "중앙부처\n질의회신",
                 "법령\n해석례",
                 "판례\n검색",
@@ -495,7 +498,7 @@ class LawSearchWindow(QMainWindow):
             self.navigation.item(index).setTextAlignment(
                 Qt.AlignmentFlag.AlignCenter
             )
-        self.navigation.set_group_ranges([(1, 2), (3, 5)])
+        self.navigation.set_group_ranges([(1, 1), (2, 4)])
         self.viewed_laws_button = QPushButton("저장\n내역")
         self.viewed_laws_button.setObjectName("viewedLawsNavigationButton")
         self.viewed_laws_button.setCheckable(True)
@@ -699,15 +702,15 @@ class LawSearchWindow(QMainWindow):
         current = self.tabs.currentWidget()
         source = ""
         key = ""
-        if current is self.resource_tab:
-            source = "resource"
-            key = self.resource_tab._active_document_key
-        elif current is self.ai_container:
+        if current is self.resource_tab and self.resource_tab.is_keyword_category:
             source = (
                 "ai_related"
                 if self.ai_tabs.currentWidget() is self.ai_related_tab
                 else "ai_search"
             )
+        elif current is self.resource_tab:
+            source = "resource"
+            key = self.resource_tab._active_document_key
         elif current is self.central_tab:
             source = "central"
         elif current is self.expc_tab:
@@ -856,12 +859,9 @@ class LawSearchWindow(QMainWindow):
                 self.resource_tab._reading_mode_exit_callback = restorer
                 self.resource_tab._set_reading_mode(True)
         elif source in {"ai_related", "ai_search"}:
-            self.navigation.setCurrentRow(2)
-            self.ai_tabs.setCurrentWidget(
-                self.ai_related_tab if source == "ai_related" else self.ai_search_tab
-            )
+            self._show_keyword_category(source)
         else:
-            row = {"central": 3, "expc": 4, "prec": 5}.get(source)
+            row = {"central": 2, "expc": 3, "prec": 4}.get(source)
             if row is not None:
                 self.navigation.setCurrentRow(row)
         self._set_active_document_token(token)
@@ -1048,6 +1048,17 @@ class LawSearchWindow(QMainWindow):
         if worker is not None:
             worker.deleteLater()
 
+    def _select_keyword_page(self, target: str) -> None:
+        """카테고리 바가 고른 연관검색ㆍ직접검색 화면을 띄운다."""
+        self.ai_tabs.setCurrentWidget(
+            self.ai_related_tab if target == "ai_related" else self.ai_search_tab
+        )
+
+    def _show_keyword_category(self, target: str) -> None:
+        """법령검색 탭으로 옮기고 연관검색ㆍ직접검색 카테고리를 고른다."""
+        self.navigation.setCurrentRow(1)
+        self.resource_tab.select_category(target)
+
     def _main_navigation_changed(self, row: int) -> None:
         if row < 0:
             return
@@ -1064,7 +1075,7 @@ class LawSearchWindow(QMainWindow):
         self.favorite_navigation_button.setChecked(False)
         self.viewed_laws_button.setChecked(False)
         self.ai_review_button.setChecked(True)
-        self.tabs.setCurrentIndex(7)
+        self.tabs.setCurrentIndex(6)
 
     def closeEvent(self, event) -> None:
         # 답을 받는 도중 창을 닫으면 스레드가 남아 프로그램이 끝나지 않는다.
@@ -1096,7 +1107,7 @@ class LawSearchWindow(QMainWindow):
         self.favorite_navigation_button.setChecked(False)
         self.viewed_laws_button.setChecked(True)
         self.ai_review_button.setChecked(False)
-        self.tabs.setCurrentIndex(6)
+        self.tabs.setCurrentIndex(5)
 
     def _search_favorite_in_resource_list(
         self, target: str, name: str
@@ -1172,29 +1183,27 @@ class LawSearchWindow(QMainWindow):
                 tab._open_cached_resource_snapshot(row, record)
                 return tab
             if target == "ai_search":
-                self.navigation.setCurrentRow(2)
-                self.ai_tabs.setCurrentIndex(1)
+                self._show_keyword_category("ai_search")
                 tab = prepare(self.ai_search_tab)
                 tab.open_cached_snapshot(record)
                 return tab
             if target == "ai_related":
-                self.navigation.setCurrentRow(2)
-                self.ai_tabs.setCurrentIndex(0)
+                self._show_keyword_category("ai_related")
                 tab = prepare(self.ai_related_tab)
                 tab.open_cached_snapshot(record)
                 return tab
             if target == "expc":
-                self.navigation.setCurrentRow(4)
+                self.navigation.setCurrentRow(3)
                 tab = prepare(self.expc_tab)
                 tab.open_cached_snapshot(record)
                 return tab
             if target == "prec":
-                self.navigation.setCurrentRow(5)
+                self.navigation.setCurrentRow(4)
                 tab = prepare(self.prec_tab)
                 tab.open_cached_snapshot(record)
                 return tab
             if target in AGENCY_BY_TARGET or row.get("agency"):
-                self.navigation.setCurrentRow(3)
+                self.navigation.setCurrentRow(2)
                 tab = prepare(self.central_tab)
                 tab.open_cached_snapshot(record)
                 return tab

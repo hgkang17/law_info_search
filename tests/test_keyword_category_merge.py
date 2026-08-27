@@ -1,0 +1,136 @@
+"""연관검색ㆍ직접검색을 법령검색 탭 카테고리로 옮긴 뒤의 회귀 검증."""
+
+from __future__ import annotations
+
+import os
+import xml.etree.ElementTree as ET
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+import pytest
+from PySide6.QtWidgets import QApplication
+
+from models.law import AI_RELATED_AGENCY, AI_SEARCH_AGENCY
+from ui.main_window import LawSearchWindow
+
+
+@pytest.fixture(scope="module")
+def qt_app():
+    return QApplication.instance() or QApplication([])
+
+
+@pytest.fixture
+def window(qt_app):
+    window = LawSearchWindow()
+    yield window
+    window.close()
+
+
+def _category_targets(window: LawSearchWindow) -> list[str]:
+    bar = window.resource_tab.category_tabs
+    return [str(bar.tabData(index)) for index in range(bar.count())]
+
+
+def test_keyword_categories_sit_next_to_integrated_search(window) -> None:
+    targets = _category_targets(window)
+
+    # 통합검색 바로 옆에 한 쌍으로 붙는다.
+    assert targets[:3] == ["__all__", "ai_related", "ai_search"]
+    assert "law" in targets and "admrul" in targets
+
+
+def test_keyword_search_left_the_main_menu(window) -> None:
+    labels = [
+        window.navigation.item(index).text().replace("\n", " ")
+        for index in range(window.navigation.count())
+    ]
+
+    assert not any("키워드" in label for label in labels)
+    # 페이지 번호와 메뉴 줄 번호는 1:1로 묶여 있어 함께 당겨져야 한다.
+    assert window.navigation.count() == window.tabs.count() - 2
+
+
+def test_choosing_a_keyword_category_swaps_the_page(window) -> None:
+    resource = window.resource_tab
+
+    resource.select_category("ai_related")
+    assert resource.is_keyword_category
+    assert resource.content_stack.currentWidget() is resource._keyword_page
+    assert window.ai_tabs.currentWidget() is window.ai_related_tab
+
+    resource.select_category("ai_search")
+    assert window.ai_tabs.currentWidget() is window.ai_search_tab
+
+    resource.select_category("law")
+    assert not resource.is_keyword_category
+    assert resource.content_stack.currentWidget() is resource.resource_body
+
+
+def test_saved_records_route_into_the_law_search_tab(window) -> None:
+    window._show_keyword_category("ai_search")
+
+    # 저장내역에서 연 직접검색 본문도 이제 법령검색 자리에서 열린다.
+    assert window.navigation.currentRow() == 1
+    assert window.resource_tab.category_target == "ai_search"
+
+
+def _keyword_root(tag, name_field, name, id_field, item_id, org_field, org):
+    root = ET.Element("결과")
+    node = ET.SubElement(root, tag, {"id": "1"})
+    ET.SubElement(node, name_field).text = name
+    ET.SubElement(node, id_field).text = item_id
+    ET.SubElement(node, org_field).text = org
+    ET.SubElement(node, "공포일자").text = "20240115"
+    ET.SubElement(node, "발령일자").text = "20240115"
+    ET.SubElement(node, "시행일자").text = "20240701"
+    return root, node
+
+
+def test_integrated_search_merges_keyword_rows_without_duplicates(window) -> None:
+    related, _ = _keyword_root(
+        "법령", "법령명", "국토의 계획 및 이용에 관한 법률",
+        "법령ID", "001234", "소관부처명", "국토교통부",
+    )
+    # 두 API는 조문 단위로 답해서 같은 법령이 여러 번 실려 온다.
+    repeated = ET.SubElement(related, "법령", {"id": "2"})
+    ET.SubElement(repeated, "법령명").text = "국토의 계획 및 이용에 관한 법률"
+    ET.SubElement(repeated, "법령ID").text = "001234"
+
+    direct, _ = _keyword_root(
+        "행정규칙", "행정규칙명", "개발제한구역 관리지침",
+        "행정규칙ID", "009999", "발령기관명", "국토교통부",
+    )
+    # 별표ㆍ서식은 본문을 열 일련번호가 없어 통합 목록에서 뺀다.
+    annex = ET.SubElement(direct, "법령별표서식", {"id": "3"})
+    ET.SubElement(annex, "법령명").text = "제외 대상 별표"
+    ET.SubElement(annex, "법령ID").text = "007777"
+
+    roots = [(AI_RELATED_AGENCY, related), (AI_SEARCH_AGENCY, direct)]
+    rows, total = window.resource_tab._parse_keyword_rows(roots, [])
+
+    assert total == 2
+    assert [row["label"] for row in rows] == ["연관검색", "직접검색"]
+    assert [row["id"] for row in rows] == ["001234", "009999"]
+    # 본문 조회는 기존 법령ㆍ행정규칙 경로를 그대로 탄다.
+    assert [row["target"] for row in rows] == ["law", "admrul"]
+    assert rows[0]["effective"] == "2024.07.01"
+    assert not any(row["id"] == "007777" for row in rows)
+
+
+def test_integrated_search_drops_laws_the_list_search_already_found(window) -> None:
+    related, _ = _keyword_root(
+        "법령", "법령명", "국토의 계획 및 이용에 관한 법률",
+        "법령ID", "001234", "소관부처명", "국토교통부",
+    )
+    already_found = [{"target": "law", "id": "001234", "name": "목록검색 결과"}]
+
+    rows, total = window.resource_tab._parse_keyword_rows(
+        [(AI_RELATED_AGENCY, related)], already_found
+    )
+
+    assert (rows, total) == ([], 0)
+
+
+def test_missing_keyword_payload_is_not_an_error(window) -> None:
+    assert window.resource_tab._parse_keyword_rows(None, []) == ([], 0)
+    assert window.resource_tab._parse_keyword_rows([], []) == ([], 0)

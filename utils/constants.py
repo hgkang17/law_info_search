@@ -6,7 +6,7 @@ FONT_FAMILY = "Malgun Gothic"
 DETAIL_FONT_FAMILY = FONT_FAMILY
 
 APP_TITLE = "국가법령정보 통합검색"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 AUTHOR_NAME = "hgkang"
 COPYRIGHT_YEAR = "2026"
 CONTACT_EMAIL = "hakang17@naver.com"

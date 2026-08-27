@@ -8,6 +8,17 @@ from molit_cgm_expc_api import AgencyConfig
 RESOURCE_ALL_TARGET = "__all__"
 
 
+# 연관검색ㆍ직접검색은 법령검색 탭의 카테고리로 함께 보여 준다. 값은
+# AiLawSearchTab의 service 이름과 같아야 저장내역ㆍ열람내역 복원이 그대로
+# 이어진다.
+KEYWORD_RELATED_TARGET = "ai_related"
+KEYWORD_DIRECT_TARGET = "ai_search"
+KEYWORD_CATEGORY_LABELS = {
+    KEYWORD_RELATED_TARGET: "연관검색",
+    KEYWORD_DIRECT_TARGET: "직접검색",
+}
+
+
 RESOURCE_CATEGORIES = {
     "law": {
         "label": "법령",

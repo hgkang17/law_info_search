@@ -45,6 +45,9 @@ from ui.dialogs import (
     PdfPreviewPopup,
 )
 from models.law import (
+    KEYWORD_CATEGORY_LABELS,
+    KEYWORD_DIRECT_TARGET,
+    KEYWORD_RELATED_TARGET,
     RESOURCE_ALL_TARGET,
     RESOURCE_CATEGORIES,
 )
@@ -230,6 +233,9 @@ class ResourceSearchTab(QWidget):
         self._annex_worker: AnnexReferenceWorker | None = None
         self.result_rows: list[dict[str, object]] = []
         self.highlight_terms: tuple[str, ...] = ()
+        # 연관검색ㆍ직접검색 화면은 main_window가 만들어 넘겨 준다.
+        self._keyword_page = None
+        self._keyword_page_selector = None
         self.current_detail_text = ""
         self.pending_row: dict[str, object] | None = None
         self._pending_reference_title = "인용 조문"
@@ -321,7 +327,46 @@ class ResourceSearchTab(QWidget):
     def category(self) -> dict:
         if self.category_target == RESOURCE_ALL_TARGET:
             return {"label": "통합검색"}
+        if self.category_target in KEYWORD_CATEGORY_LABELS:
+            return {"label": KEYWORD_CATEGORY_LABELS[self.category_target]}
         return RESOURCE_CATEGORIES[self.category_target]
+
+    @property
+    def is_keyword_category(self) -> bool:
+        """연관검색ㆍ직접검색처럼 키워드검색 화면이 맡는 분류인지."""
+        return self.category_target in KEYWORD_CATEGORY_LABELS
+
+    def attach_keyword_page(self, widget) -> None:
+        """키워드검색 화면을 카테고리 바 아래 스택에 끼운다.
+
+        연관검색ㆍ직접검색은 표와 본문 구성이 목록 검색과 달라서 이 탭이
+        직접 그리지 않고, main_window가 만들어 둔 화면을 그대로 받아 쓴다.
+        """
+        self._keyword_page = widget
+        self.content_stack.addWidget(widget)
+        self._sync_content_page()
+
+    def _sync_content_page(self) -> None:
+        """고른 카테고리에 맞는 페이지를 스택에서 띄운다."""
+        if self.is_keyword_category and self._keyword_page is not None:
+            self.content_stack.setCurrentWidget(self._keyword_page)
+            if self._keyword_page_selector is not None:
+                self._keyword_page_selector(self.category_target)
+        else:
+            self.content_stack.setCurrentWidget(self.resource_body)
+        # 목록 검색용 검색줄과 안내문은 키워드검색 화면이 자기 것을 갖고
+        # 있어 그대로 두면 두 번 겹쳐 보인다.
+        self.search_card.setVisible(not self.is_keyword_category)
+        self.description_label.setVisible(not self.is_keyword_category)
+
+    def select_category(self, target: str) -> bool:
+        """대상 이름으로 카테고리를 고른다. 없으면 그대로 두고 False."""
+        target = str(target or "").strip()
+        for index in range(self.category_tabs.count()):
+            if self.category_tabs.tabData(index) == target:
+                self.category_tabs.setCurrentIndex(index)
+                return True
+        return False
 
     def search_resource_name(self, target: str, name: str) -> None:
         """Select a resource category and search its list by title."""
@@ -366,6 +411,11 @@ class ResourceSearchTab(QWidget):
         integrated_index = self.category_tabs.addTab("통합검색")
         self.category_tabs.setTabData(integrated_index, RESOURCE_ALL_TARGET)
         default_category_index = integrated_index
+        related_index, direct_index = self.category_tabs.add_pair(
+            "연관검색", "직접검색"
+        )
+        self.category_tabs.setTabData(related_index, KEYWORD_RELATED_TARGET)
+        self.category_tabs.setTabData(direct_index, KEYWORD_DIRECT_TARGET)
         category_items = list(RESOURCE_CATEGORIES.items())
         for pair_start in range(0, len(category_items), 2):
             (first_target, first_config), (second_target, second_config) = (
@@ -887,7 +937,17 @@ class ResourceSearchTab(QWidget):
         splitter.setStretchFactor(1, 0)
         splitter.setStretchFactor(2, 0)
         detail_card.hide()
-        root.addWidget(splitter, 1)
+        # 카테고리 바 아래는 스택으로 둔다. 법령·행정규칙 같은 목록 검색은
+        # 이 페이지를 쓰고, 연관검색·직접검색은 main_window가 넣어 주는
+        # 키워드검색 화면으로 통째로 갈아 끼운다.
+        self.content_stack = QStackedWidget()
+        self.resource_body = QWidget()
+        body_layout = QVBoxLayout(self.resource_body)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(12)
+        self.content_stack.addWidget(self.resource_body)
+        root.addWidget(self.content_stack, 1)
+        body_layout.addWidget(splitter, 1)
 
         status_layout = QHBoxLayout()
         self.status_label = QLabel("검색 유형과 키워드를 선택해 주세요.")
@@ -905,7 +965,7 @@ class ResourceSearchTab(QWidget):
         status_layout.addWidget(self.status_label)
         status_layout.addStretch()
         status_layout.addWidget(self.progress)
-        root.addLayout(status_layout)
+        body_layout.addLayout(status_layout)
         self.category_tabs.currentChanged.connect(self._category_changed)
         self._reading_mode = False
         self._normal_splitter_sizes = [2000, 0]
@@ -5817,6 +5877,15 @@ class ResourceSearchTab(QWidget):
         dialog.activateWindow()
 
     def _category_changed(self) -> None:
+        self._sync_content_page()
+        if self.is_keyword_category:
+            # 키워드검색 화면은 자기 표ㆍ본문을 따로 들고 있어서 목록 검색
+            # 상태를 건드리면 안 된다. 돌아왔을 때 보던 결과가 남아 있어야
+            # 카테고리를 오가며 비교할 수 있다.
+            self.status_label.setText(
+                f"{self.category['label']} 화면으로 바꿨습니다."
+            )
+            return
         is_annex_category = self.category_target in ("licbyl", "admbyl", "ordinbyl")
         self.annex_search_scope.setVisible(is_annex_category)
         if is_annex_category:
@@ -6509,6 +6578,14 @@ class ResourceSearchTab(QWidget):
                     total_count += target_total
                 except Exception as exc:
                     errors.append(f"{RESOURCE_CATEGORIES[target]['label']}: {exc}")
+            try:
+                keyword_rows, keyword_total = self._parse_keyword_rows(
+                    payload.get("keyword_roots"), rows
+                )
+                rows.extend(keyword_rows)
+                total_count += keyword_total
+            except Exception as exc:
+                errors.append(f"연관검색ㆍ직접검색: {exc}")
             if not integrated_results and errors:
                 raise ValueError("\n".join(errors))
         else:
@@ -6987,6 +7064,76 @@ class ResourceSearchTab(QWidget):
         except (TypeError, ValueError):
             total_count = len(rows)
         return rows, total_count
+
+    def _parse_keyword_rows(
+        self, roots: object, existing: list[dict[str, object]]
+    ) -> tuple[list[dict[str, object]], int]:
+        """연관검색ㆍ직접검색 응답을 통합검색 목록의 행으로 옮긴다.
+
+        두 API는 조문 단위로 답하므로 같은 법령이 여러 번 나온다. 통합검색
+        목록은 법령 단위라서 처음 나온 것만 남기고, 목록 검색으로 이미
+        찾은 법령과 겹치는 것도 뺀다. 별표ㆍ서식 항목은 이 응답만으로는
+        본문을 열 수 있는 일련번호를 얻지 못해 제외한다.
+        """
+        if not isinstance(roots, list) or not roots:
+            return [], 0
+        seen = {
+            (str(row.get("target")), str(row.get("id")))
+            for row in existing
+        }
+        rows: list[dict[str, object]] = []
+        for entry in roots:
+            try:
+                agency, root = entry
+            except (TypeError, ValueError):
+                continue
+            label = KEYWORD_CATEGORY_LABELS.get(
+                KEYWORD_RELATED_TARGET
+                if agency.target == "aiRltLs"
+                else KEYWORD_DIRECT_TARGET,
+                str(agency.name),
+            )
+            for node in root.iter():
+                if "id" not in node.attrib:
+                    continue
+                item_tag = str(node.tag).rsplit("}", 1)[-1]
+                if "별표서식" in item_tag:
+                    continue
+                is_admin = item_tag.startswith("행정규칙")
+                target = "admrul" if is_admin else "law"
+                name = _find_text(node, "행정규칙명" if is_admin else "법령명")
+                item_id = _find_text(node, "행정규칙ID" if is_admin else "법령ID")
+                if not name or not item_id:
+                    continue
+                key = (target, item_id)
+                if key in seen:
+                    continue
+                seen.add(key)
+                organization = _find_text(
+                    node, "발령기관명" if is_admin else "소관부처명"
+                )
+                rows.append(
+                    {
+                        "target": target,
+                        "label": label,
+                        "id": item_id,
+                        "name": name,
+                        "related": organization,
+                        "organization": organization,
+                        "date": self._display_date(
+                            _find_text(node, "발령일자" if is_admin else "공포일자")
+                        ),
+                        "number": _find_text(
+                            node, "발령번호" if is_admin else "공포번호"
+                        ),
+                        "effective": self._display_date(
+                            _find_text(node, "시행일자")
+                        ),
+                        "short_name": "",
+                        "raw": {},
+                    }
+                )
+        return rows, len(rows)
 
     @staticmethod
     def _display_date(value: str) -> str:

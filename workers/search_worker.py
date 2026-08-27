@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import QWidget
-from models.law import RESOURCE_ALL_TARGET, RESOURCE_CATEGORIES
+from models.law import (
+    AI_RELATED_AGENCY,
+    AI_SEARCH_AGENCY,
+    RESOURCE_ALL_TARGET,
+    RESOURCE_CATEGORIES,
+)
 from molit_cgm_expc_api import (
     AgencyConfig,
     get_detail,
@@ -270,8 +275,28 @@ class ResourceApiWorker(QThread):
                             )
                         except Exception as exc:
                             errors.append(f"{config['label']}: {exc}")
+                    # 통합검색은 목록 검색뿐 아니라 연관검색ㆍ직접검색까지
+                    # 한 번에 묶어 보여 준다. 한쪽이 실패해도 나머지 결과는
+                    # 그대로 내보낸다.
+                    keyword_roots: list[object] = []
+                    try:
+                        roots, agency_errors = search_agencies(
+                            self.oc,
+                            (AI_RELATED_AGENCY, AI_SEARCH_AGENCY),
+                            query=self.query,
+                            search=1,
+                            display=100,
+                        )
+                        keyword_roots = roots
+                        errors.extend(
+                            f"{agency.name}: {message}"
+                            for agency, message in agency_errors
+                        )
+                    except Exception as exc:
+                        errors.append(f"연관검색ㆍ직접검색: {exc}")
                     result = {
                         "integrated_results": results,
+                        "keyword_roots": keyword_roots,
                         "errors": errors,
                     }
                 else:
