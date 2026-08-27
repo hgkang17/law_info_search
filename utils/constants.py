@@ -9,7 +9,7 @@ APP_TITLE = "국가법령정보 통합검색"
 APP_VERSION = "1.2.2"
 AUTHOR_NAME = "hgkang"
 COPYRIGHT_YEAR = "2026"
-CONTACT_EMAIL = "hakang17@naver.com"
+CONTACT_EMAIL = "hgkang17@naver.com"
 
 # 공개 GitHub 저장소의 정식 Release만 자동 업데이트 대상으로 삼는다.
 # 배포 자산 이름은 사용자가 EXE 이름을 바꾸어도 영향을 받지 않도록
