@@ -26,6 +26,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import IO
 
+from .cli_errors import with_explanation
 from .base import (
     SYSTEM_PROMPT,
     TOOL_USE_INSTRUCTION,
@@ -288,12 +289,20 @@ class ClaudeCodeChat(ChatSession):
                 details = " ".join(stderr_tail).strip()[:300]
                 if streamed:
                     raise LlmError(
-                        "답이 끝나기 전에 claude가 멈췄습니다. 다시 물어보세요."
-                        + (f"\n{details}" if details else "")
+                        with_explanation(
+                            "답이 끝나기 전에 claude가 멈췄습니다. 다시 물어보세요."
+                            + (f"\n{details}" if details else ""),
+                            process.returncode,
+                            details,
+                        )
                     )
                 raise LlmError(
-                    "claude 실행이 실패했습니다: "
-                    f"{details or f'종료 코드 {process.returncode}'}"
+                    with_explanation(
+                        "claude 실행이 실패했습니다: "
+                        f"{details or f'종료 코드 {process.returncode}'}",
+                        process.returncode,
+                        details,
+                    )
                 )
         finally:
             if killer is not None:

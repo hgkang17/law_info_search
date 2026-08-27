@@ -16,6 +16,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+from .cli_errors import with_explanation
 from .base import (
     SYSTEM_PROMPT,
     TOOL_USE_INSTRUCTION,
@@ -305,10 +306,14 @@ class CodexAppServerChat(ChatSession):
         self._write({"id": request_id, "result": result})
 
     def _process_error(self, message: str) -> str:
-        details = "\n".join(line for line in self._stderr_tail if line).strip()
+        details = chr(10).join(line for line in self._stderr_tail if line).strip()
+        process = self._process
+        returncode = process.returncode if process is not None else None
         if details:
-            return f"{message} {details[-500:]}"
-        return message
+            return with_explanation(
+                f"{message} {details[-500:]}", returncode, details
+            )
+        return with_explanation(message, returncode, details)
 
     @staticmethod
     def _completed_message(message: dict[str, Any]) -> str:
