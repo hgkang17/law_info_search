@@ -293,6 +293,7 @@ class LawSearchTab(QWidget):
 
         detail_card = QFrame()
         detail_card.setObjectName("card")
+        self.detail_card = detail_card
         detail_layout = QVBoxLayout(detail_card)
         detail_layout.setContentsMargins(16, 16, 16, 16)
         detail_layout.setSpacing(10)
@@ -410,9 +411,13 @@ class LawSearchTab(QWidget):
         configure_horizontal_splitter(splitter)
         splitter.setCollapsible(0, True)
         splitter.setCollapsible(1, True)
-        splitter.setSizes([360, 1040])
-        splitter.setStretchFactor(0, 4)
-        splitter.setStretchFactor(1, 12)
+        # 처음에는 법령검색과 똑같이 검색 조건과 결과 목록만 전체 폭으로
+        # 보여 준다. 질의회신·해석례·판례 본문은 결과를 두 번 눌렀을 때만
+        # 오른쪽 분할 화면으로 연다.
+        splitter.setSizes([2000, 0])
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 0)
+        detail_card.hide()
         root.addWidget(splitter, 1)
         self._normal_splitter_sizes = [360, 1040]
         self.root_layout = root
@@ -437,6 +442,26 @@ class LawSearchTab(QWidget):
 
         self.reading_mode_shortcut = QShortcut(QKeySequence("F11"), self)
         self.reading_mode_shortcut.activated.connect(self._toggle_reading_mode)
+
+    def _show_detail_split(self) -> None:
+        """검색 목록 옆에 질의회신·해석례·판례 본문 칸을 연다."""
+        if self._reading_mode:
+            return
+        self.detail_card.show()
+        self.main_splitter.setStretchFactor(0, 4)
+        self.main_splitter.setStretchFactor(1, 12)
+        self.main_splitter.setSizes(self._normal_splitter_sizes)
+        QTimer.singleShot(0, self.memo_marker_bar.refresh_after_layout_change)
+
+    def _hide_detail_split(self) -> None:
+        """새 검색에서는 본문 칸을 닫고 결과 목록을 다시 넓힌다."""
+        if self._reading_mode:
+            self._set_reading_mode(False)
+        total = sum(self.main_splitter.sizes()) or self.main_splitter.width()
+        self.detail_card.hide()
+        self.main_splitter.setStretchFactor(0, 1)
+        self.main_splitter.setStretchFactor(1, 0)
+        self.main_splitter.setSizes([max(1, total), 0])
 
     def _toggle_reading_mode(self, *_args: object) -> None:
         self._set_reading_mode(not self._reading_mode)
@@ -1028,6 +1053,7 @@ class LawSearchTab(QWidget):
             self.query_input.setFocus()
             return
 
+        self._hide_detail_split()
         self.recent_search_manager.add(query)
         self.highlight_terms = search_terms(query)
         self.search_shade_reset_button.setEnabled(bool(self.highlight_terms))
@@ -1454,13 +1480,16 @@ class LawSearchTab(QWidget):
         else:
             self.detail_button.setToolTip("")
 
-        if not has_selection:
+        # 목록만 보이는 동안에는 선택 표시만 바꾼다. 첫 행 자동 선택이나
+        # 목록을 훑는 한 번 누르기로 숨은 본문을 미리 만들지 않는다.
+        # 더블클릭으로 분할 화면을 연 뒤에는 기존처럼 한 번 누른 항목의
+        # 저장 본문 또는 조회 안내를 오른쪽에 보여 준다.
+        if not has_selection or self.detail_card.isHidden():
             return
         selected = self.result_rows[row]
         if self.law_cache.has_snapshot(selected):
             self._request_detail(selected, force_api=False)
             return
-
         self._show_selection_preview(selected)
 
     def _show_selection_preview(self, selected: dict[str, object]) -> None:
@@ -1520,23 +1549,23 @@ class LawSearchTab(QWidget):
         )
 
     def _open_detail_expanded(self, *_args: object) -> None:
-        """검색결과 더블클릭: 본문을 열고 바로 크게 보기로 전환한다."""
+        """검색결과 더블클릭: 목록 오른쪽 분할 화면에 본문을 연다."""
         row = self.result_table.currentRow()
         if row < 0 or row >= len(self.result_rows):
             return
-        self.open_selected_detail()
-        self._set_reading_mode(True)
+        if self._request_detail(self.result_rows[row]):
+            self._show_detail_split()
 
-    def open_selected_detail(self, *_args: object) -> None:
+    def open_selected_detail(self, *_args: object) -> bool:
         row = self.result_table.currentRow()
         if row < 0 or row >= len(self.result_rows):
             QMessageBox.information(self, "항목 선택", "조회할 항목을 선택해 주세요.")
-            return
-        self._request_detail(self.result_rows[row])
+            return False
+        return self._request_detail(self.result_rows[row])
 
     def _request_detail(
         self, selected: dict[str, object], *, force_api: bool = False
-    ) -> None:
+    ) -> bool:
         if self.is_prec and "국세" in str(selected.get("data_source", "")):
             item_id = str(selected["id"])
             url = QUrl(
@@ -1547,11 +1576,11 @@ class LawSearchTab(QWidget):
                 QMessageBox.warning(
                     self, "원문 열기 실패", "판례 원문 페이지를 열지 못했습니다."
                 )
-                return
+                return False
             self.status_label.setText(
                 f"국세청 판례 ID {item_id} 원문 페이지를 열었습니다."
             )
-            return
+            return False
         if not force_api:
             snapshot = self.law_cache.load_snapshot(selected)
             if snapshot is not None:
@@ -1573,14 +1602,14 @@ class LawSearchTab(QWidget):
                 self.status_label.setText(
                     f"{selected.get('agency', '')} ID {selected.get('id', '')} 저장된 본문 열기"
                 )
-                return
+                return True
         if not selected["detail_available"]:
             QMessageBox.information(
                 self,
                 "본문 조회 미제공",
                 f"{selected['agency']}는 본문 조회 API를 제공하지 않습니다.",
             )
-            return
+            return False
         self._pending_detail_row = dict(selected)
         item_id = str(selected["id"])
         agency = (
@@ -1598,6 +1627,7 @@ class LawSearchTab(QWidget):
             ),
             f"{agency.name} ID {item_id} 본문 조회 중...",
         )
+        return True
 
     def open_cached_snapshot(self, record: dict[str, object]) -> None:
         """열람내역의 질의회신·해석례·판례 저장 화면을 다시 표시."""
@@ -1617,6 +1647,7 @@ class LawSearchTab(QWidget):
         self.copy_button.setEnabled(bool(self.current_detail_text))
         self._restore_cached_formatting(record)
         self._restore_cached_memos(record)
+        self._show_detail_split()
         title = str(row.get("title") or row.get("name") or "저장 본문")
         self.status_label.setText(f"{title} 저장된 본문 열기 · API 호출 없음")
 
