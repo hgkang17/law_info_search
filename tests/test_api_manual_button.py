@@ -22,29 +22,38 @@ def qt_app():
     return QApplication.instance() or QApplication([])
 
 
-def test_manual_and_every_image_it_uses_exist() -> None:
-    assert API_KEY_MANUAL_PATH.is_file()
+def test_every_manual_and_the_images_it_uses_exist() -> None:
+    """안내 문서가 가리키는 그림이 실제로 있어야 그 자리가 깨지지 않는다."""
+    manuals = sorted(MANUAL_DIR.glob("*.html"))
 
-    html = API_KEY_MANUAL_PATH.read_text(encoding="utf-8")
-    sources = re.findall(r'<img[^>]+src="([^"]+)"', html)
+    assert manuals, "안내 문서를 하나도 찾지 못했습니다."
+    for manual in manuals:
+        sources = re.findall(
+            r'<img[^>]+src="([^"]+)"', manual.read_text(encoding="utf-8")
+        )
+        assert sources, f"{manual.name}에 그림이 하나도 없습니다."
+        for source in sources:
+            assert (MANUAL_DIR / source).is_file(), f"{manual.name} → {source}"
 
-    assert sources, "안내 문서에 그림이 하나도 없습니다."
-    for source in sources:
-        assert (MANUAL_DIR / source).is_file(), source
 
+def test_every_manual_and_its_images_are_bundled_into_the_exe() -> None:
+    """spec에서 빠지면 개발 중에만 보이고 exe에서는 그 자리가 깨진다.
 
-def test_runtime_manual_files_are_bundled_into_the_exe() -> None:
-    """HTML 안내와 그 그림이 빠지면 개발 중에만 보이고 exe에서는 사라진다."""
+    실제로 제미나이 안내가 이렇게 빠진 적이 있다. 검사 범위를 인증키
+    안내 하나로 좁혀 두었더니 새로 늘어난 안내가 걸리지 않았다. 그래서
+    폴더에 있는 안내 문서 전부를 본다.
+    """
     spec = SPEC.read_text(encoding="utf-8")
-    html = API_KEY_MANUAL_PATH.read_text(encoding="utf-8")
-    sources = re.findall(r'<img[^>]+src="([^"]+)"', html)
-    runtime_files = [
-        API_KEY_MANUAL_PATH,
-        *(MANUAL_DIR / name for name in sources),
-    ]
+    manuals = sorted(MANUAL_DIR.glob("*.html"))
 
-    for path in runtime_files:
-        assert f'("메뉴얼/{path.name}", "메뉴얼")' in spec, path.name
+    assert manuals, "안내 문서를 하나도 찾지 못했습니다."
+    for manual in manuals:
+        assert f'("메뉴얼/{manual.name}", "메뉴얼")' in spec, manual.name
+        sources = re.findall(
+            r'<img[^>]+src="([^"]+)"', manual.read_text(encoding="utf-8")
+        )
+        for source in sources:
+            assert f'("메뉴얼/{source}", "메뉴얼")' in spec, source
 
 
 def test_help_button_floats_inside_the_api_box(qt_app) -> None:
@@ -116,3 +125,29 @@ def test_api_key_widgets_do_not_move_because_of_the_help_button(qt_app) -> None:
         assert before == after_hidden
     finally:
         window.close()
+
+
+def test_gemini_dialog_has_a_help_button_next_to_the_issue_button(qt_app, tmp_path) -> None:
+    """제미나이 키도 발급 자리에서 바로 안내를 볼 수 있어야 한다."""
+    from PySide6.QtCore import QSettings
+
+    from ui.assets import GEMINI_KEY_MANUAL_PATH
+    from ui.tabs.ai_chat_panel import AiChatPanel
+
+    settings = QSettings(
+        str(tmp_path / "panel.ini"), QSettings.Format.IniFormat
+    )
+    panel = AiChatPanel(settings=settings, standalone=True)
+    try:
+        panel.key_row_widget.show()
+        qt_app.processEvents()
+        button = panel.gemini_manual_button
+
+        assert GEMINI_KEY_MANUAL_PATH.is_file()
+        # 발급 바로 옆이라 키를 받으러 가기 전에 눈에 들어온다.
+        assert panel.key_button.x() < button.x() < panel.refresh_button.x()
+        # 전역 QPushButton 스타일에 눌려 세로로 늘어나면 안 된다.
+        assert button.height() <= 26
+    finally:
+        panel.key_row_widget.close()
+        panel.deleteLater()

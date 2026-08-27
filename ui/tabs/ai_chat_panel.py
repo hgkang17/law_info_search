@@ -75,6 +75,7 @@ from llm import (
     Progress,
     extract_cited_articles,
 )
+from ui.assets import GEMINI_KEY_MANUAL_PATH
 from llm.document_labels import lookup_cached_document_label
 from llm.inquiries import is_inquiry_target, split_doc_reference
 from llm.ai_cli_setup import (
@@ -713,6 +714,9 @@ class AiChatPanel(QFrame):
         # 주고받은 말. [역할, 내용] 짝이며, 도구 기록은 세 번째에
         # {"tools": [...]}로 붙는다. 흘러오는 답은 마지막 항목의 글을 늘린다.
         self._messages: list[list] = []
+        # 질문 띠지는 최신 질문 말풍선이 화면 위로 완전히 밀려났을 때만
+        # 보인다. 그 위치를 매번 찾지 않도록 마지막 말풍선을 잡아 둔다.
+        self._latest_user_bubble: QWidget | None = None
         # 진짜 채팅처럼 한 글자씩 나오게 하는 타이머. 네트워크로 온 만큼을
         # 별도 속도로 풀어 보여 준다.
         self._revealed_chars = 0
@@ -856,6 +860,26 @@ class AiChatPanel(QFrame):
         self.key_button.setMinimumWidth(50)
         self.key_button.setToolTip("Gemini API 키 발급 페이지를 엽니다.")
         self.key_button.clicked.connect(self._open_key_page)
+        # 발급 옆에 붙는 작은 물음표. 어디서 어떻게 받는지 그림으로 보여
+        # 준다. 전역 QPushButton의 min-height가 이겨서 세로로 늘어나므로
+        # 이 단추에만 크기를 못 박는다.
+        self.gemini_manual_button = QPushButton("?")
+        self.gemini_manual_button.setObjectName("geminiManualButton")
+        self.gemini_manual_button.setFixedSize(22, 22)
+        self.gemini_manual_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.gemini_manual_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.gemini_manual_button.setToolTip("Gemini API 키 발급 방법 보기")
+        self.gemini_manual_button.setStyleSheet(
+            "QPushButton#geminiManualButton {"
+            " min-width: 22px; max-width: 22px;"
+            " min-height: 22px; max-height: 22px;"
+            " padding: 0; border-radius: 11px;"
+            " border: 1px solid #aec4d7; background: #eef3f7;"
+            " color: #17324b; font-weight: 700; }"
+            "QPushButton#geminiManualButton:hover {"
+            " background: #17607f; border-color: #17607f; color: white; }"
+        )
+        self.gemini_manual_button.clicked.connect(self._open_gemini_manual)
         # 다른 화면의 "API갱신"과 같은 말을 쓴다. 키가 있으면 열 때
         # 자동으로 한 번 받아 오므로, 이 단추는 그 뒤에 모델이 새로
         # 나왔을 때만 다시 누르면 되는 보조 수단이다.
@@ -875,6 +899,7 @@ class AiChatPanel(QFrame):
         key_close_button.clicked.connect(self._save_and_close_api_settings)
         key_actions = QHBoxLayout()
         key_actions.addWidget(self.key_button)
+        key_actions.addWidget(self.gemini_manual_button)
         key_actions.addWidget(self.refresh_button)
         key_actions.addWidget(usage_button)
         key_actions.addStretch(1)
@@ -1079,8 +1104,6 @@ class AiChatPanel(QFrame):
         )
         self.question_banner.hide()
         self._banner_question = ""
-        # 답이 끝나기 전에는 스크롤을 움직여도 띠지를 내리지 않는다.
-        self._banner_release = False
         self.transcript_scroll.viewport().installEventFilter(self)
         # 답이 흐르는 동안에는 화면이 바닥을 따라간다. 다만 사용자가
         # 위로 올려 읽는 중이면 따라가기를 놓아 주고, 다시 바닥까지
@@ -1711,6 +1734,19 @@ class AiChatPanel(QFrame):
             self._reload_models()
         self.key_row_widget.accept()
 
+    def _open_gemini_manual(self, *_args: object) -> None:
+        """제미나이 API 키 발급 안내를 기본 웹 브라우저로 연다."""
+        if not GEMINI_KEY_MANUAL_PATH.is_file():
+            QMessageBox.warning(
+                self,
+                "안내 파일 없음",
+                "제미나이 API 키 발급 안내 파일을 찾지 못했습니다.",
+            )
+            return
+        QDesktopServices.openUrl(
+            QUrl.fromLocalFile(str(GEMINI_KEY_MANUAL_PATH))
+        )
+
     @staticmethod
     def _open_gemini_usage_page() -> None:
         """AI Studio의 사용량·한도 화면을 연다.
@@ -2270,6 +2306,7 @@ class AiChatPanel(QFrame):
         self._session = None
 
     def _clear_transcript_widgets(self) -> None:
+        self._latest_user_bubble = None
         while self.transcript_layout.count() > 2:
             item = self.transcript_layout.takeAt(1)
             widget = item.widget()
@@ -2297,6 +2334,7 @@ class AiChatPanel(QFrame):
             )
         else:
             self.transcript_scroll.verticalScrollBar().setValue(0)
+        self._sync_question_banner_visibility()
 
     @staticmethod
     def _copy_stored_message(message) -> list:
@@ -2342,7 +2380,8 @@ class AiChatPanel(QFrame):
             role = str(message[0])
             text = str(message[1])
             if role == "user":
-                self._insert_bubble(self._make_user_bubble(text))
+                self._latest_user_bubble = self._make_user_bubble(text)
+                self._insert_bubble(self._latest_user_bubble)
             elif role == "ai":
                 column, label, status, tool_log = self._make_ai_bubble(text)
                 label.raw_text = text
@@ -2371,6 +2410,19 @@ class AiChatPanel(QFrame):
                 self._insert_bubble(column)
             elif role == "error":
                 self._insert_bubble(self._make_error_bubble(text))
+        if live:
+            question = next(
+                (
+                    str(message[1])
+                    for message in reversed(self._messages)
+                    if message[0] == "user"
+                ),
+                "",
+            )
+            self._banner_question = " ".join(question.split())
+            self.question_banner.setToolTip(self._banner_question)
+        else:
+            self._hide_question_banner()
         self._update_hint()
         # 위젯 제거와 새 레이아웃 계산이 끝난 다음, 긴 대화의 높이가 짧은
         # 대화에 남지 않도록 실제 내용 크기로 한 번 더 맞춘다.
@@ -3174,7 +3226,7 @@ class AiChatPanel(QFrame):
             QEvent.Type.Resize,
             QEvent.Type.Show,
         ):
-            self._place_question_banner()
+            self._sync_question_banner_visibility()
         return super().eventFilter(watched, event)
 
     def _place_question_banner(self) -> None:
@@ -3209,18 +3261,38 @@ class AiChatPanel(QFrame):
         if not text:
             return
         self._banner_question = text
-        self._banner_release = False
         self.question_banner.setToolTip(text)
+        self._sync_question_banner_visibility()
+
+    def _sync_question_banner_visibility(self) -> None:
+        """최신 질문 말풍선이 위로 완전히 사라졌을 때만 띠지를 보인다."""
+        bubble = self._latest_user_bubble
+        if (
+            not self._streaming
+            or not self._banner_question
+            or bubble is None
+            or bubble.parentWidget() is None
+        ):
+            self.question_banner.hide()
+            return
+
+        viewport = self.transcript_scroll.viewport()
+        # 말풍선의 아랫부분이 조금이라도 화면에 남아 있으면 같은 질문을
+        # 두 번 보여 주지 않는다. 답이 쌓여 말풍선 전체가 위로 벗어난
+        # 순간부터만 띠지가 그 자리를 대신한다.
+        bubble_bottom = bubble.mapTo(viewport, bubble.rect().bottomLeft()).y()
+        if bubble_bottom > 0:
+            self.question_banner.hide()
+            return
         self.question_banner.show()
         self._place_question_banner()
 
     def _release_question_banner(self) -> None:
-        """답이 끝났다. 이제부터는 스크롤을 움직이면 띠지를 내린다."""
-        self._banner_release = True
+        """답이 끝나면 질문 띠지와 그 표시 상태를 정리한다."""
+        self._hide_question_banner()
 
     def _hide_question_banner(self) -> None:
         self._banner_question = ""
-        self._banner_release = False
         self.question_banner.hide()
 
     def _transcript_at_bottom(self) -> bool:
@@ -3235,9 +3307,7 @@ class AiChatPanel(QFrame):
         실제로 스크롤을 움직였을 때의 뜻 그대로 남는다.
         """
         self._follow_bottom = self._transcript_at_bottom()
-        if self._banner_release:
-            # 답이 끝난 뒤 다시 훑어보기 시작했다. 원래 화면으로 돌린다.
-            self._hide_question_banner()
+        self._sync_question_banner_visibility()
 
     def _scroll_to_bottom(self) -> None:
         """바닥으로 내린다. 사용자가 올려 둔 것도 무시하고 내린다.
@@ -3258,6 +3328,7 @@ class AiChatPanel(QFrame):
         self._follow_bottom = True
         bar = self.transcript_scroll.verticalScrollBar()
         bar.setValue(bar.maximum())
+        self._sync_question_banner_visibility()
 
     def _follow_to_bottom(self) -> None:
         """답이 흐르는 동안 쓰는 자동 내림. 올려 읽는 중이면 안 건드린다."""
@@ -3281,6 +3352,7 @@ class AiChatPanel(QFrame):
         self.transcript_layout.activate()
         bar = self.transcript_scroll.verticalScrollBar()
         bar.setValue(bar.maximum())
+        self._sync_question_banner_visibility()
         # 스크롤 범위를 정확히 다시 재는 일(adjustSize)은 긴 대화에서
         # 한 번에 20ms 가까이 든다. 16ms마다 도는 타자기 효과에 그대로
         # 얹으면 화면이 굼떠지므로, 글이 잠깐 멎었을 때 한 번만 한다.
@@ -3295,6 +3367,7 @@ class AiChatPanel(QFrame):
         if self._follow_bottom:
             bar = self.transcript_scroll.verticalScrollBar()
             bar.setValue(bar.maximum())
+        self._sync_question_banner_visibility()
 
     def _settle_follow_scroll(self) -> None:
         """글이 멎은 뒤 스크롤 범위를 다시 재고 바닥에 정확히 붙인다."""
@@ -3304,11 +3377,13 @@ class AiChatPanel(QFrame):
         self.transcript_content.adjustSize()
         bar = self.transcript_scroll.verticalScrollBar()
         bar.setValue(bar.maximum())
+        self._sync_question_banner_visibility()
 
     def _append_user(self, message: str) -> None:
         self._messages.append(["user", message])
         self._update_hint()
-        self._insert_bubble(self._make_user_bubble(message))
+        self._latest_user_bubble = self._make_user_bubble(message)
+        self._insert_bubble(self._latest_user_bubble)
         self._scroll_to_bottom()
 
     def _begin_answer(self) -> None:
@@ -3320,9 +3395,9 @@ class AiChatPanel(QFrame):
             ),
             "",
         )
-        self._show_question_banner(question)
         self._messages.append(["ai", ""])
         self._streaming = True
+        self._show_question_banner(question)
         self._streams[self._active_provider_name] = {
             "messages": self._messages,
             "thread": None,

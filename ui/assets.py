@@ -21,6 +21,7 @@ LOGO_PATH = APP_DIR / "molit_law_logo.svg"
 # onefile EXE에서는 APP_DIR이 실행 중 풀린 임시 폴더를 가리킨다.
 MANUAL_DIR = APP_DIR / "메뉴얼"
 API_KEY_MANUAL_PATH = MANUAL_DIR / "API인증키 발급안내.html"
+GEMINI_KEY_MANUAL_PATH = MANUAL_DIR / "제미나이 API 발급안내.html"
 
 
 CHECK_ICON_PATH = APP_DIR / "checkbox_check.svg"

@@ -1111,11 +1111,12 @@ def test_sending_a_question_always_jumps_to_the_bottom(panel, qt_app) -> None:
         qt_app.processEvents()
     assert panel._follow_bottom is True
     assert bar.maximum() - bar.value() <= panel._BOTTOM_STICKY_PX
-def test_question_banner_stays_on_top_while_answering(panel, qt_app) -> None:
-    """답이 길어지면 무엇을 물었는지 위로 밀려 사라진다.
 
-    답하는 동안에는 질문을 대화창 위에 겹쳐 띄워 계속 보이게 한다.
-    """
+
+def test_question_banner_replaces_question_only_after_it_scrolls_out(
+    panel, qt_app
+) -> None:
+    """질문 말풍선이 보일 때는 숨고, 위로 사라진 뒤에만 띠지가 뜬다."""
     panel.resize(700, 400)
     panel.show()
     qt_app.processEvents()
@@ -1124,18 +1125,29 @@ def test_question_banner_stays_on_top_while_answering(panel, qt_app) -> None:
     panel._begin_answer()
     qt_app.processEvents()
 
-    assert panel.question_banner.isVisible()
+    # 방금 쓴 질문 말풍선이 화면에 있으므로 같은 질문을 또 띄우지 않는다.
+    assert not panel.question_banner.isVisible()
     assert panel.question_banner.toolTip() == question
 
     _stream_more(panel, qt_app, _long_lines("답", 60))
-    # 답이 아무리 흘러도 띠지는 그대로 떠 있다.
+    # 답을 따라 내려가 질문 말풍선이 위로 사라지면 띠지가 대신 뜬다.
+    assert panel.question_banner.isVisible()
+
+    panel.transcript_scroll.verticalScrollBar().setValue(0)
+    qt_app.processEvents()
+    assert not panel.question_banner.isVisible()
+
+    panel.transcript_scroll.verticalScrollBar().setValue(
+        panel.transcript_scroll.verticalScrollBar().maximum()
+    )
+    qt_app.processEvents()
     assert panel.question_banner.isVisible()
 
 
-def test_question_banner_goes_away_after_the_answer_when_scrolling(
+def test_question_banner_goes_away_when_the_answer_finishes(
     panel, qt_app
 ) -> None:
-    """답이 끝난 뒤 다시 훑어보기 시작하면 원래 화면으로 돌아간다."""
+    """답변 중에만 보조 띠지를 쓰고, 답이 끝나면 바로 원래 화면으로 돌아간다."""
     panel.resize(700, 400)
     panel.show()
     qt_app.processEvents()
@@ -1145,13 +1157,7 @@ def test_question_banner_goes_away_after_the_answer_when_scrolling(
     bar = panel.transcript_scroll.verticalScrollBar()
     assert bar.maximum() > 0
 
-    # 답하는 중에는 스크롤을 움직여도 띠지가 남는다.
-    bar.setValue(max(0, bar.value() - 120))
-    qt_app.processEvents()
-    assert panel.question_banner.isVisible()
-
     panel._release_question_banner()
-    bar.setValue(max(0, bar.value() - 120))
     qt_app.processEvents()
     assert not panel.question_banner.isVisible()
 
