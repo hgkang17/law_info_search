@@ -1160,15 +1160,41 @@ class LawSearchWindow(QMainWindow):
         self.navigation.setCurrentRow(1)
         self.resource_tab.select_category(target)
 
+    def _reset_reading_modes_for_page_change(self) -> None:
+        """메인 화면을 바꿀 때 다른 탭에 남은 크게 보기 상태를 정리한다.
+
+        크게 보기는 창 공용 머리말과 왼쪽 메뉴를 숨긴다. 다른 본문 화면이
+        그 공용 영역을 다시 보인 뒤 예전 탭으로 돌아오면, 탭의 내부 플래그만
+        True인 채 남아 카테고리 바와 본문 카드가 서로 다른 상태로 겹칠 수
+        있다. 메인 메뉴 이동은 명시적인 화면 전환이므로 모든 크게 보기를
+        정상 화면으로 돌리고, 예전 화면으로 되돌리는 콜백도 버린다.
+        """
+        reading_tabs = (
+            self.resource_tab,
+            self.ai_related_tab,
+            self.ai_search_tab,
+            self.central_tab,
+            self.expc_tab,
+            self.prec_tab,
+        )
+        for tab in reading_tabs:
+            if hasattr(tab, "_reading_mode_exit_callback"):
+                tab._reading_mode_exit_callback = None
+        for tab in reading_tabs:
+            if getattr(tab, "_reading_mode", False):
+                tab._set_reading_mode(False)
+
     def _main_navigation_changed(self, row: int) -> None:
         if row < 0:
             return
+        self._reset_reading_modes_for_page_change()
         self.favorite_navigation_button.setChecked(False)
         self.viewed_laws_button.setChecked(False)
         self.ai_review_button.setChecked(False)
         self.tabs.setCurrentIndex(row)
 
     def _activate_ai_review_page(self, *_args: object) -> None:
+        self._reset_reading_modes_for_page_change()
         self.navigation.blockSignals(True)
         self.navigation.setCurrentRow(-1)
         self.navigation.clearSelection()
@@ -1194,6 +1220,7 @@ class LawSearchWindow(QMainWindow):
         super().closeEvent(event)
 
     def _activate_favorites_page(self, *_args: object) -> None:
+        self._reset_reading_modes_for_page_change()
         self.navigation.blockSignals(True)
         self.navigation.setCurrentRow(-1)
         self.navigation.clearSelection()
@@ -1204,6 +1231,7 @@ class LawSearchWindow(QMainWindow):
         self.tabs.setCurrentIndex(0)
 
     def _activate_viewed_laws_page(self, *_args: object) -> None:
+        self._reset_reading_modes_for_page_change()
         self.navigation.blockSignals(True)
         self.navigation.setCurrentRow(-1)
         self.navigation.clearSelection()
