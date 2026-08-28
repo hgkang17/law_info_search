@@ -94,6 +94,22 @@ def test_main_menu_clears_stale_reading_mode_before_returning_to_law_search(
     assert resource.main_splitter.sizes()[1:] == [0, 0]
 
 
+def test_keyword_reading_mode_hides_outer_law_category_bar(window) -> None:
+    resource = window.resource_tab
+    window._show_keyword_category("ai_search")
+    keyword = window.ai_search_tab
+    keyword._show_detail_split()
+
+    keyword._set_reading_mode(True)
+    assert resource.category_tabs.isHidden()
+    assert keyword.description_row.isHidden()
+    assert keyword.main_splitter.sizes()[0] == 0
+
+    keyword._set_reading_mode(False)
+    assert not resource.category_tabs.isHidden()
+    assert not keyword._reading_mode
+
+
 def _keyword_root(tag, name_field, name, id_field, item_id, org_field, org):
     root = ET.Element("결과")
     node = ET.SubElement(root, tag, {"id": "1"})

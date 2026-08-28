@@ -37,6 +37,7 @@ from ui.widgets import (
 from ui.dialogs import (
     MemoNoteDialog,
 )
+from ui.tabs.ai_chat_panel import AiChatPanel
 from models.law import (
     AI_RELATED_AGENCY,
     AI_SEARCH_AGENCY,
@@ -110,6 +111,7 @@ class AiLawSearchTab(QWidget):
         self._sort_column = -1
         self._sort_ascending = True
         self._normal_window_margins: tuple[int, int, int, int] | None = None
+        self.ai_chat_panel: AiChatPanel | None = None
         # 조문 참조 팝업과 3단비교는 법령검색 탭이 이미 갖고 있으므로
         # 여기서 다시 만들지 않고 그 탭에 넘긴다. main_window가 지정한다.
         self.reference_tab = None
@@ -131,14 +133,20 @@ class AiLawSearchTab(QWidget):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(12)
 
+        self._description_settings_key = (
+            "related_law_banner_dismissed"
+            if self.is_related
+            else "direct_search_banner_dismissed"
+        )
         description_row = build_dismissible_banner(
             "키워드와 연관성이 높은 법령·행정규칙 조문을 추천합니다."
             if self.is_related
             else "키워드가 직접 포함된 법령·행정규칙의 조문 또는 별표·서식을 찾습니다. "
             "키워드가 검색되는 모든 조문을 표시합니다",
             self.recent_search_manager.settings,
-            "related_law_banner_dismissed" if self.is_related else "direct_search_banner_dismissed",
+            self._description_settings_key,
         )
+        self.description_row = description_row
         root.addWidget(description_row)
 
         search_card = QFrame()
@@ -274,7 +282,7 @@ class AiLawSearchTab(QWidget):
             self._open_detail_expanded
         )
         self.result_table.itemSelectionChanged.connect(
-            self._show_selected_result
+            self._selection_changed
         )
         self.result_table.itemChanged.connect(self._snapshot_check_changed)
         result_layout.addWidget(self.result_table)
@@ -290,6 +298,7 @@ class AiLawSearchTab(QWidget):
 
         detail_card = QFrame()
         detail_card.setObjectName("card")
+        self.detail_card = detail_card
         detail_layout = QVBoxLayout(detail_card)
         detail_layout.setContentsMargins(16, 16, 16, 16)
         detail_layout.setSpacing(10)
@@ -335,14 +344,24 @@ class AiLawSearchTab(QWidget):
         self.expand_detail_button.setToolTip("F11: 본문 크게 보기로 전환")
         self.expand_detail_button.clicked.connect(self._toggle_reading_mode)
 
-        self.detail_button = QPushButton("본문\n조회")
-        self.detail_button.setObjectName("resourceDetailButton")
-        self.detail_button.setFixedSize(42, 42)
-        self.detail_button.setEnabled(False)
-        self.detail_button.setToolTip("선택한 항목을 API에서 다시 불러옵니다.")
-        self.detail_button.clicked.connect(
-            lambda: self._show_selected_result(force_live=True)
+        self.ai_agent_button = QPushButton("AI\n에이전트")
+        self.ai_agent_button.setObjectName("readingModeButton")
+        self.ai_agent_button.setProperty("buttonMode", "ai")
+        self.ai_agent_button.setFixedSize(58, 42)
+        self.ai_agent_button.setToolTip(
+            "보고 있는 본문이나 선택한 부분에 대해 AI 에이전트에게 물어봅니다."
         )
+        self.ai_agent_button.clicked.connect(self._toggle_ai_chat)
+
+        self.close_detail_button = QPushButton("×", detail_card)
+        self.close_detail_button.setObjectName("caseDetailCloseButton")
+        self.close_detail_button.setFixedSize(22, 22)
+        self.close_detail_button.setFlat(True)
+        self.close_detail_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.close_detail_button.setToolTip("분할 본문 닫기")
+        self.close_detail_button.setAccessibleName("분할 본문 닫기")
+        self.close_detail_button.clicked.connect(self._hide_detail_split)
+        detail_card.installEventFilter(self)
 
         self.copy_button = QPushButton("본문 복사")
         self.copy_button.setObjectName("ghostButton")
@@ -360,7 +379,8 @@ class AiLawSearchTab(QWidget):
         detail_head.addWidget(self.memo_button)
         detail_head.addStretch()
         detail_head.addWidget(self.expand_detail_button)
-        detail_head.addWidget(self.detail_button)
+        detail_head.addWidget(self.ai_agent_button)
+        detail_head.addSpacing(22)
         detail_head.addWidget(self.copy_button)
         detail_layout.addLayout(detail_head)
 
@@ -380,7 +400,9 @@ class AiLawSearchTab(QWidget):
         )
         self.detail_view.anchorClicked.connect(self._detail_link_clicked)
         self.detail_view.viewport().setCursor(Qt.CursorShape.IBeamCursor)
-        self.detail_view.setPlaceholderText("검색 결과를 선택하세요.")
+        self.detail_view.setPlaceholderText(
+            "검색 결과에서 항목을 더블클릭하면 본문을 엽니다."
+        )
         self.detail_view.viewport().installEventFilter(self)
         self.three_stage_button = QPushButton(
             "3단비교", self.detail_view.viewport()
@@ -433,9 +455,10 @@ class AiLawSearchTab(QWidget):
         configure_horizontal_splitter(splitter)
         splitter.setCollapsible(0, True)
         splitter.setCollapsible(1, True)
-        splitter.setSizes([360, 1040])
-        splitter.setStretchFactor(0, 4)
-        splitter.setStretchFactor(1, 12)
+        splitter.setSizes([2000, 0])
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 0)
+        detail_card.hide()
         root.addWidget(splitter, 1)
         self._normal_splitter_sizes = [360, 1040]
         self.root_layout = root
@@ -461,6 +484,144 @@ class AiLawSearchTab(QWidget):
         self.reading_mode_shortcut = QShortcut(QKeySequence("F11"), self)
         self.reading_mode_shortcut.activated.connect(self._toggle_reading_mode)
 
+    def _position_close_detail_button(self) -> None:
+        """닫기 ×를 본문 카드의 오른쪽 위 모서리에 고정한다."""
+        self.close_detail_button.move(
+            max(0, self.detail_card.width() - self.close_detail_button.width() - 5),
+            5,
+        )
+        self.close_detail_button.raise_()
+
+    def _show_detail_split(self) -> None:
+        """검색 목록 오른쪽에 직접검색·연관검색 본문 칸을 연다."""
+        if self._reading_mode:
+            return
+        self.detail_card.show()
+        self.main_splitter.setStretchFactor(0, 4)
+        self.main_splitter.setStretchFactor(1, 12)
+        sizes = list(self._normal_splitter_sizes)
+        if self.ai_chat_panel is not None:
+            sizes.append(0)
+        self.main_splitter.setSizes(sizes)
+        QTimer.singleShot(0, self._position_close_detail_button)
+        QTimer.singleShot(0, self.memo_marker_bar.refresh_after_layout_change)
+
+    def _hide_detail_split(self, *_args: object) -> None:
+        """본문과 AI 칸을 닫고 검색 목록을 다시 전체 폭으로 넓힌다."""
+        if self._reading_mode:
+            self._set_reading_mode(False)
+        self._hide_ai_chat()
+        total = sum(self.main_splitter.sizes()) or self.main_splitter.width()
+        self.detail_card.hide()
+        self.main_splitter.setStretchFactor(0, 1)
+        self.main_splitter.setStretchFactor(1, 0)
+        sizes = [max(1, total), 0]
+        if self.ai_chat_panel is not None:
+            self.main_splitter.setStretchFactor(2, 0)
+            sizes.append(0)
+        self.main_splitter.setSizes(sizes)
+
+    def _chat_context(self) -> tuple[str, str]:
+        """AI가 현재 조문·별표 본문 또는 드래그한 부분을 근거로 삼는다."""
+        selected = self.detail_view.textCursor().selectedText()
+        if selected.strip():
+            return selected.replace(" ", "\n"), "선택한 부분"
+        return self.detail_view.toPlainText(), "본문 전체"
+
+    def _resource_action(self, name: str, *args: object):
+        action = getattr(self.reference_tab, name, None)
+        if action is None:
+            return False
+        return action(*args)
+
+    def _ensure_ai_chat_panel(self) -> AiChatPanel:
+        if self.ai_chat_panel is not None:
+            return self.ai_chat_panel
+
+        panel = AiChatPanel(self.recent_search_manager.settings, parent=self)
+        panel.context_source = self._chat_context
+        panel.oc_provider = self.oc_provider
+        panel.document_cache = self.law_cache
+        panel.favorite_handler = lambda *args: self._resource_action(
+            "add_favorite_by_id", *args
+        )
+        panel.favorite_checker = lambda *args: self._resource_action(
+            "is_favorite_by_id", *args
+        )
+        panel.article_favorite_handler = lambda *args: self._resource_action(
+            "add_article_favorite_by_id", *args
+        )
+        panel.article_favorite_checker = lambda *args: self._resource_action(
+            "is_article_favorite_by_id", *args
+        )
+        panel.reference_handler = lambda *args: self._resource_action(
+            "open_reference_link", *args
+        )
+        panel.closeRequested.connect(self._hide_ai_chat)
+        panel.hide()
+        self.main_splitter.addWidget(panel)
+        self.main_splitter.setCollapsible(2, True)
+        self.main_splitter.setStretchFactor(2, 0)
+        self.ai_chat_panel = panel
+
+        window = self.window()
+        peers = [
+            getattr(window, "ai_review_tab", None),
+            getattr(getattr(window, "resource_tab", None), "ai_chat_panel", None),
+        ]
+        for tab_name in (
+            "central_tab",
+            "expc_tab",
+            "prec_tab",
+            "ai_related_tab",
+            "ai_search_tab",
+        ):
+            peer_tab = getattr(window, tab_name, None)
+            peers.append(getattr(peer_tab, "ai_chat_panel", None))
+        for peer in peers:
+            if peer is None or peer is panel:
+                continue
+            panel.chatHistoryCleared.connect(peer.apply_external_history_clear)
+            peer.chatHistoryCleared.connect(panel.apply_external_history_clear)
+        return panel
+
+    def _toggle_ai_chat(self, *_args: object) -> None:
+        panel = self._ensure_ai_chat_panel()
+        if panel.isVisible():
+            self._hide_ai_chat()
+        else:
+            self._show_ai_chat()
+
+    def _show_ai_chat(self) -> None:
+        panel = self._ensure_ai_chat_panel()
+        sizes = self.main_splitter.sizes()
+        total = sum(sizes) or self.main_splitter.width()
+        left_width = 0 if self._reading_mode else sizes[0]
+        chat_width = max(300, total // 4)
+        detail_width = max(1, total - left_width - chat_width)
+        panel.show()
+        self.main_splitter.setStretchFactor(2, 4)
+        self.main_splitter.setSizes([left_width, detail_width, chat_width])
+        panel.input_edit.setFocus()
+
+    def _hide_ai_chat(self, *_args: object) -> None:
+        panel = self.ai_chat_panel
+        if panel is None or not panel.isVisible():
+            return
+        sizes = self.main_splitter.sizes()
+        total = sum(sizes) or self.main_splitter.width()
+        left_width = 0 if self._reading_mode else sizes[0]
+        panel.hide()
+        self.main_splitter.setStretchFactor(2, 0)
+        self.main_splitter.setSizes(
+            [left_width, max(1, total - left_width), 0]
+        )
+        self.detail_view.setFocus()
+
+    def shutdown(self) -> None:
+        if self.ai_chat_panel is not None:
+            self.ai_chat_panel.shutdown()
+
     def _toggle_reading_mode(self, *_args: object) -> None:
         self._set_reading_mode(not self._reading_mode)
 
@@ -480,12 +641,21 @@ class AiLawSearchTab(QWidget):
         central_layout = central_widget.layout() if central_widget is not None else None
         if expanded:
             current_sizes = self.main_splitter.sizes()
-            if sum(current_sizes) > 0:
-                self._normal_splitter_sizes = current_sizes
+            if not self.detail_card.isHidden() and sum(current_sizes[:2]) > 0:
+                self._normal_splitter_sizes = current_sizes[:2]
+            self.detail_card.show()
             if central_layout is not None:
                 self._normal_window_margins = central_layout.getContentsMargins()
 
         self._reading_mode = expanded
+        self.description_row.setVisible(
+            not expanded
+            and not bool(
+                self.recent_search_manager.settings.value(
+                    self._description_settings_key, False, type=bool
+                )
+            )
+        )
         self.search_results_panel.setVisible(not expanded)
         self.status_label.setVisible(not expanded)
         self.progress.setVisible(
@@ -498,6 +668,22 @@ class AiLawSearchTab(QWidget):
             window.navigation_card.setVisible(not expanded)
         elif hasattr(window, "tabs") and hasattr(window.tabs, "tabBar"):
             window.tabs.tabBar().setVisible(not expanded)
+
+        # 직접검색·연관검색은 법령검색 안쪽 페이지이므로 바깥 카테고리 바와
+        # 여백도 함께 접어야 질의회신과 같은 실제 전체 본문이 된다.
+        host = self.reference_tab
+        if host is not None:
+            category_tabs = getattr(host, "category_tabs", None)
+            if category_tabs is not None:
+                category_tabs.setVisible(not expanded)
+            host_layout = getattr(host, "root_layout", None)
+            if host_layout is not None:
+                host_layout.setContentsMargins(
+                    0 if expanded else 12,
+                    0 if expanded else 12,
+                    0 if expanded else 12,
+                    0 if expanded else 12,
+                )
 
         if central_layout is not None:
             if expanded:
@@ -518,13 +704,36 @@ class AiLawSearchTab(QWidget):
             else 0.0
         )
         if expanded:
-            self.main_splitter.setSizes([0, max(1, sum(self._normal_splitter_sizes))])
+            current_sizes = self.main_splitter.sizes()
+            total = sum(current_sizes) or sum(self._normal_splitter_sizes)
+            chat_width = (
+                current_sizes[2]
+                if self.ai_chat_panel is not None
+                and self.ai_chat_panel.isVisible()
+                and len(current_sizes) > 2
+                else 0
+            )
+            sizes = [0, max(1, total - chat_width)]
+            if self.ai_chat_panel is not None:
+                sizes.append(chat_width)
+            self.main_splitter.setSizes(sizes)
             self.expand_detail_button.setText("원래\n화면")
             self.expand_detail_button.setToolTip("F11: 원래 화면으로 돌아가기")
             self.restore_view_button.show()
             self.detail_view.setFocus()
         else:
-            self.main_splitter.setSizes(self._normal_splitter_sizes)
+            current_sizes = self.main_splitter.sizes()
+            chat_width = (
+                current_sizes[2]
+                if self.ai_chat_panel is not None
+                and self.ai_chat_panel.isVisible()
+                and len(current_sizes) > 2
+                else 0
+            )
+            sizes = list(self._normal_splitter_sizes)
+            if self.ai_chat_panel is not None:
+                sizes.append(chat_width)
+            self.main_splitter.setSizes(sizes)
             self.expand_detail_button.setText("크게\n보기")
             self.restore_view_button.hide()
             self.expand_detail_button.setToolTip("F11: 본문 크게 보기로 전환")
@@ -1045,6 +1254,7 @@ class AiLawSearchTab(QWidget):
             self.query_input.setFocus()
             return
 
+        self._hide_detail_split()
         self.recent_search_manager.add(query)
         self.highlight_terms = search_terms(query)
         self.search_shade_reset_button.setEnabled(bool(self.highlight_terms))
@@ -1056,7 +1266,6 @@ class AiLawSearchTab(QWidget):
         self.detail_view.clear()
         self.current_detail_text = ""
         self.copy_button.setEnabled(False)
-        self.detail_button.setEnabled(False)
         agency = AI_RELATED_AGENCY if self.is_related else AI_SEARCH_AGENCY
         search_scope = int(self.scope_combo.currentData())
         if not force_api:
@@ -1141,8 +1350,6 @@ class AiLawSearchTab(QWidget):
         self._progress_opacity.setOpacity(0.0)
         self.worker = None
         finished_worker.deleteLater()
-        if operation == "search" and self.is_related:
-            QTimer.singleShot(0, self._show_selected_result)
 
     def _worker_succeeded(self, operation: str, payload: object) -> None:
         try:
@@ -1679,21 +1886,38 @@ class AiLawSearchTab(QWidget):
         )
 
     def _open_detail_expanded(self, *_args: object) -> None:
-        """검색결과 더블클릭: 본문을 열고 바로 크게 보기로 전환한다."""
+        """검색결과 더블클릭: 목록 오른쪽 분할 화면에 본문을 연다."""
         row = self.result_table.currentRow()
         if row < 0 or row >= len(self.result_rows):
             return
         self._show_selected_result()
-        self._set_reading_mode(True)
+        self._show_detail_split()
+
+    def _selection_changed(self) -> None:
+        """목록 화면에서는 선택만, 분할 본문이 열린 뒤에는 내용을 바꾼다."""
+        row_index = self.result_table.currentRow()
+        selection_model = self.result_table.selectionModel()
+        has_selection = bool(
+            selection_model is not None and selection_model.hasSelection()
+        )
+        if (
+            not has_selection
+            or row_index < 0
+            or row_index >= len(self.result_rows)
+        ):
+            self.copy_button.setEnabled(False)
+            self._update_three_stage_button(None)
+            return
+        if self.detail_card.isHidden():
+            return
+        self._show_selected_result()
 
     def _show_selected_result(self, *, force_live: bool = False) -> None:
         row_index = self.result_table.currentRow()
         if row_index < 0 or row_index >= len(self.result_rows):
             self.copy_button.setEnabled(False)
-            self.detail_button.setEnabled(False)
             self._update_three_stage_button(None)
             return
-        self.detail_button.setEnabled(True)
         row = self.result_rows[row_index]
         self._update_three_stage_button(row)
         if not force_live:
@@ -1795,9 +2019,9 @@ class AiLawSearchTab(QWidget):
         self.detail_view.moveCursor(QTextCursor.MoveOperation.Start)
         self.current_detail_text = str(record.get("plain_text") or "")
         self.copy_button.setEnabled(bool(self.current_detail_text))
-        self.detail_button.setEnabled(True)
         self._restore_cached_formatting(record)
         self._restore_cached_memos(record)
+        self._show_detail_split()
         name = str(row.get("name") or "저장 본문")
         provision = str(row.get("provision") or "").strip()
         self.status_label.setText(
@@ -1864,6 +2088,11 @@ class AiLawSearchTab(QWidget):
         self.three_stage_button.raise_()
 
     def eventFilter(self, watched, event) -> bool:
+        if (
+            watched is getattr(self, "detail_card", None)
+            and event.type() in (QEvent.Type.Resize, QEvent.Type.Show)
+        ):
+            QTimer.singleShot(0, self._position_close_detail_button)
         if (
             hasattr(self, "detail_view")
             and watched is self.detail_view.viewport()

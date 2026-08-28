@@ -1217,6 +1217,8 @@ class LawSearchWindow(QMainWindow):
         self.central_tab.shutdown()
         self.expc_tab.shutdown()
         self.prec_tab.shutdown()
+        self.ai_related_tab.shutdown()
+        self.ai_search_tab.shutdown()
         super().closeEvent(event)
 
     def _activate_favorites_page(self, *_args: object) -> None:
