@@ -1303,6 +1303,9 @@ class LawSearchWindow(QMainWindow):
                 raise ValueError("저장 파일에 항목 정보가 없습니다.")
             if record.get("kind") != "detail_snapshot":
                 self.navigation.setCurrentRow(1)
+                self.resource_tab.ensure_body_page_for_target(
+                    str(row.get("target") or "law")
+                )
                 tab = prepare(self.resource_tab)
                 article_jo = str(
                     record.get("favorite_article_jo") or ""
@@ -1332,6 +1335,7 @@ class LawSearchWindow(QMainWindow):
                 return self.resource_tab
             if target in ("admrul", "ordin", "licbyl", "admbyl", "ordinbyl"):
                 self.navigation.setCurrentRow(1)
+                self.resource_tab.ensure_body_page_for_target(target)
                 tab = prepare(self.resource_tab)
                 tab._open_cached_resource_snapshot(row, record)
                 return tab
@@ -2838,13 +2842,13 @@ class LawSearchWindow(QMainWindow):
                 font-size: 8pt;
             }
             QPushButton#recentSearchButton {
-                min-height: 34px;
-                max-height: 34px;
+                min-height: 22px;
+                max-height: 22px;
                 background: white;
                 color: #526176;
                 border: 1px solid #d5dee8;
-                border-radius: 8px;
-                padding: 0 3px;
+                border-radius: 6px;
+                padding: 0 4px;
                 font-size: 8pt;
                 font-weight: 400;
             }

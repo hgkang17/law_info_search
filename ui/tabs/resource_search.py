@@ -348,6 +348,36 @@ class ResourceSearchTab(QWidget):
         """연관검색ㆍ직접검색처럼 키워드검색 화면이 맡는 분류인지."""
         return self.category_target in KEYWORD_CATEGORY_LABELS
 
+    def ensure_body_page_for_target(self, target: str) -> None:
+        """키워드검색 화면이 법령 본문을 가리지 않게 목록 페이지로 돌린다.
+
+        카테고리 변경 신호를 그대로 타면 검색 결과와 열어 둔 본문을 지운다.
+        크게 보기 직전에 부르므로 화면만 바꾸고 내용은 유지한다.
+        """
+        mapped = str(target or "law")
+        if mapped == "law_article":
+            mapped = "law"
+        if mapped not in RESOURCE_CATEGORIES:
+            mapped = "law"
+        if not self.is_keyword_category and (
+            self.content_stack.currentWidget() is self.resource_body
+        ):
+            return
+        self.category_tabs.blockSignals(True)
+        selected = self.select_category(mapped)
+        self.category_tabs.blockSignals(False)
+        if not selected:
+            return
+        self._sync_content_page()
+        self._sync_detail_button_visibility()
+
+    def _sync_detail_button_visibility(self) -> None:
+        """법령·행정규칙·자치법규는 더블클릭이 본문이라 조회 단추를 숨긴다."""
+        self.detail_button.setVisible(
+            self.category_target not in ("law", "admrul", "ordin")
+            and not self.is_keyword_category
+        )
+
     def attach_keyword_page(self, widget) -> None:
         """키워드검색 화면을 카테고리 바 아래 스택에 끼운다.
 
@@ -635,10 +665,10 @@ class ResourceSearchTab(QWidget):
         detail_head.addStretch()
         detail_head.addWidget(self.expand_detail_button)
 
-        # 법령검색의 목록 화면에는 오른쪽 본문 칸을 두지 않는다. 본문 조회
-        # 단추는 결과 제목줄 맨 오른쪽에 두고, 누르면 본문을 전체 화면으로
-        # 연다. "API갱신"은 그 왼쪽에 선다.
+        # 별표·서식·통합검색만 결과 제목줄에 본문 조회를 둔다.
+        # 법령·행정규칙·자치법규는 더블클릭이 바로 크게 보기라 단추를 숨긴다.
         result_head.layout.addWidget(self.detail_button)
+        self._sync_detail_button_visibility()
 
         self.document_tabs = QTabBar()
         self.document_tabs.setObjectName("documentTabs")
@@ -1058,6 +1088,14 @@ class ResourceSearchTab(QWidget):
         )
         central_layout = central_widget.layout() if central_widget is not None else None
         if expanded:
+            row_target = "law"
+            state = self._document_states.get(self._active_document_key or "")
+            if isinstance(state, dict) and isinstance(state.get("row"), dict):
+                row_target = str(state["row"].get("target") or "law")
+            pending = getattr(self, "pending_row", None)
+            if isinstance(pending, dict) and pending.get("target"):
+                row_target = str(pending.get("target") or row_target)
+            self.ensure_body_page_for_target(row_target)
             current_sizes = self.main_splitter.sizes()
             if sum(current_sizes) > 0:
                 self._normal_splitter_sizes = [sum(current_sizes), 0]
@@ -6000,6 +6038,7 @@ class ResourceSearchTab(QWidget):
 
     def _category_changed(self) -> None:
         self._sync_content_page()
+        self._sync_detail_button_visibility()
         if self.is_keyword_category:
             # 키워드검색 화면은 자기 표ㆍ본문을 따로 들고 있어서 목록 검색
             # 상태를 건드리면 안 된다. 돌아왔을 때 보던 결과가 남아 있어야
@@ -6037,6 +6076,7 @@ class ResourceSearchTab(QWidget):
                 if is_annex
                 else "선택한 항목의 본문을 조회합니다."
             )
+        self._sync_detail_button_visibility()
         self.status_label.setText(
             f"{self.category['label']} 검색 유형을 선택했습니다."
         )
@@ -7337,7 +7377,7 @@ class ResourceSearchTab(QWidget):
         self.detail_button.setToolTip(button_tooltip)
         # 한 번 누른 것만으로는 열지 않는다. 목록을 훑어보려고 눌렀을
         # 뿐인데 저장해 둔 본문이 곧바로 열려 버려, 다음 항목을 보려면
-        # 매번 되돌아와야 했다. 여는 것은 [본문 조회]나 두 번 누르기다.
+        # 매번 되돌아와야 했다. 여는 것은 두 번 누르기다.
         self._show_preview(row)
 
     def _show_preview(self, row: dict[str, object]) -> None:
@@ -7359,7 +7399,7 @@ class ResourceSearchTab(QWidget):
             )
         elif "detail_target" in RESOURCE_CATEGORIES[str(row["target"])]:
             note = (
-                "본문 조회를 누르면 본문 API를 호출합니다.\n"
+                "더블클릭하면 본문 API를 호출합니다.\n"
                 "저장된 본문이면 API 호출이 아닌 저장된 본문으로 열립니다.\n"
                 "저장 체크를 풀면 저장된 본문 파일을 삭제합니다."
             )

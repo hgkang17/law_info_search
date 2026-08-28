@@ -129,6 +129,7 @@ def test_law_search_hides_fixed_detail_pane(qt_app) -> None:
         resource = window.resource_tab
         assert resource.detail_card.isHidden()
         assert resource.detail_button.parentWidget() is resource.result_card
+        assert resource.detail_button.isHidden()
 
         resource._set_reading_mode(True)
         assert not resource.detail_card.isHidden()
@@ -258,6 +259,55 @@ def test_favorite_article_opens_in_full_reading_mode_with_back_button(
         assert window.favorite_navigation_button.isChecked()
         assert resource.detail_card.isHidden()
         assert resource._document_tab_index(article_key) == -1
+    finally:
+        window.close()
+        qt_app.processEvents()
+
+
+def test_favorite_body_is_not_covered_by_keyword_page(qt_app) -> None:
+    """직접검색을 보고 있어도 즐겨찾기 본문은 법령 크게 보기로 열린다."""
+    window = LawSearchWindow()
+    try:
+        window._show_keyword_category("ai_search")
+        assert (
+            window.resource_tab.content_stack.currentWidget()
+            is window.resource_tab._keyword_page
+        )
+
+        record = {
+            "row": {
+                "target": "law",
+                "id": "009294",
+                "label": "법령",
+                "name": "국토의 계획 및 이용에 관한 법률",
+            },
+            "payload": {
+                "법령": {
+                    "기본정보": {
+                        "법령명_한글": "국토의 계획 및 이용에 관한 법률",
+                        "법령ID": "009294",
+                    },
+                    "조문": {
+                        "조문단위": [
+                            {
+                                "조문번호": "1",
+                                "조문내용": "제1조(목적) 본문",
+                            }
+                        ]
+                    },
+                }
+            },
+        }
+        window._activate_favorites_page()
+        window._open_favorite(record)
+        qt_app.processEvents()
+
+        resource = window.resource_tab
+        assert resource.content_stack.currentWidget() is resource.resource_body
+        assert resource.category_target == "law"
+        assert resource._reading_mode is True
+        assert not resource.detail_card.isHidden()
+        assert "제1조(목적) 본문" in resource.current_detail_text
     finally:
         window.close()
         qt_app.processEvents()

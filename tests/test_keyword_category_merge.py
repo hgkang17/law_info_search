@@ -131,6 +131,18 @@ def test_result_count_badge_size_is_shared(window, qt_app) -> None:
     assert law_hint.height() <= 24
 
 
+def test_detail_button_hidden_for_law_admin_and_ordinance(window) -> None:
+    resource = window.resource_tab
+    resource.select_category("law")
+    assert resource.detail_button.isHidden()
+    resource.select_category("admrul")
+    assert resource.detail_button.isHidden()
+    resource.select_category("ordin")
+    assert resource.detail_button.isHidden()
+    resource.select_category("licbyl")
+    assert not resource.detail_button.isHidden()
+
+
 def test_saved_records_route_into_the_law_search_tab(window) -> None:
     window._show_keyword_category("ai_search")
 

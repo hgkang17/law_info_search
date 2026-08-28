@@ -59,7 +59,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import QPointF
 from PySide6.QtGui import QPalette, QTextLayout
-from PySide6.QtWidgets import QApplication, QButtonGroup, QGridLayout, QToolTip
+from PySide6.QtWidgets import QApplication, QButtonGroup, QToolTip
 from storage.recent import RecentSearchManager
 from utils.formatting import hwp_friendly_clipboard_html
 from utils.parsing import whitespace_flexible_pattern
@@ -1302,7 +1302,7 @@ class DetailSearchBar(QWidget):
 
 
 class RecentSearchBar(QWidget):
-    """최근 검색어를 최대 두 줄로 표시하고 다시 입력하거나 초기화함."""
+    """최근 검색어를 한 줄에 최대 10개까지 표시하고 다시 입력하거나 초기화함."""
 
     def __init__(
         self,
@@ -1315,36 +1315,28 @@ class RecentSearchBar(QWidget):
         self.manager = manager
         self.setObjectName("recentSearchBar")
 
-        layout = QVBoxLayout(self)
+        layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 0, 4, 0)
-        layout.setSpacing(3)
-        header_layout = QHBoxLayout()
-        header_layout.setContentsMargins(0, 0, 0, 0)
-        header_layout.setSpacing(5)
+        layout.setSpacing(5)
         label = QLabel("최근 검색어")
         label.setObjectName("recentSearchLabel")
         self.clear_button = QPushButton("초기화")
         self.clear_button.setObjectName("recentSearchClearButton")
         self.clear_button.setToolTip("저장된 최근 검색어를 모두 삭제합니다.")
         self.clear_button.clicked.connect(self.manager.clear)
-        header_layout.addWidget(label)
-        header_layout.addStretch()
-        header_layout.addWidget(self.clear_button)
-        layout.addLayout(header_layout)
-        self.items_layout = QGridLayout()
+        layout.addWidget(label)
+        self.items_layout = QHBoxLayout()
         self.items_layout.setContentsMargins(0, 0, 0, 0)
-        self.items_layout.setHorizontalSpacing(3)
-        self.items_layout.setVerticalSpacing(3)
-        for column in range(5):
-            self.items_layout.setColumnStretch(column, 1)
-        layout.addLayout(self.items_layout)
+        self.items_layout.setSpacing(3)
+        layout.addLayout(self.items_layout, 1)
+        layout.addWidget(self.clear_button)
 
         manager.changed.connect(self.refresh)
         self._query_buttons: list[tuple[QPushButton, str]] = []
-        self._last_wrap_widths: tuple[int, ...] = ()
+        self._last_elide_widths: tuple[int, ...] = ()
         self._wrap_timer = QTimer(self)
         self._wrap_timer.setSingleShot(True)
-        self._wrap_timer.timeout.connect(self._apply_query_wrapping)
+        self._wrap_timer.timeout.connect(self._apply_query_eliding)
         self.refresh(manager.items)
 
     def refresh(self, items: object = None) -> None:
@@ -1353,7 +1345,7 @@ class RecentSearchBar(QWidget):
         )]
         if values == [query for _button, query in self._query_buttons]:
             self.clear_button.setEnabled(bool(values))
-            self._schedule_query_wrapping_if_needed()
+            self._schedule_query_eliding_if_needed()
             return
 
         while self.items_layout.count():
@@ -1365,14 +1357,15 @@ class RecentSearchBar(QWidget):
 
         self.clear_button.setEnabled(bool(values))
         self._query_buttons = []
-        self._last_wrap_widths = ()
+        self._last_elide_widths = ()
         if not values:
             empty = QLabel("없음")
             empty.setObjectName("recentSearchEmpty")
-            self.items_layout.addWidget(empty, 0, 0)
+            self.items_layout.addWidget(empty)
+            self.items_layout.addStretch()
             return
 
-        for index, query in enumerate(values):
+        for query in values:
             query = str(query)
             button = QPushButton(" ".join(query.split()))
             button.setObjectName("recentSearchButton")
@@ -1384,59 +1377,43 @@ class RecentSearchBar(QWidget):
             button.clicked.connect(
                 lambda _checked=False, value=query: self._select(value)
             )
-            self.items_layout.addWidget(button, index // 5, index % 5)
+            self.items_layout.addWidget(button, 1)
             self._query_buttons.append((button, query))
-        self._schedule_query_wrapping()
+        self._schedule_query_eliding()
 
-    def _schedule_query_wrapping(self, delay: int = 0) -> None:
+    def _schedule_query_eliding(self, delay: int = 0) -> None:
         self._wrap_timer.start(max(0, delay))
 
-    def _schedule_query_wrapping_if_needed(self, delay: int = 0) -> None:
+    def _schedule_query_eliding_if_needed(self, delay: int = 0) -> None:
         widths = tuple(button.width() for button, _query in self._query_buttons)
-        if widths != self._last_wrap_widths:
-            self._schedule_query_wrapping(delay)
+        if widths != self._last_elide_widths:
+            self._schedule_query_eliding(delay)
         else:
             self._wrap_timer.stop()
 
-    def _apply_query_wrapping(self) -> None:
+    def _apply_query_eliding(self) -> None:
         if not self.isVisible():
             return
         widths = tuple(button.width() for button, _query in self._query_buttons)
-        if widths == self._last_wrap_widths:
+        if widths == self._last_elide_widths:
             return
         for button, query in self._query_buttons:
             width = button.width()
-            if width < 24:
+            if width < 16:
                 continue
-            wrapped = self._wrap_query_label(button.fontMetrics(), query, width)
-            if button.text() != wrapped:
-                button.setText(wrapped)
-        self._last_wrap_widths = widths
-
-    @staticmethod
-    def _wrap_query_label(
-        metrics: QFontMetrics, query: str, available_width: int
-    ) -> str:
-        """버튼 실제 폭을 기준으로 최대 두 줄로 표시하고, 넘치면 말줄임표 처리."""
-        query = " ".join(str(query).split())
-        text_width = max(1, available_width - 10)
-        if metrics.horizontalAdvance(query) <= text_width:
-            return query
-        first = query
-        while len(first) > 1 and metrics.horizontalAdvance(first) > text_width:
-            first = first[:-1]
-        remainder = query[len(first):].lstrip()
-        if not remainder:
-            return first
-        second = metrics.elidedText(
-            remainder, Qt.TextElideMode.ElideRight, text_width
-        )
-        return f"{first}\n{second}"
+            elided = button.fontMetrics().elidedText(
+                " ".join(query.split()),
+                Qt.TextElideMode.ElideRight,
+                max(1, width - 8),
+            )
+            if button.text() != elided:
+                button.setText(elided)
+        self._last_elide_widths = widths
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         if self._query_buttons:
-            self._schedule_query_wrapping_if_needed(30)
+            self._schedule_query_eliding_if_needed(30)
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
@@ -1444,7 +1421,7 @@ class RecentSearchBar(QWidget):
             # 같은 폭의 화면으로 돌아온 경우 문구를 다시 설정하지 않는다.
             # 탭 전환 때 최근 검색어가 잠깐 원문으로 돌아갔다가 줄바꿈되는
             # 것처럼 보이던 깜빡임을 막는다.
-            self._schedule_query_wrapping_if_needed(50)
+            self._schedule_query_eliding_if_needed(50)
 
     def _select(self, query: str) -> None:
         self.query_input.setText(query)
