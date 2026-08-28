@@ -138,6 +138,30 @@ def test_double_click_opens_case_detail_in_split_view(
         qt_app.processEvents()
 
 
+def test_small_close_button_replaces_detail_lookup_button(
+    qt_app, tmp_path
+) -> None:
+    tab = _tab(tmp_path)
+    try:
+        tab._show_detail_split()
+        qt_app.processEvents()
+
+        assert not hasattr(tab, "detail_button")
+        assert tab.close_detail_button.text() == "×"
+        assert tab.close_detail_button.width() <= 24
+        assert tab.close_detail_button.height() <= 24
+
+        tab.close_detail_button.click()
+        qt_app.processEvents()
+
+        assert tab.detail_card.isHidden()
+        assert tab.main_splitter.sizes()[1] == 0
+        assert not tab._reading_mode
+    finally:
+        tab.close()
+        qt_app.processEvents()
+
+
 def test_unavailable_case_detail_keeps_results_only(
     qt_app, tmp_path, monkeypatch
 ) -> None:

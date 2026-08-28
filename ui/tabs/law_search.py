@@ -215,11 +215,6 @@ class LawSearchTab(QWidget):
         if self.search_refresh_button is not None:
             result_head.addWidget(self.search_refresh_button)
 
-        self.detail_button = QPushButton("본문\n조회")
-        self.detail_button.setObjectName("resourceDetailButton")
-        self.detail_button.setFixedSize(42, 42)
-        self.detail_button.setEnabled(False)
-        self.detail_button.clicked.connect(self.open_selected_detail)
         result_layout.addLayout(result_head)
 
         if self.is_central:
@@ -340,6 +335,15 @@ class LawSearchTab(QWidget):
         self.expand_detail_button.setToolTip("F11: 본문 크게 보기로 전환")
         self.expand_detail_button.clicked.connect(self._toggle_reading_mode)
 
+        self.close_detail_button = QPushButton("×")
+        self.close_detail_button.setObjectName("caseDetailCloseButton")
+        self.close_detail_button.setFixedSize(22, 22)
+        self.close_detail_button.setFlat(True)
+        self.close_detail_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.close_detail_button.setToolTip("분할 본문 닫기")
+        self.close_detail_button.setAccessibleName("분할 본문 닫기")
+        self.close_detail_button.clicked.connect(self._hide_detail_split)
+
         self.copy_button = QPushButton("본문 복사")
         self.copy_button.setObjectName("ghostButton")
         self.copy_button.setEnabled(False)
@@ -356,7 +360,9 @@ class LawSearchTab(QWidget):
         detail_head.addWidget(self.memo_button)
         detail_head.addStretch()
         detail_head.addWidget(self.expand_detail_button)
-        detail_head.addWidget(self.detail_button)
+        detail_head.addWidget(
+            self.close_detail_button, 0, Qt.AlignmentFlag.AlignTop
+        )
         detail_head.addWidget(self.copy_button)
         detail_layout.addLayout(detail_head)
 
@@ -375,7 +381,7 @@ class LawSearchTab(QWidget):
         )
         self.detail_view.viewport().setCursor(Qt.CursorShape.IBeamCursor)
         self.detail_view.setPlaceholderText(
-            "검색 결과에서 항목을 선택한 뒤 본문 조회 버튼을 누르세요."
+            "검색 결과에서 항목을 더블클릭하면 본문을 조회합니다."
         )
         self.detail_search = DetailSearchBar(self.detail_view, self)
         detail_layout.addWidget(self.detail_search)
@@ -1136,9 +1142,7 @@ class LawSearchTab(QWidget):
         self.search_button.setEnabled(not busy)
         if self.search_refresh_button is not None:
             self.search_refresh_button.setEnabled(not busy)
-        if busy:
-            self.detail_button.setEnabled(False)
-        else:
+        if not busy:
             self._selection_changed()
         self.query_input.setEnabled(not busy)
         self.scope_combo.setEnabled(not busy)
@@ -1455,30 +1459,6 @@ class LawSearchTab(QWidget):
     def _selection_changed(self) -> None:
         row = self.result_table.currentRow()
         has_selection = 0 <= row < len(self.result_rows)
-        external_prec = bool(
-            has_selection
-            and self.is_prec
-            and "국세" in str(self.result_rows[row].get("data_source", ""))
-        )
-        detail_available = bool(
-            has_selection and self.result_rows[row]["detail_available"]
-        )
-        self.detail_button.setEnabled(
-            detail_available and not (self.worker and self.worker.isRunning())
-        )
-        self.detail_button.setText("본문\n조회")
-        if has_selection and not detail_available:
-            self.detail_button.setToolTip(
-                f"{self.result_rows[row]['agency']}는 본문 조회 API를 제공하지 않습니다."
-            )
-        elif external_prec:
-            self.detail_button.setToolTip(
-                "국세청 판례는 XML 본문이 없어 웹 원문을 엽니다."
-            )
-        elif self.is_prec:
-            self.detail_button.setToolTip("선택한 판례의 본문을 조회합니다.")
-        else:
-            self.detail_button.setToolTip("")
 
         # 목록만 보이는 동안에는 선택 표시만 바꾼다. 첫 행 자동 선택이나
         # 목록을 훑는 한 번 누르기로 숨은 본문을 미리 만들지 않는다.
@@ -1515,7 +1495,7 @@ class LawSearchTab(QWidget):
             ]
         metadata = [(label, value) for label, value in metadata if value]
         note = (
-            "본문 조회를 누르면 본문 API를 호출합니다.\n"
+            "본문을 조회하려면 검색 결과를 더블클릭하세요.\n"
             "조회한 본문은 저장되어 다음부터 API 호출 없이 바로 열립니다.\n"
             "저장 체크를 풀면 저장된 본문 파일을 삭제합니다."
         )
@@ -1532,7 +1512,7 @@ class LawSearchTab(QWidget):
         self.current_detail_text = "\n".join(plain_parts)
         self.copy_button.setEnabled(False)
         self.status_label.setText(
-            "항목을 선택했습니다. 본문 조회 버튼을 눌러 내용을 불러오세요."
+            "항목을 선택했습니다. 더블클릭하면 본문을 불러옵니다."
         )
 
     def _filter_result_rows(self, text: str) -> None:

@@ -2997,6 +2997,22 @@ class LawSearchWindow(QMainWindow):
             QPushButton#resourceDetailButton:focus {
                 border: 2px solid #2679bd;
             }
+            QPushButton#caseDetailCloseButton {
+                background: transparent;
+                color: #6c7888;
+                border: none;
+                border-radius: 4px;
+                padding: 0;
+                font-size: 12pt;
+                font-weight: 600;
+            }
+            QPushButton#caseDetailCloseButton:hover {
+                background: #e8f1fb;
+                color: #1768aa;
+            }
+            QPushButton#caseDetailCloseButton:pressed {
+                background: #dbeaf8;
+            }
             QPushButton#ghostButton {
                 background: white;
                 color: #445268;
