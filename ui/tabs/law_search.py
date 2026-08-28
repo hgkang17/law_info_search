@@ -26,6 +26,8 @@ from ui.widgets import (
     ResultHeaderView,
     StableHorizontalTableWidget,
     build_restore_view_button,
+    build_search_result_head,
+    prompt_oc_api_key,
     replace_search_term_backgrounds,
     configure_adaptive_result_rows,
     configure_horizontal_splitter,
@@ -129,15 +131,9 @@ class LawSearchTab(QWidget):
 
         search_card = QFrame()
         search_card.setObjectName("card")
-        search_layout = QVBoxLayout(search_card)
+        search_layout = QHBoxLayout(search_card)
         search_layout.setContentsMargins(10, 12, 10, 12)
         search_layout.setSpacing(8)
-        filter_layout = QHBoxLayout()
-        filter_layout.setContentsMargins(0, 0, 0, 0)
-        filter_layout.setSpacing(6)
-        query_layout = QHBoxLayout()
-        query_layout.setContentsMargins(0, 0, 0, 0)
-        query_layout.setSpacing(8)
 
         self.agency_combo: QComboBox | None = None
         if self.is_central:
@@ -150,7 +146,7 @@ class LawSearchTab(QWidget):
             )
             self.agency_combo.setMaxVisibleItems(15)
             self.agency_combo.setFixedWidth(170)
-            filter_layout.addWidget(self.agency_combo)
+            search_layout.addWidget(self.agency_combo)
 
         self.scope_combo = QComboBox()
         scope_label = (
@@ -172,12 +168,9 @@ class LawSearchTab(QWidget):
         self.search_button.setFixedWidth(56)
         self.search_button.clicked.connect(self.start_search)
 
-        filter_layout.addWidget(self.scope_combo)
-        filter_layout.addStretch()
-        query_layout.addWidget(self.query_input, 1)
-        query_layout.addWidget(self.search_button)
-        search_layout.addLayout(filter_layout)
-        search_layout.addLayout(query_layout)
+        search_layout.addWidget(self.scope_combo)
+        search_layout.addWidget(self.query_input, 1)
+        search_layout.addWidget(self.search_button)
         self.recent_search_bar = RecentSearchBar(
             self.query_input, self.recent_search_manager, self
         )
@@ -191,33 +184,15 @@ class LawSearchTab(QWidget):
         result_layout = QVBoxLayout(result_card)
         result_layout.setContentsMargins(16, 16, 16, 16)
         result_layout.setSpacing(10)
-
-        result_head = QHBoxLayout()
-        result_title = QLabel("검색 결과")
-        result_title.setObjectName("sectionTitle")
-        self.result_count = QLabel("0건")
-        self.result_count.setObjectName("countBadge")
-        self.search_shade_reset_button = QPushButton("음영초기화")
-        self.search_shade_reset_button.setObjectName("searchShadeResetButton")
-        self.search_shade_reset_button.setEnabled(False)
-        self.search_shade_reset_button.clicked.connect(
-            self._clear_search_highlighting
+        result_head = build_search_result_head(
+            on_clear_highlight=self._clear_search_highlighting,
+            on_refresh_api=self._refresh_search_from_api,
+            refresh_tooltip=SEARCH_API_REFRESH_TOOLTIP,
         )
-        self.search_refresh_button: QPushButton | None = None
-        self.search_refresh_button = QPushButton("API갱신")
-        self.search_refresh_button.setObjectName("searchShadeResetButton")
-        self.search_refresh_button.setToolTip(SEARCH_API_REFRESH_TOOLTIP)
-        self.search_refresh_button.clicked.connect(
-            self._refresh_search_from_api
-        )
-        result_head.addWidget(result_title)
-        result_head.addWidget(self.result_count)
-        result_head.addWidget(self.search_shade_reset_button)
-        result_head.addStretch()
-        if self.search_refresh_button is not None:
-            result_head.addWidget(self.search_refresh_button)
-
-        result_layout.addLayout(result_head)
+        self.result_count = result_head.count
+        self.search_shade_reset_button = result_head.shade_reset
+        self.search_refresh_button = result_head.refresh
+        result_layout.addLayout(result_head.layout)
 
         if self.is_central:
             headers = ["저장", "기관", "안건명", "안건번호", "해석일자", "질의기관"]
@@ -262,14 +237,14 @@ class LawSearchTab(QWidget):
             self.result_table, (self.title_column,)
         )
         table_header = self.result_table.horizontalHeader()
+        table_header.setStretchLastSection(False)
         for column in range(len(headers)):
             mode = (
-                QHeaderView.ResizeMode.Interactive
+                QHeaderView.ResizeMode.Stretch
                 if column == self.title_column
                 else QHeaderView.ResizeMode.ResizeToContents
             )
             table_header.setSectionResizeMode(column, mode)
-        table_header.resizeSection(self.title_column, 330)
         self.result_table.itemSelectionChanged.connect(
             self._selection_changed
         )
@@ -346,18 +321,6 @@ class LawSearchTab(QWidget):
         )
         self.ai_agent_button.clicked.connect(self._toggle_ai_chat)
 
-        # 머리말 레이아웃에 넣으면 크게 보기 옆에서 아래로 내려와 보인다.
-        # 본문 카드의 자식으로 띄워 실제 오른쪽 위 모서리에 고정한다.
-        self.close_detail_button = QPushButton("×", detail_card)
-        self.close_detail_button.setObjectName("caseDetailCloseButton")
-        self.close_detail_button.setFixedSize(22, 22)
-        self.close_detail_button.setFlat(True)
-        self.close_detail_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.close_detail_button.setToolTip("분할 본문 닫기")
-        self.close_detail_button.setAccessibleName("분할 본문 닫기")
-        self.close_detail_button.clicked.connect(self._hide_detail_split)
-        detail_card.installEventFilter(self)
-
         self.copy_button = QPushButton("본문 복사")
         self.copy_button.setObjectName("ghostButton")
         self.copy_button.setEnabled(False)
@@ -375,8 +338,6 @@ class LawSearchTab(QWidget):
         detail_head.addStretch()
         detail_head.addWidget(self.expand_detail_button)
         detail_head.addWidget(self.ai_agent_button)
-        # 우상단에 겹쳐 놓은 × 아래로 도구 단추가 들어가지 않게 비워 둔다.
-        detail_head.addSpacing(22)
         detail_head.addWidget(self.copy_button)
         detail_layout.addLayout(detail_head)
 
@@ -463,23 +424,6 @@ class LawSearchTab(QWidget):
         self.reading_mode_shortcut = QShortcut(QKeySequence("F11"), self)
         self.reading_mode_shortcut.activated.connect(self._toggle_reading_mode)
 
-    def eventFilter(self, watched, event) -> bool:
-        if (
-            watched is getattr(self, "detail_card", None)
-            and event.type() in (QEvent.Type.Resize, QEvent.Type.Show)
-        ):
-            QTimer.singleShot(0, self._position_close_detail_button)
-        return super().eventFilter(watched, event)
-
-    def _position_close_detail_button(self) -> None:
-        """닫기 ×를 본문 카드의 오른쪽 위 테두리에 가깝게 고정한다."""
-        button = getattr(self, "close_detail_button", None)
-        card = getattr(self, "detail_card", None)
-        if button is None or card is None:
-            return
-        button.move(max(0, card.width() - button.width() - 5), 5)
-        button.raise_()
-
     def _show_detail_split(self) -> None:
         """검색 목록 옆에 질의회신·해석례·판례 본문 칸을 연다."""
         if self._reading_mode:
@@ -491,7 +435,6 @@ class LawSearchTab(QWidget):
         if self.ai_chat_panel is not None:
             sizes.append(0)
         self.main_splitter.setSizes(sizes)
-        QTimer.singleShot(0, self._position_close_detail_button)
         QTimer.singleShot(0, self.memo_marker_bar.refresh_after_layout_change)
 
     def _hide_detail_split(self) -> None:
@@ -633,6 +576,7 @@ class LawSearchTab(QWidget):
                 self._normal_splitter_sizes = current_sizes[:2]
             if central_layout is not None:
                 self._normal_window_margins = central_layout.getContentsMargins()
+            self.detail_card.show()
 
         self._reading_mode = expanded
         self.search_results_panel.setVisible(not expanded)
@@ -641,9 +585,9 @@ class LawSearchTab(QWidget):
             not expanded and bool(self.worker and self.worker.isRunning())
         )
 
-        if hasattr(window, "header_card"):
-            window.header_card.setVisible(not expanded)
-        if hasattr(window, "navigation_card"):
+        if hasattr(window, "apply_reading_mode_chrome"):
+            window.apply_reading_mode_chrome(expanded)
+        elif hasattr(window, "navigation_card"):
             window.navigation_card.setVisible(not expanded)
         elif hasattr(window, "tabs") and hasattr(window.tabs, "tabBar"):
             window.tabs.tabBar().setVisible(not expanded)
@@ -680,23 +624,18 @@ class LawSearchTab(QWidget):
             if self.ai_chat_panel is not None:
                 sizes.append(chat_width)
             self.main_splitter.setSizes(sizes)
-            self.expand_detail_button.setText("원래\n화면")
-            self.expand_detail_button.setToolTip("F11: 원래 화면으로 돌아가기")
+            self.expand_detail_button.hide()
             self.restore_view_button.show()
             self.detail_view.setFocus()
         else:
-            current_sizes = self.main_splitter.sizes()
-            chat_width = (
-                current_sizes[2]
-                if self.ai_chat_panel is not None
-                and self.ai_chat_panel.isVisible()
-                and len(current_sizes) > 2
-                else 0
-            )
-            sizes = list(self._normal_splitter_sizes)
+            self._hide_ai_chat()
+            total = sum(self.main_splitter.sizes()) or self.main_splitter.width()
+            self.detail_card.hide()
+            sizes = [max(1, total), 0]
             if self.ai_chat_panel is not None:
-                sizes.append(chat_width)
+                sizes.append(0)
             self.main_splitter.setSizes(sizes)
+            self.expand_detail_button.show()
             self.expand_detail_button.setText("크게\n보기")
             self.restore_view_button.hide()
             self.expand_detail_button.setToolTip("F11: 본문 크게 보기로 전환")
@@ -1272,12 +1211,7 @@ class LawSearchTab(QWidget):
 
         oc = self.oc_provider().strip()
         if not oc:
-            QMessageBox.critical(
-                self, "인증키 없음", "API 인증키를 입력해 주세요."
-            )
-            window = self.window()
-            if hasattr(window, "api_input"):
-                window.api_input.setFocus()
+            prompt_oc_api_key(self)
             return
 
         self._start_worker(
@@ -1693,12 +1627,12 @@ class LawSearchTab(QWidget):
         )
 
     def _open_detail_expanded(self, *_args: object) -> None:
-        """검색결과 더블클릭: 목록 오른쪽 분할 화면에 본문을 연다."""
+        """검색결과 더블클릭: 본문을 열고 바로 크게 보기로 전환한다."""
         row = self.result_table.currentRow()
         if row < 0 or row >= len(self.result_rows):
             return
         if self._request_detail(self.result_rows[row]):
-            self._show_detail_split()
+            self._set_reading_mode(True)
 
     def open_selected_detail(self, *_args: object) -> bool:
         row = self.result_table.currentRow()
@@ -1791,7 +1725,7 @@ class LawSearchTab(QWidget):
         self.copy_button.setEnabled(bool(self.current_detail_text))
         self._restore_cached_formatting(record)
         self._restore_cached_memos(record)
-        self._show_detail_split()
+        self._set_reading_mode(True)
         title = str(row.get("title") or row.get("name") or "저장 본문")
         self.status_label.setText(f"{title} 저장된 본문 열기 · API 호출 없음")
 

@@ -86,7 +86,7 @@ def test_law_style_admin_rule_renders_article_titles() -> None:
     )
     marker_font = QFont(FONT_FAMILY)
     marker_font.setPixelSize(14)
-    law_item_margin = 24 + 4 + QFontMetrics(marker_font).horizontalAdvance("1.")
+    law_item_margin = 26 + 4 + QFontMetrics(marker_font).horizontalAdvance("1.")
     guideline_item_margin = 40 + 4 + QFontMetrics(marker_font).horizontalAdvance(
         "1."
     )

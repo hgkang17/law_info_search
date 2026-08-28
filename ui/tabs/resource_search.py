@@ -32,6 +32,8 @@ from ui.widgets import (
     StableHorizontalTableWidget,
     TabStripScrollArea,
     build_restore_view_button,
+    build_search_result_head,
+    prompt_oc_api_key,
     replace_search_term_backgrounds,
     configure_adaptive_result_rows,
     configure_horizontal_splitter,
@@ -482,34 +484,15 @@ class ResourceSearchTab(QWidget):
         result_layout = QVBoxLayout(result_card)
         result_layout.setContentsMargins(16, 16, 16, 16)
         result_layout.setSpacing(10)
-        result_head = QHBoxLayout()
-        result_title = QLabel("검색 결과")
-        result_title.setObjectName("sectionTitle")
-        self.result_count = QLabel("0건")
-        self.result_count.setObjectName("countBadge")
-        self.search_shade_reset_button = QPushButton("음영초기화")
-        self.search_shade_reset_button.setObjectName("searchShadeResetButton")
-        self.search_shade_reset_button.setEnabled(False)
-        self.search_shade_reset_button.clicked.connect(
-            self._clear_search_highlighting
+        result_head = build_search_result_head(
+            on_clear_highlight=self._clear_search_highlighting,
+            on_refresh_api=self._refresh_search_from_api,
+            refresh_tooltip=SEARCH_API_REFRESH_TOOLTIP,
         )
-        self.search_refresh_button = QPushButton("API갱신")
-        self.search_refresh_button.setObjectName("searchShadeResetButton")
-        self.search_refresh_button.setToolTip(SEARCH_API_REFRESH_TOOLTIP)
-        self.search_refresh_button.clicked.connect(
-            self._refresh_search_from_api
-        )
-        result_head.addWidget(result_title)
-        result_head.addWidget(self.result_count)
-        result_head.addWidget(self.search_shade_reset_button)
-        result_head.addStretch()
-        result_head.addWidget(self.search_refresh_button)
-        # 키가 작은 단추라 가운데 맞춤으로 두면 옆의 42px짜리 "본문 조회"
-        # 보다 살짝 떠 보인다. 아랫변을 맞춰 같은 줄에 앉은 것처럼 둔다.
-        result_head.setAlignment(
-            self.search_refresh_button, Qt.AlignmentFlag.AlignBottom
-        )
-        result_layout.addLayout(result_head)
+        self.result_count = result_head.count
+        self.search_shade_reset_button = result_head.shade_reset
+        self.search_refresh_button = result_head.refresh
+        result_layout.addLayout(result_head.layout)
 
         self.result_table = StableHorizontalTableWidget(0, 7)
         self.result_table.setAccessibleName("검색 결과 표")
@@ -553,15 +536,14 @@ class ResourceSearchTab(QWidget):
         self.result_table.verticalHeader().setVisible(False)
         configure_adaptive_result_rows(self.result_table, (3, 4))
         table_header = self.result_table.horizontalHeader()
+        table_header.setStretchLastSection(False)
         table_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         table_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         table_header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        table_header.setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
-        table_header.setSectionResizeMode(4, QHeaderView.ResizeMode.Interactive)
+        table_header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        table_header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         table_header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
         table_header.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)
-        table_header.resizeSection(3, 310)
-        table_header.resizeSection(4, 250)
         self.result_table.setColumnHidden(
             1, self.category_target != RESOURCE_ALL_TARGET
         )
@@ -656,7 +638,7 @@ class ResourceSearchTab(QWidget):
         # 법령검색의 목록 화면에는 오른쪽 본문 칸을 두지 않는다. 본문 조회
         # 단추는 결과 제목줄 맨 오른쪽에 두고, 누르면 본문을 전체 화면으로
         # 연다. "API갱신"은 그 왼쪽에 선다.
-        result_head.addWidget(self.detail_button)
+        result_head.layout.addWidget(self.detail_button)
 
         self.document_tabs = QTabBar()
         self.document_tabs.setObjectName("documentTabs")
@@ -1027,7 +1009,7 @@ class ResourceSearchTab(QWidget):
         selected = self.detail_view.textCursor().selectedText()
         if selected.strip():
             # QTextEdit은 문단 구분을 U+2029로 돌려준다.
-            return selected.replace(" ", "\n"), "선택한 부분"
+            return selected.replace("", "\n"), "선택한 부분"
         return self.detail_view.toPlainText(), "본문 전체"
 
     def _toggle_ai_chat(self) -> None:
@@ -1097,9 +1079,9 @@ class ResourceSearchTab(QWidget):
             not expanded and bool(self.worker and self.worker.isRunning())
         )
 
-        if hasattr(window, "header_card"):
-            window.header_card.setVisible(not expanded)
-        if hasattr(window, "navigation_card"):
+        if hasattr(window, "apply_reading_mode_chrome"):
+            window.apply_reading_mode_chrome(expanded)
+        elif hasattr(window, "navigation_card"):
             window.navigation_card.setVisible(not expanded)
         elif hasattr(window, "tabs") and hasattr(window.tabs, "tabBar"):
             window.tabs.tabBar().setVisible(not expanded)
@@ -1130,6 +1112,7 @@ class ResourceSearchTab(QWidget):
             # 본문을 읽다가 바로 물어보는 대화 패널을 여는 데 쓴다.
             self._set_expand_button_mode("ai")
             self.restore_view_button.show()
+            self.document_tab_strip.hide()
             self.detail_view.setFocus()
             # 지난번에 열어 둔 채로 나왔으면 이번에도 열어 둔다. 켜고
             # 끄는 것은 사람이 정한 것이지 화면이 바뀌었다고 되돌릴
@@ -1145,6 +1128,8 @@ class ResourceSearchTab(QWidget):
             self.detail_card.hide()
             self._set_expand_button_mode("expand")
             self.restore_view_button.hide()
+            if self.document_tabs.count():
+                self.document_tab_strip.show()
             callback = getattr(self, "_reading_mode_exit_callback", None)
             if callback is not None:
                 self._reading_mode_exit_callback = None
@@ -1624,7 +1609,10 @@ class ResourceSearchTab(QWidget):
                 self._clear_pending_document_view()
             else:
                 self._restore_document_state(key)
-        self.document_tab_strip.show()
+        if self._reading_mode:
+            self.document_tab_strip.hide()
+        else:
+            self.document_tab_strip.show()
         self.document_tab_strip.refresh()
         self.document_tabs.blockSignals(True)
         self.document_tabs.setCurrentIndex(index)
@@ -2800,12 +2788,7 @@ class ResourceSearchTab(QWidget):
             return
         oc = self.oc_provider().strip()
         if not oc:
-            QMessageBox.critical(
-                self, "인증키 없음", "API 인증키를 입력해 주세요."
-            )
-            window = self.window()
-            if hasattr(window, "api_input"):
-                window.api_input.setFocus()
+            prompt_oc_api_key(self)
             return
 
         popup_title = f"{law_name} {label} 3단비교"
@@ -4495,12 +4478,7 @@ class ResourceSearchTab(QWidget):
             return
         oc = self.oc_provider().strip()
         if not oc:
-            QMessageBox.critical(
-                self, "인증키 없음", "API 인증키를 입력해 주세요."
-            )
-            window = self.window()
-            if hasattr(window, "api_input"):
-                window.api_input.setFocus()
+            prompt_oc_api_key(self)
             return
         related = query_value(query, "related").strip() or annex_related_law_name(
             title
@@ -4733,9 +4711,7 @@ class ResourceSearchTab(QWidget):
                 return
         oc = self.oc_provider().strip()
         if not oc:
-            QMessageBox.critical(
-                self, "인증키 없음", "API 인증키를 입력해 주세요."
-            )
+            prompt_oc_api_key(self)
             return
         if self.worker and self.worker.isRunning():
             self.status_label.setText(
@@ -4924,9 +4900,7 @@ class ResourceSearchTab(QWidget):
                 return
         oc = self.oc_provider().strip()
         if not oc:
-            QMessageBox.critical(
-                self, "인증키 없음", "API 인증키를 입력해 주세요."
-            )
+            prompt_oc_api_key(self)
             return
         if self.worker and self.worker.isRunning():
             self.status_label.setText(
@@ -5217,12 +5191,7 @@ class ResourceSearchTab(QWidget):
             return
         oc = self.oc_provider().strip()
         if not oc:
-            QMessageBox.critical(
-                self, "인증키 없음", "API 인증키를 입력해 주세요."
-            )
-            window = self.window()
-            if hasattr(window, "api_input"):
-                window.api_input.setFocus()
+            prompt_oc_api_key(self)
             return
 
         popup = self._reference_popup_for_request()
@@ -5393,9 +5362,7 @@ class ResourceSearchTab(QWidget):
             return
         oc = self.oc_provider().strip()
         if not oc:
-            QMessageBox.critical(
-                self, "인증키 없음", "API 인증키를 입력해 주세요."
-            )
+            prompt_oc_api_key(self)
             return
         self._pending_reference_popup = popup
         self._pending_reference_key = str(request.get("reference_key") or "")
@@ -6157,12 +6124,7 @@ class ResourceSearchTab(QWidget):
 
         oc = self.oc_provider().strip()
         if not oc:
-            QMessageBox.critical(
-                self, "인증키 없음", "API 인증키를 입력해 주세요."
-            )
-            window = self.window()
-            if hasattr(window, "api_input"):
-                window.api_input.setFocus()
+            prompt_oc_api_key(self)
             return
 
         self._start_worker(
@@ -7456,12 +7418,7 @@ class ResourceSearchTab(QWidget):
                     self.law_cache.save(stale_row, stale_payload)
         oc = self.oc_provider().strip()
         if not oc:
-            QMessageBox.critical(
-                self, "인증키 없음", "API 인증키를 입력해 주세요."
-            )
-            window = self.window()
-            if hasattr(window, "api_input"):
-                window.api_input.setFocus()
+            prompt_oc_api_key(self)
             return False
         self.pending_row = row
         self._start_worker(

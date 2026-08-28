@@ -338,7 +338,7 @@ def test_period_numbered_items_have_twenty_four_pixel_left_indent() -> None:
     )
     marker_font = QFont(FONT_FAMILY)
     marker_font.setPixelSize(14)
-    expected_margin = 24 + 4 + QFontMetrics(marker_font).horizontalAdvance("1.")
+    expected_margin = 26 + 4 + QFontMetrics(marker_font).horizontalAdvance("1.")
     assert (str(expected_margin), "1.") in items
     assert (str(expected_margin), "2.") in items
 
@@ -357,10 +357,10 @@ def test_law_hang_ho_mok_indent_is_twelve_pixels_more() -> None:
     marker_font = QFont(FONT_FAMILY)
     marker_font.setPixelSize(14)
     metrics = QFontMetrics(marker_font)
-    assert items["①"] == str(12 + 4 + metrics.horizontalAdvance("①"))
-    assert items["1."] == str(24 + 4 + metrics.horizontalAdvance("1."))
-    assert items["가."] == str(40 + 4 + metrics.horizontalAdvance("가."))
-    assert items["(1)"] == str(64 + 4 + metrics.horizontalAdvance("(1)"))
+    assert items["①"] == str(14 + 4 + metrics.horizontalAdvance("①"))
+    assert items["1."] == str(26 + 4 + metrics.horizontalAdvance("1."))
+    assert items["가."] == str(42 + 4 + metrics.horizontalAdvance("가."))
+    assert items["(1)"] == str(66 + 4 + metrics.horizontalAdvance("(1)"))
 
 
 def test_guideline_period_numbered_items_have_40px_left_indent_only() -> None:

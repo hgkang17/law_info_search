@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import sys
 from typing import Callable
 from PySide6.QtCore import Qt
 from PySide6.QtGui import (
@@ -477,3 +478,29 @@ def install_text_color_shortcuts(owner: QWidget) -> None:
             )
         )
         owner.text_color_shortcuts.append(shortcut)
+
+
+def apply_dark_title_bar(widget) -> None:
+    """Windows 네이티브 제목줄만 어두운 테마로 맞춘다.
+
+    앱 본문은 밝은 화면이라 ``ColorScheme.Dark``를 쓰지 않는다. 제목줄은
+    DWM immersive dark mode로만 바꾼다. Windows가 아니면 아무 것도
+    하지 않는다.
+    """
+    if sys.platform != "win32" or widget is None:
+        return
+    hwnd = int(widget.winId())
+    if not hwnd:
+        return
+    import ctypes
+
+    value = ctypes.c_int(1)
+    dwmapi = ctypes.windll.dwmapi
+    # 20은 Windows 10 2004 이후, 19는 그 이전. 되는 쪽만 적용된다.
+    for attribute in (20, 19):
+        dwmapi.DwmSetWindowAttribute(
+            hwnd,
+            attribute,
+            ctypes.byref(value),
+            ctypes.sizeof(value),
+        )

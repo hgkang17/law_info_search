@@ -7,7 +7,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QTextDocument
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QPushButton, QTabBar
+from PySide6.QtWidgets import QApplication, QHeaderView, QPushButton, QTabBar
 
 from storage.cache import LawDocumentCache
 from storage.recent import RecentSearchManager
@@ -527,5 +527,25 @@ def test_snapshot_from_another_law_is_ignored(tmp_path) -> None:
         }
     )
     body = tab.detail_view.toPlainText()
+    assert "제1조(목적) 이 영은" in body
+    assert "공공주택 특별법 시행령" not in body
     assert "제7조(주택지구의 지정 등)" not in body
     assert "제1조(목적)" in body
+
+
+def test_resource_name_column_stretches_to_fill_table(tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    tab = _tab(tmp_path)
+    tab.resize(1200, 720)
+    tab.show()
+    app.processEvents()
+    header = tab.result_table.horizontalHeader()
+    assert header.sectionResizeMode(3) == QHeaderView.ResizeMode.Stretch
+    used = sum(
+        tab.result_table.columnWidth(index)
+        for index in range(tab.result_table.columnCount())
+        if not tab.result_table.isColumnHidden(index)
+    )
+    assert used >= tab.result_table.viewport().width() - 4
+    tab.close()
+    app.processEvents()

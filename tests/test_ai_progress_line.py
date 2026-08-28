@@ -28,7 +28,14 @@ from llm import (
     ModelInfo,
 )
 from llm.ai_cli_setup import CLAUDE_CLI
-from ui.tabs.ai_chat_panel import AiChatPanel, ShimmerLabel
+from ui.tabs.ai_chat_panel import (
+    AiChatPanel,
+    PROVIDER_TAB_LABELS,
+    ShimmerLabel,
+    _API_SETTINGS_BUTTON_WIDTH_MARGIN,
+    _PROVIDER_COMBO_WIDTH_MARGIN,
+    _label_width,
+)
 
 
 @pytest.fixture(scope="module")
@@ -625,7 +632,12 @@ def test_embedded_provider_header_does_not_shift_between_ais(
         widget.show()
         qt_app.processEvents()
 
-        assert widget.provider_combo.width() == 178
+        assert widget.provider_combo.width() == _label_width(
+            widget.provider_combo,
+            tuple(PROVIDER_TAB_LABELS.values()),
+            margin=_PROVIDER_COMBO_WIDTH_MARGIN,
+        )
+        assert widget.provider_combo.width() < 178
         assert widget.provider_header_widget.height() == 29
         longest_api_label = max(
             (
@@ -635,11 +647,20 @@ def test_embedded_provider_header_does_not_shift_between_ais(
             ),
             key=len,
         )
+        assert widget.api_settings_button.width() == _label_width(
+            widget.api_settings_button,
+            (
+                "Gemini API 설정 필요",
+                "Gemini API 키 확인 필요",
+                "Gemini API 키 확인됨",
+            ),
+            margin=_API_SETTINGS_BUTTON_WIDTH_MARGIN,
+        )
         assert widget.api_settings_button.width() <= (
             widget.api_settings_button.fontMetrics().horizontalAdvance(
                 longest_api_label
             )
-            + 18
+            + 10
         )
         assert (
             widget.api_settings_button.font().pointSizeF()

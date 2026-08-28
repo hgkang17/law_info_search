@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLabel
 
 from ui.main_window import LawSearchWindow
 
@@ -41,7 +41,14 @@ def test_header_shows_active_document_without_binding_global_ai(qt_app) -> None:
         assert tabs.tabText(tabs.currentIndex()) == "국토계획법"
         assert tabs.isMovable()
         assert window.open_documents_widget.height() == 38
-        assert window.api_input.width() == 110
+        assert window.header_card.findChild(QLabel, "appTitle") is None
+        assert "국가법령정보 통합검색" not in [
+            child.text()
+            for child in window.header_card.findChildren(QLabel)
+        ]
+        assert window.header_card.layout().indexOf(
+            window.oc_api_settings_button
+        ) >= 0
         assert window.ai_review_tab.context_source is None
         assert resource.ai_chat_panel.context_source == resource._chat_context
         assert resource.ai_chat_panel.minimumWidth() == 0

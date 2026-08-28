@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
 import re
 from PySide6.QtCore import (
     QEvent,
@@ -363,6 +365,60 @@ def build_restore_view_button(owner) -> QPushButton:
     button.clicked.connect(owner._exit_reading_mode)
     button.hide()
     return button
+
+
+def build_count_badge(text: str = "0건") -> QLabel:
+    """검색 결과 건수 표시. 화면마다 크기가 달라지지 않게 한곳에서 만든다."""
+    badge = QLabel(text)
+    badge.setObjectName("countBadge")
+    badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    badge.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+    return badge
+
+
+@dataclass(frozen=True, slots=True)
+class SearchResultHead:
+    layout: QHBoxLayout
+    count: QLabel
+    shade_reset: QPushButton
+    refresh: QPushButton
+
+
+def build_search_result_head(
+    *,
+    on_clear_highlight: Callable[..., object],
+    on_refresh_api: Callable[..., object],
+    refresh_tooltip: str,
+) -> SearchResultHead:
+    """검색 결과 제목·건수·음영초기화·API갱신 한 줄."""
+    layout = QHBoxLayout()
+    title = QLabel("검색 결과")
+    title.setObjectName("sectionTitle")
+    count = build_count_badge()
+    shade_reset = QPushButton("음영초기화")
+    shade_reset.setObjectName("searchShadeResetButton")
+    shade_reset.setEnabled(False)
+    shade_reset.clicked.connect(on_clear_highlight)
+    refresh = QPushButton("API갱신")
+    refresh.setObjectName("searchShadeResetButton")
+    refresh.setToolTip(refresh_tooltip)
+    refresh.clicked.connect(on_refresh_api)
+    layout.addWidget(title)
+    layout.addWidget(count)
+    layout.addWidget(shade_reset)
+    layout.addStretch()
+    layout.addWidget(refresh)
+    layout.setAlignment(count, Qt.AlignmentFlag.AlignVCenter)
+    layout.setAlignment(refresh, Qt.AlignmentFlag.AlignBottom)
+    return SearchResultHead(layout, count, shade_reset, refresh)
+
+
+def prompt_oc_api_key(owner) -> None:
+    """법제처 인증키가 없을 때 설정 창을 연다."""
+    window = owner.window() if hasattr(owner, "window") else owner
+    opener = getattr(window, "open_oc_api_settings", None)
+    if callable(opener):
+        opener()
 
 
 def close_hovered_reference_popup(owner) -> bool:

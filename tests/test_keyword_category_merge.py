@@ -8,6 +8,7 @@ import xml.etree.ElementTree as ET
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
+from PySide6.QtCore import QPoint
 from PySide6.QtWidgets import QApplication
 
 from models.law import AI_RELATED_AGENCY, AI_SEARCH_AGENCY
@@ -66,6 +67,70 @@ def test_choosing_a_keyword_category_swaps_the_page(window) -> None:
     assert resource.content_stack.currentWidget() is resource.resource_body
 
 
+def test_keyword_search_card_matches_law_and_annex_size(window, qt_app) -> None:
+    resource = window.resource_tab
+    window.resize(1400, 900)
+    window.show()
+    qt_app.processEvents()
+
+    def card_box(card):
+        top_left = card.mapTo(resource, QPoint(0, 0))
+        return top_left.x(), card.width(), card.height()
+
+    resource.select_category("law")
+    qt_app.processEvents()
+    law_box = card_box(resource.search_card)
+
+    resource.select_category("licbyl")
+    qt_app.processEvents()
+    annex_box = card_box(resource.search_card)
+
+    resource.select_category("ai_related")
+    qt_app.processEvents()
+    related_box = card_box(window.ai_related_tab.search_card)
+
+    resource.select_category("ai_search")
+    qt_app.processEvents()
+    direct_box = card_box(window.ai_search_tab.search_card)
+
+    assert annex_box[0] == law_box[0]
+    assert annex_box[1] == law_box[1]
+    assert related_box[0] == law_box[0]
+    assert related_box[1] == law_box[1]
+    assert related_box[2] == law_box[2]
+    assert direct_box[0] == law_box[0]
+    assert direct_box[1] == law_box[1]
+    assert direct_box[2] == law_box[2]
+
+
+def test_result_count_badge_size_is_shared(window, qt_app) -> None:
+    resource = window.resource_tab
+    window.resize(1400, 900)
+    window.show()
+    qt_app.processEvents()
+
+    resource.select_category("law")
+    qt_app.processEvents()
+    law_hint = resource.result_count.sizeHint()
+
+    resource.select_category("licbyl")
+    qt_app.processEvents()
+    annex_hint = resource.result_count.sizeHint()
+
+    resource.select_category("ai_related")
+    qt_app.processEvents()
+    related_hint = window.ai_related_tab.result_count.sizeHint()
+
+    resource.select_category("ai_search")
+    qt_app.processEvents()
+    direct_hint = window.ai_search_tab.result_count.sizeHint()
+
+    assert annex_hint == law_hint
+    assert related_hint == law_hint
+    assert direct_hint == law_hint
+    assert law_hint.height() <= 24
+
+
 def test_saved_records_route_into_the_law_search_tab(window) -> None:
     window._show_keyword_category("ai_search")
 
@@ -102,12 +167,16 @@ def test_keyword_reading_mode_hides_outer_law_category_bar(window) -> None:
 
     keyword._set_reading_mode(True)
     assert resource.category_tabs.isHidden()
+    assert not window.header_card.isHidden()
+    assert not window.open_documents_widget.isHidden()
     assert keyword.description_row.isHidden()
     assert keyword.main_splitter.sizes()[0] == 0
+    assert keyword.expand_detail_button.isHidden()
 
     keyword._set_reading_mode(False)
     assert not resource.category_tabs.isHidden()
     assert not keyword._reading_mode
+    assert keyword.detail_card.isHidden()
 
 
 def _keyword_root(tag, name_field, name, id_field, item_id, org_field, org):

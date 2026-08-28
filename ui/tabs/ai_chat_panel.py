@@ -249,6 +249,10 @@ CLI_SPECS = {
 # 제공자 탭 오른쪽에 놓이는 단추·배지의 공통 높이. 전역 QPushButton은
 # 38px라서 그대로 두면 CLI 탭에서만 헤더가 높아져 화면이 밀린다.
 _HEADER_CONTROL_HEIGHT = 29
+# 본문 옆 패널의 AI 선택 목록. 글자 폭 + 화살표·패딩만 남긴다.
+_PROVIDER_COMBO_WIDTH_MARGIN = 32
+# API 키 상태 단추. 가장 긴 문구에 맞추되 좌우 빈칸은 최소만 둔다.
+_API_SETTINGS_BUTTON_WIDTH_MARGIN = 8
 
 # 질문과 답에 같이 쓰는 글자 크기. 9pt는 법령 본문을 오래 읽기에 작다.
 _CHAT_FONT_POINT = 10.5
@@ -807,8 +811,15 @@ class AiChatPanel(QFrame):
             self.provider_tabs.hide()
             self.provider_combo.setFixedHeight(_HEADER_CONTROL_HEIGHT)
             # 제공자 이름 길이에 따라 콤보 폭이 바뀌면 오른쪽 상태 영역과
-            # 아래 대화 영역이 함께 흔들린다. 본문 패널에서는 고정한다.
-            self.provider_combo.setFixedWidth(178)
+            # 아래 대화 영역이 함께 흔들린다. 가장 긴 이름에 맞추되
+            # 예전 178px처럼 빈칸을 크게 두지 않는다.
+            self.provider_combo.setFixedWidth(
+                _label_width(
+                    self.provider_combo,
+                    tuple(PROVIDER_TAB_LABELS.values()),
+                    margin=_PROVIDER_COMBO_WIDTH_MARGIN,
+                )
+            )
 
         self.model_combo = QComboBox()
         self.model_combo.setObjectName("aiChatModelCombo")
@@ -932,7 +943,7 @@ class AiChatPanel(QFrame):
                     "Gemini API 키 확인 필요",
                     "Gemini API 키 확인됨",
                 ),
-                margin=16,
+                margin=_API_SETTINGS_BUTTON_WIDTH_MARGIN,
             )
         )
         self.api_settings_button.clicked.connect(self._open_api_settings)

@@ -12,6 +12,7 @@ from PySide6.QtGui import QColor, QDesktopServices, QFont, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -56,6 +57,7 @@ from ui.tabs.law_search import LawSearchTab
 from ui.tabs.resource_search import ResourceSearchTab
 from ui.tabs.viewed_laws import ViewedLawsTab
 from ui.theme import (
+    apply_dark_title_bar,
     register_bundled_pretendard_fonts,
 )
 from ui.widgets import (
@@ -129,6 +131,11 @@ class LawSearchWindow(QMainWindow):
         if can_self_update():
             QTimer.singleShot(2500, self._auto_check_for_updates)
 
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        # 본문은 밝은 화면을 유지하고, Windows 제목줄만 어둡게 맞춘다.
+        apply_dark_title_bar(self)
+
     def _load_saved_api_key(self) -> str:
         # API 인증값은 QSettings에 평문으로 저장한다. 이전 버전의 DPAPI
         # 암호문은 더 이상 읽지 않으며 설정에 남지 않도록 정리한다.
@@ -174,18 +181,30 @@ class LawSearchWindow(QMainWindow):
         current_page._exit_reading_mode()
         return True
 
-    def _place_api_manual_button(self) -> None:
-        """물음표 단추를 인증키 박스 안쪽 오른쪽 위에 붙인다."""
-        button = getattr(self, "api_manual_button", None)
-        api_compact = getattr(self, "_api_compact", None)
-        if button is None or api_compact is None:
+    def _refresh_oc_api_settings_button(self) -> None:
+        """헤더 단추 글자·색을 키가 있는지로 맞춘다."""
+        button = getattr(self, "oc_api_settings_button", None)
+        if button is None:
             return
-        margin = 6
-        button.move(
-            api_compact.width() - button.width() - margin,
-            margin,
-        )
-        button.raise_()
+        has_key = bool(self.api_input.text().strip())
+        button.setText("API 설정" if has_key else "API 설정 필요")
+        button.setProperty("apiConfigured", has_key)
+        button.style().unpolish(button)
+        button.style().polish(button)
+
+    def open_oc_api_settings(self) -> None:
+        """법제처 인증키 입력 창을 연다."""
+        self._refresh_oc_api_settings_button()
+        self.api_input.setFocus()
+        self.oc_api_dialog.exec()
+        self._refresh_oc_api_settings_button()
+
+    def apply_reading_mode_chrome(self, expanded: bool) -> None:
+        """크게 보기에서도 열린 본문 띠는 남기고 왼쪽 메뉴만 접는다."""
+        if hasattr(self, "header_card"):
+            self.header_card.setVisible(True)
+        if hasattr(self, "navigation_card"):
+            self.navigation_card.setVisible(not expanded)
 
     def _open_api_manual(self, *_args: object) -> None:
         """인증키 발급 안내를 기본 웹 브라우저로 연다."""
@@ -199,11 +218,6 @@ class LawSearchWindow(QMainWindow):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(API_KEY_MANUAL_PATH)))
 
     def eventFilter(self, watched, event) -> bool:
-        if (
-            watched is getattr(self, "_api_compact", None)
-            and event.type() == QEvent.Type.Resize
-        ):
-            self._place_api_manual_button()
         event_type = event.type()
         if (
             event_type == QEvent.Type.MouseButtonPress
@@ -241,30 +255,22 @@ class LawSearchWindow(QMainWindow):
         header.setObjectName("headerCard")
         self.header_card = header
         header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(20, 12, 20, 12)
-        header_layout.setSpacing(14)
+        header_layout.setContentsMargins(16, 8, 16, 8)
+        header_layout.setSpacing(10)
 
         logo_label = QLabel()
         logo_label.setObjectName("logoLabel")
-        logo_label.setFixedSize(48, 48)
+        logo_label.setFixedSize(36, 36)
         logo_pixmap = QPixmap(str(LOGO_PATH))
         if not logo_pixmap.isNull():
             logo_label.setPixmap(
                 logo_pixmap.scaled(
-                    48,
-                    48,
+                    36,
+                    36,
                     Qt.AspectRatioMode.KeepAspectRatio,
                     Qt.TransformationMode.SmoothTransformation,
                 )
             )
-
-        title_layout = QVBoxLayout()
-        title_layout.setContentsMargins(0, 0, 0, 0)
-        title_layout.setSpacing(4)
-
-        title = QLabel("국가법령정보 통합검색")
-        title.setObjectName("appTitle")
-        title_layout.addWidget(title)
 
         self.open_documents_widget = QFrame()
         self.open_documents_widget.setObjectName("openDocumentsBar")
@@ -319,32 +325,31 @@ class LawSearchWindow(QMainWindow):
         self.open_documents_empty = QLabel("열린 본문 없음")
         self.open_documents_empty.setObjectName("openDocumentsEmpty")
         self.open_documents_layout.addWidget(self.open_documents_empty, 1)
-        title_layout.addWidget(self.open_documents_widget)
         header_layout.addWidget(logo_label)
-        header_layout.addLayout(title_layout, 1)
+        header_layout.addWidget(self.open_documents_widget, 1)
 
-        api_compact = QFrame()
-        api_compact.setObjectName("apiCompact")
-        self._api_compact = api_compact
-        api_layout = QHBoxLayout(api_compact)
-        # 오른쪽 40px은 박스 안쪽 물음표 단추 자리다. 단추를 레이아웃에
-        # 넣지는 않아 인증키 입력칸·표시·저장 사이 간격은 그대로 유지한다.
-        api_layout.setContentsMargins(12, 8, 40, 8)
-        api_layout.setSpacing(8)
+        self.oc_api_dialog = QDialog(self)
+        self.oc_api_dialog.setObjectName("ocApiDialog")
+        self.oc_api_dialog.setWindowTitle("법제처 API 설정")
+        self.oc_api_dialog.setModal(True)
+        self.oc_api_dialog.resize(520, 200)
+        dialog_layout = QVBoxLayout(self.oc_api_dialog)
+        dialog_layout.setContentsMargins(16, 16, 16, 16)
+        dialog_layout.setSpacing(12)
+        dialog_layout.addWidget(
+            QLabel(
+                "법제처 국가법령정보 공동활용(OPEN API) 인증키를 입력합니다."
+            )
+        )
 
-        api_label = QLabel("법제처 API 인증키")
-        api_label.setObjectName("apiKeyLabel")
         self.api_input = QLineEdit()
-        self.api_input.setObjectName("apiKeyInput")
+        self.api_input.setObjectName("ocApiKeyInput")
         self.api_input.setPlaceholderText("인증키 입력")
-        self.api_input.setFixedWidth(110)
         self.api_input.setClearButtonEnabled(True)
         # 인증키는 화면 공유나 어깨너머로 그대로 노출되므로 기본은 가려 둔다.
-        # 옆의 표시 단추로만 잠깐 확인한다.
         self.api_input.setEchoMode(QLineEdit.EchoMode.Password)
         self.api_input.setText(self.oc)
         self.api_reveal_button = QPushButton("표시")
-        self.api_reveal_button.setObjectName("apiRevealButton")
         self.api_reveal_button.setCheckable(True)
         self.api_reveal_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.api_reveal_button.setToolTip(
@@ -352,31 +357,45 @@ class LawSearchWindow(QMainWindow):
         )
         self.api_reveal_button.toggled.connect(self._api_reveal_toggled)
         self.save_api_checkbox = QCheckBox("저장")
-        self.save_api_checkbox.setObjectName("apiSaveCheck")
         self.save_api_checkbox.setToolTip(
             "체크하면 현재 Windows 사용자 설정에 API 인증키를 저장합니다."
         )
         self.save_api_checkbox.setChecked(self.has_saved_oc)
         self.api_input.textChanged.connect(self._api_value_changed)
         self.save_api_checkbox.toggled.connect(self._api_save_toggled)
-
-        api_layout.addWidget(api_label)
-        api_layout.addWidget(self.api_input)
-        api_layout.addWidget(self.api_reveal_button)
-        api_layout.addWidget(self.save_api_checkbox)
-        header_layout.addWidget(api_compact)
-        # 인증키 발급 안내 단추. 인증키 박스의 자식으로 두되 레이아웃에는
-        # 넣지 않고, 확보한 오른쪽 여백의 위쪽에 겹쳐 그린다.
-        self.api_manual_button = QPushButton("?", api_compact)
-        self.api_manual_button.setObjectName("apiManualButton")
-        self.api_manual_button.setFixedSize(20, 20)
+        self.api_manual_button = QPushButton("?")
+        self.api_manual_button.setObjectName("ocApiManualButton")
+        self.api_manual_button.setFixedSize(22, 22)
         self.api_manual_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.api_manual_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.api_manual_button.setToolTip("법제처 API 인증키 발급 방법 보기")
         self.api_manual_button.clicked.connect(self._open_api_manual)
-        self.api_manual_button.raise_()
+
+        key_row = QHBoxLayout()
+        key_row.setSpacing(8)
+        key_row.addWidget(self.api_input, 1)
+        key_row.addWidget(self.api_reveal_button)
+        key_row.addWidget(self.save_api_checkbox)
+        key_row.addWidget(self.api_manual_button)
+        dialog_layout.addLayout(key_row)
+        close_row = QHBoxLayout()
+        close_row.addStretch(1)
+        close_api_button = QPushButton("저장하고 닫기")
+        close_api_button.clicked.connect(self.oc_api_dialog.accept)
+        close_row.addWidget(close_api_button)
+        dialog_layout.addLayout(close_row)
+
+        self.oc_api_settings_button = QPushButton("API 설정")
+        self.oc_api_settings_button.setObjectName("ocApiSettingsButton")
+        self.oc_api_settings_button.setFixedHeight(28)
+        self.oc_api_settings_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.oc_api_settings_button.setToolTip(
+            "법제처 API 인증키를 입력합니다."
+        )
+        self.oc_api_settings_button.clicked.connect(self.open_oc_api_settings)
+        header_layout.addWidget(self.oc_api_settings_button)
+        self._refresh_oc_api_settings_button()
         self._header_card = header
-        api_compact.installEventFilter(self)
         root.addWidget(header)
 
         self.tabs = QStackedWidget()
@@ -1368,7 +1387,7 @@ class LawSearchWindow(QMainWindow):
             previous_width = width
 
     def _open_viewed_law(self, record: object) -> None:
-        self._route_saved_record(record)
+        self._route_saved_record(record, reading_mode=True)
 
     def _open_favorite(self, record: object) -> None:
         # 대상 검색 화면에서 좁은 폭으로 먼저 그린 뒤 크게보기로
@@ -1486,7 +1505,7 @@ class LawSearchWindow(QMainWindow):
                 font-size: 9pt;
                 font-weight: 600;
             }
-            QLineEdit#apiKeyInput {
+            QLineEdit#ocApiKeyInput {
                 min-height: 30px;
                 max-height: 30px;
                 background: white;
@@ -1540,13 +1559,6 @@ class LawSearchWindow(QMainWindow):
                 color: white;
                 font-size: 9pt;
                 font-weight: 600;
-            }
-            QLabel#appTitle {
-                background: transparent;
-                color: white;
-                font-family: "Pretendard";
-                font-size: 24px;
-                font-weight: 700;
             }
             QLabel#appSubtitle {
                 background: transparent;
@@ -1813,7 +1825,7 @@ class LawSearchWindow(QMainWindow):
             QFrame#aiChatPanel QComboBox#aiProviderCombo {
                 min-height: 27px;
                 max-height: 27px;
-                padding: 0 8px;
+                padding: 0 6px;
                 border-radius: 7px;
                 font-weight: 600;
             }
@@ -2008,7 +2020,7 @@ class LawSearchWindow(QMainWindow):
             QPushButton#geminiApiSettingsButton {
                 min-height: 27px;
                 max-height: 27px;
-                padding: 0 10px;
+                padding: 0 6px;
                 background: #fff4dd;
                 color: #835600;
                 border: 1px solid #e2bd6f;
@@ -2672,8 +2684,11 @@ class LawSearchWindow(QMainWindow):
             QLabel#countBadge {
                 background: #e8f1fb;
                 color: #1768aa;
-                border-radius: 10px;
-                padding: 3px 9px;
+                border-radius: 8px;
+                padding: 0 8px;
+                min-height: 22px;
+                max-height: 22px;
+                font-size: 9pt;
                 font-weight: 600;
             }
             QPushButton#searchShadeResetButton {
@@ -3030,22 +3045,6 @@ class LawSearchWindow(QMainWindow):
             QPushButton#resourceDetailButton:focus {
                 border: 2px solid #2679bd;
             }
-            QPushButton#caseDetailCloseButton {
-                background: transparent;
-                color: #6c7888;
-                border: none;
-                border-radius: 4px;
-                padding: 0;
-                font-size: 12pt;
-                font-weight: 600;
-            }
-            QPushButton#caseDetailCloseButton:hover {
-                background: #e8f1fb;
-                color: #1768aa;
-            }
-            QPushButton#caseDetailCloseButton:pressed {
-                background: #dbeaf8;
-            }
             QPushButton#ghostButton {
                 background: white;
                 color: #445268;
@@ -3238,11 +3237,6 @@ class LawSearchWindow(QMainWindow):
                 border: 1px solid #234963;
                 border-radius: 6px;
             }
-            QLabel#appTitle {
-                font-family: "Pretendard", "Malgun Gothic";
-                font-size: 22px;
-                font-weight: 700;
-            }
             QLabel#appSubtitle { color: #bfd0dc; }
             QPushButton#aboutLinkButton, QPushButton#updateLinkButton {
                 background: transparent;
@@ -3390,7 +3384,51 @@ class LawSearchWindow(QMainWindow):
             QLabel#countBadge {
                 background: #dceff0;
                 color: #086975;
-                border-radius: 8px;
+            }
+            QPushButton#ocApiSettingsButton {
+                min-height: 28px;
+                max-height: 28px;
+                padding: 0 10px;
+                background: #fff4dd;
+                color: #835600;
+                border: 1px solid #e2bd6f;
+                border-radius: 7px;
+                font-size: 8.5pt;
+                font-weight: 600;
+            }
+            QPushButton#ocApiSettingsButton[apiConfigured="true"] {
+                background: #e0f4eb;
+                color: #176b4b;
+                border-color: #83c7ad;
+            }
+            QDialog#ocApiDialog {
+                background: #ffffff;
+            }
+            QLineEdit#ocApiKeyInput {
+                min-height: 30px;
+                max-height: 30px;
+                background: white;
+                border: 1px solid #aec4d7;
+                border-radius: 6px;
+                padding: 0 9px;
+                font-size: 9pt;
+            }
+            QPushButton#ocApiManualButton {
+                min-width: 22px;
+                max-width: 22px;
+                min-height: 22px;
+                max-height: 22px;
+                padding: 0;
+                border-radius: 11px;
+                border: 1px solid #aec4d7;
+                background: #eef3f7;
+                color: #17324b;
+                font-weight: 700;
+            }
+            QPushButton#ocApiManualButton:hover {
+                background: #17607f;
+                border-color: #17607f;
+                color: white;
             }
             QTableWidget {
                 alternate-background-color: #f5f8f9;
@@ -3467,6 +3505,7 @@ class LawSearchWindow(QMainWindow):
 
     def _api_value_changed(self, value: str) -> None:
         self.oc = value.strip()
+        self._refresh_oc_api_settings_button()
         if self.save_api_checkbox.isChecked():
             try:
                 self._store_api_key(self.oc)
@@ -3497,12 +3536,7 @@ class LawSearchWindow(QMainWindow):
             return
         self.oc = self.api_input.text().strip()
         if not self.oc:
-            QMessageBox.critical(
-                self,
-                "인증키 없음",
-                "API 인증키를 입력해 주세요.",
-            )
-            self.api_input.setFocus()
+            self.open_oc_api_settings()
             return
 
         self.highlight_terms = search_terms(query)

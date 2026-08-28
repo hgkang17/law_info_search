@@ -56,73 +56,35 @@ def test_every_manual_and_its_images_are_bundled_into_the_exe() -> None:
             assert f'("메뉴얼/{source}", "메뉴얼")' in spec, source
 
 
-def test_help_button_floats_inside_the_api_box(qt_app) -> None:
+def test_header_shows_api_settings_button_instead_of_key_box(qt_app) -> None:
     window = LawSearchWindow()
     try:
         window.resize(1400, 900)
         window.show()
         qt_app.processEvents()
+        header = window.header_card
+        button = window.oc_api_settings_button
 
-        button = window.api_manual_button
-        api_compact = window._api_compact
-
-        # 레이아웃에 들어가면 그만큼 인증키 칸이 밀린다.
-        assert api_compact.layout().indexOf(button) == -1
-        assert button.parent() is api_compact
-        assert button.width() <= 24 and button.height() <= 24
-        assert button.x() >= 0 and button.y() >= 0
-        assert button.x() + button.width() <= api_compact.width()
-        assert button.y() + button.height() <= api_compact.height()
-        assert not button.geometry().intersects(
-            window.save_api_checkbox.geometry()
-        )
+        assert header.layout().indexOf(button) >= 0
+        assert header.layout().indexOf(window.api_input) == -1
+        assert window.api_input.parent() is window.oc_api_dialog
+        assert window.api_manual_button.parent() is window.oc_api_dialog
+        assert window.api_manual_button.width() <= 24
+        assert header.height() < 80
     finally:
         window.close()
 
 
-def test_help_button_follows_the_api_box_edge_when_the_window_resizes(qt_app) -> None:
+def test_api_settings_button_opens_the_key_dialog(qt_app) -> None:
     window = LawSearchWindow()
     try:
         window.show()
-        margins = []
-        for width in (1400, 1000, 1600):
-            window.resize(width, 900)
-            qt_app.processEvents()
-            button = window.api_manual_button
-            api_compact = window._api_compact
-            margins.append(
-                api_compact.width() - (button.x() + button.width())
-            )
-
-        # 창 크기가 바뀌어도 인증키 박스 오른쪽 안쪽에 붙어 있어야 한다.
-        assert len(set(margins)) == 1, margins
-        assert margins[0] > 0
-    finally:
-        window.close()
-
-
-def test_api_key_widgets_do_not_move_because_of_the_help_button(qt_app) -> None:
-    window = LawSearchWindow()
-    try:
-        window.resize(1400, 900)
-        window.show()
         qt_app.processEvents()
-        before = (
-            window.api_input.x(),
-            window.api_reveal_button.x(),
-            window.save_api_checkbox.x(),
-        )
-
-        # 단추를 숨겼다 다시 보여도 옆 위젯 자리는 그대로여야 한다.
-        window.api_manual_button.hide()
+        window.oc_api_dialog.show()
         qt_app.processEvents()
-        after_hidden = (
-            window.api_input.x(),
-            window.api_reveal_button.x(),
-            window.save_api_checkbox.x(),
-        )
-
-        assert before == after_hidden
+        assert window.oc_api_dialog.isVisible()
+        assert window.api_input.isVisible()
+        window.oc_api_dialog.hide()
     finally:
         window.close()
 
