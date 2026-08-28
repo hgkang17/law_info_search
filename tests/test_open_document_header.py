@@ -44,6 +44,8 @@ def test_header_shows_active_document_without_binding_global_ai(qt_app) -> None:
         assert window.api_input.width() == 110
         assert window.ai_review_tab.context_source is None
         assert resource.ai_chat_panel.context_source == resource._chat_context
+        assert resource.ai_chat_panel.minimumWidth() == 0
+        assert not resource.main_splitter.isCollapsible(2)
         assert resource._chat_context() == ("제1조 목적 본문", "본문 전체")
     finally:
         window.close()

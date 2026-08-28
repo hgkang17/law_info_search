@@ -214,6 +214,14 @@ def test_keyword_ai_agent_uses_current_detail(
         assert tab.ai_chat_panel is not None
         assert tab.ai_chat_panel.isVisible()
         assert tab.main_splitter.sizes()[2] > 0
+        assert not tab.main_splitter.isCollapsible(2)
+        sizes = tab.main_splitter.sizes()
+        total = sum(sizes)
+        tab.main_splitter.setSizes(
+            [sizes[0], max(1, total - sizes[0] - 40), 40]
+        )
+        qt_app.processEvents()
+        assert 0 < tab.main_splitter.sizes()[2] < 100
         assert tab.ai_chat_panel.context_source() == (
             "직접검색 조문 본문",
             "본문 전체",

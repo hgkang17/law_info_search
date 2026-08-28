@@ -550,7 +550,8 @@ class LawSearchTab(QWidget):
         panel.closeRequested.connect(self._hide_ai_chat)
         panel.hide()
         self.main_splitter.addWidget(panel)
-        self.main_splitter.setCollapsible(2, True)
+        # 드래그 중 최소 폭에서 0으로 접히지 않게 한다. 닫기는 ×로만 한다.
+        self.main_splitter.setCollapsible(2, False)
         self.main_splitter.setStretchFactor(2, 0)
         self.ai_chat_panel = panel
 

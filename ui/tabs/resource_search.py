@@ -923,7 +923,9 @@ class ResourceSearchTab(QWidget):
         configure_horizontal_splitter(splitter)
         splitter.setCollapsible(0, True)
         splitter.setCollapsible(1, True)
-        splitter.setCollapsible(2, True)
+        # AI 패널은 손잡이를 왼쪽 끝까지 끌어도 갑자기 0폭으로 접지 않는다.
+        # 완전히 닫는 동작은 패널의 ×가 맡고, 폭은 최소 제한 없이 줄인다.
+        splitter.setCollapsible(2, False)
         # 목록 화면에서는 오른쪽 본문 위젯 자체를 숨긴다. splitter 크기만
         # 0으로 두면 창 크기나 복원 시 다시 벌어질 수 있다.
         splitter.setSizes([2000, 0, 0])

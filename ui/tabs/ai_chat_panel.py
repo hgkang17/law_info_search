@@ -641,6 +641,15 @@ class AiChatPanel(QFrame):
         super().__init__(parent)
         self.setObjectName("aiChatPanel")
         self.standalone = standalone
+        if not standalone:
+            # 본문 옆 분할 패널은 내부 단추·콤보의 sizeHint를 최소 폭으로
+            # 삼지 않는다. 그래야 손잡이로 300px 아래도 연속해서 줄일 수
+            # 있고, 최소 폭에 닿자마자 0폭으로 튀지 않는다.
+            self.setMinimumWidth(0)
+            self.setSizePolicy(
+                QSizePolicy.Policy.Ignored,
+                QSizePolicy.Policy.Preferred,
+            )
         # 이 패널이 붙는 화면은 설정을 들고 있지 않다. QSettings는 같은
         # 이름이면 같은 저장소를 가리키므로 직접 열어도 창 쪽과 같은 곳을
         # 읽고 쓴다.
