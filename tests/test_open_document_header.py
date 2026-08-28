@@ -130,6 +130,50 @@ def test_law_search_hides_fixed_detail_pane(qt_app) -> None:
     finally:
         window.close()
         qt_app.processEvents()
+
+
+def test_closing_active_document_in_reading_mode_returns_to_previous_page(
+    qt_app,
+) -> None:
+    """크게 보기의 ×는 빈 안내 대신 들어오기 전 화면으로 돌아간다."""
+    window = LawSearchWindow()
+    try:
+        resource = window.resource_tab
+        row = {
+            "target": "law",
+            "id": "009294",
+            "label": "법령",
+            "name": "국토의 계획 및 이용에 관한 법률",
+        }
+        resource._open_document_tab(row)
+        resource._set_detail_document(
+            row["name"],
+            [("법령ID", row["id"])],
+            [("조문", "제1조(목적) 본문")],
+            build_toc=True,
+        )
+        returned = []
+        resource._reading_mode_exit_callback = lambda: returned.append(
+            (resource._reading_mode, resource.detail_card.isHidden())
+        )
+        resource._set_reading_mode(True)
+
+        resource._close_document_tab_by_key("law:009294")
+        qt_app.processEvents()
+
+        assert returned == [(False, True)]
+        assert resource._reading_mode is False
+        assert resource.detail_card.isHidden()
+        # 테스트 창 자체는 show()하지 않으므로 조상 가시성까지 보는
+        # isVisible() 대신 위젯이 명시적으로 숨겨지지 않았는지 확인한다.
+        assert not resource.search_results_panel.isHidden()
+        assert resource._active_document_key == "__preview__"
+        assert resource.document_tabs.count() == 0
+    finally:
+        window.close()
+        qt_app.processEvents()
+
+
 def test_open_document_strip_can_close_a_document(qt_app) -> None:
     """위쪽 "열린 본문" 띠에서도 × 로 본문을 닫을 수 있어야 한다."""
     window = LawSearchWindow()

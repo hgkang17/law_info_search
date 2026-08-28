@@ -1808,6 +1808,13 @@ class ResourceSearchTab(QWidget):
                 else "__preview__"
             )
             self._active_document_key = new_key
+            # 크게 보기에서 현재 본문을 닫으면 빈 미리보기의 ``안내``를
+            # 전체 화면에 띄우지 않는다. 먼저 크게 보기를 끝내야 법령검색
+            # 결과 목록으로 돌아가고, 저장내역·즐겨찾기·AI에서 들어온
+            # 경우에는 기존에 붙들어 둔 복귀 콜백이 원래 화면을 되살린다.
+            # 다른(비활성) 탭의 ×를 누른 경우에는 읽던 본문을 유지한다.
+            if self._reading_mode:
+                self._set_reading_mode(False)
             self._restore_document_state(new_key)
 
     def _restore_toc_scroll(self, key: str = "") -> None:
