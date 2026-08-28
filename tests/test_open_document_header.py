@@ -174,6 +174,70 @@ def test_closing_active_document_in_reading_mode_returns_to_previous_page(
         qt_app.processEvents()
 
 
+def test_favorite_article_opens_in_full_reading_mode_with_back_button(
+    qt_app,
+) -> None:
+    """즐겨찾기 조항호목도 전문과 같은 크게 보기와 복귀 단추를 쓴다."""
+    window = LawSearchWindow()
+    try:
+        record = {
+            "row": {
+                "target": "law",
+                "id": "009294",
+                "label": "법령",
+                "name": "국토의 계획 및 이용에 관한 법률",
+            },
+            "payload": {
+                "법령": {
+                    "기본정보": {
+                        "법령명_한글": "국토의 계획 및 이용에 관한 법률",
+                        "법령ID": "009294",
+                    },
+                    "조문": {
+                        "조문단위": [
+                            {
+                                "조문번호": "77",
+                                "조문내용": "제77조(용도지역의 건폐율) 본문",
+                            }
+                        ]
+                    },
+                }
+            },
+            "favorite_article_jo": "007700",
+            "favorite_article_unit": {
+                "jo": "007700",
+                "hang": "",
+                "ho": "",
+                "mok": "",
+                "label": "제77조",
+            },
+        }
+        window._activate_favorites_page()
+
+        window._open_favorite(record)
+        qt_app.processEvents()
+
+        resource = window.resource_tab
+        assert window.tabs.currentWidget() is resource
+        assert resource._reading_mode is True
+        assert resource.search_results_panel.isHidden()
+        assert resource.status_label.isHidden()
+        assert not resource.detail_card.isHidden()
+        assert not resource.restore_view_button.isHidden()
+        assert resource.expand_detail_button.text() == "AI\n에이전트"
+        assert "제77조(용도지역의 건폐율) 본문" in resource.current_detail_text
+
+        resource.restore_view_button.click()
+        qt_app.processEvents()
+
+        assert resource._reading_mode is False
+        assert window.tabs.currentWidget() is window.favorites_tab
+        assert window.favorite_navigation_button.isChecked()
+    finally:
+        window.close()
+        qt_app.processEvents()
+
+
 def test_open_document_strip_can_close_a_document(qt_app) -> None:
     """위쪽 "열린 본문" 띠에서도 × 로 본문을 닫을 수 있어야 한다."""
     window = LawSearchWindow()
