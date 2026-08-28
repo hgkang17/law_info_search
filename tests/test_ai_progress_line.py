@@ -627,9 +627,19 @@ def test_embedded_provider_header_does_not_shift_between_ais(
 
         assert widget.provider_combo.width() == 178
         assert widget.provider_header_widget.height() == 29
-        assert (
-            widget.api_settings_button.width()
-            == widget.connection_row_widget.width()
+        longest_api_label = max(
+            (
+                "Gemini API 설정 필요",
+                "Gemini API 키 확인 필요",
+                "Gemini API 키 확인됨",
+            ),
+            key=len,
+        )
+        assert widget.api_settings_button.width() <= (
+            widget.api_settings_button.fontMetrics().horizontalAdvance(
+                longest_api_label
+            )
+            + 18
         )
         assert (
             widget.api_settings_button.font().pointSizeF()

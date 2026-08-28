@@ -328,7 +328,7 @@ def test_guideline_parenthesized_items_have_distinct_indent() -> None:
     assert int(parent_item.group(1)) > 28
 
 
-def test_period_numbered_items_have_twelve_pixel_left_indent() -> None:
+def test_period_numbered_items_have_twenty_four_pixel_left_indent() -> None:
     _app = QApplication.instance() or QApplication([])
     html = body_to_html("① 상위 항\n1. 첫 번째 호\n2. 두 번째 호")
     items = re.findall(
@@ -338,9 +338,29 @@ def test_period_numbered_items_have_twelve_pixel_left_indent() -> None:
     )
     marker_font = QFont(FONT_FAMILY)
     marker_font.setPixelSize(14)
-    expected_margin = 12 + 4 + QFontMetrics(marker_font).horizontalAdvance("1.")
+    expected_margin = 24 + 4 + QFontMetrics(marker_font).horizontalAdvance("1.")
     assert (str(expected_margin), "1.") in items
     assert (str(expected_margin), "2.") in items
+
+
+def test_law_hang_ho_mok_indent_is_twelve_pixels_more() -> None:
+    _app = QApplication.instance() or QApplication([])
+    html = body_to_html("① 항 내용\n1. 호 내용\n가. 목 내용\n(1) 세목 내용")
+    items = {
+        marker: margin
+        for margin, marker in re.findall(
+            r'style="margin:0 0 7px (\d+)px;[^>]*>\s*'
+            r'<span class="bullet-marker"[^>]*>([^<]+)&nbsp;',
+            html,
+        )
+    }
+    marker_font = QFont(FONT_FAMILY)
+    marker_font.setPixelSize(14)
+    metrics = QFontMetrics(marker_font)
+    assert items["①"] == str(12 + 4 + metrics.horizontalAdvance("①"))
+    assert items["1."] == str(24 + 4 + metrics.horizontalAdvance("1."))
+    assert items["가."] == str(40 + 4 + metrics.horizontalAdvance("가."))
+    assert items["(1)"] == str(64 + 4 + metrics.horizontalAdvance("(1)"))
 
 
 def test_guideline_period_numbered_items_have_40px_left_indent_only() -> None:

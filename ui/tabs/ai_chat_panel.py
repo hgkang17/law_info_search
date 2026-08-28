@@ -921,7 +921,9 @@ class AiChatPanel(QFrame):
 
         self.api_settings_button = QPushButton("Gemini API 설정", self)
         self.api_settings_button.setObjectName("geminiApiSettingsButton")
-        # 이 단추도 상태에 따라 글자가 바뀐다. 가장 긴 문구에 맞춰 둔다.
+        # 이 단추도 상태에 따라 글자가 바뀐다. 가장 긴 문구에 맞추되
+        # CLI 연결 줄 폭까지 따라가지 않는다. 본문 안 패널에서는 그 폭이
+        # 글자보다 훨씬 넓어 빈칸만 커 보였다.
         self.api_settings_button.setFixedWidth(
             _label_width(
                 self.api_settings_button,
@@ -930,6 +932,7 @@ class AiChatPanel(QFrame):
                     "Gemini API 키 확인 필요",
                     "Gemini API 키 확인됨",
                 ),
+                margin=16,
             )
         )
         self.api_settings_button.clicked.connect(self._open_api_settings)
@@ -1004,15 +1007,6 @@ class AiChatPanel(QFrame):
         # 그래서 둘 다 같은 높이로 못박고, 줄 자체도 탭 높이로 고정한다.
         self.api_settings_button.setFixedHeight(_HEADER_CONTROL_HEIGHT)
         self.connection_row_widget.setFixedHeight(_HEADER_CONTROL_HEIGHT)
-        if not self.standalone:
-            action_width = max(
-                self.api_settings_button.width(),
-                self.cli_install_status_label.width()
-                + connection_row.spacing()
-                + self.connection_button.width(),
-            )
-            self.api_settings_button.setFixedWidth(action_width)
-            self.connection_row_widget.setFixedWidth(action_width)
 
         self.provider_header_widget = QWidget(self)
         # 바깥 AI의 탭은 스타일상 32px에 테두리까지 더해진다. 29px짜리

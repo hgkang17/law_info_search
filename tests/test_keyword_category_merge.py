@@ -122,15 +122,21 @@ def _keyword_root(tag, name_field, name, id_field, item_id, org_field, org):
     return root, node
 
 
-def test_integrated_search_merges_keyword_rows_without_duplicates(window) -> None:
-    related, _ = _keyword_root(
+def test_integrated_search_keeps_keyword_article_rows(window) -> None:
+    related, first = _keyword_root(
         "법령", "법령명", "국토의 계획 및 이용에 관한 법률",
         "법령ID", "001234", "소관부처명", "국토교통부",
     )
-    # 두 API는 조문 단위로 답해서 같은 법령이 여러 번 실려 온다.
+    ET.SubElement(first, "조문번호").text = "77"
+    ET.SubElement(first, "조문가지번호").text = "0"
+    ET.SubElement(first, "조문제목").text = "용도지역의 건폐율"
+    # 같은 법령의 다른 조문도 단독 연관검색과 같은 별도 결과다.
     repeated = ET.SubElement(related, "법령", {"id": "2"})
     ET.SubElement(repeated, "법령명").text = "국토의 계획 및 이용에 관한 법률"
     ET.SubElement(repeated, "법령ID").text = "001234"
+    ET.SubElement(repeated, "조문번호").text = "84"
+    ET.SubElement(repeated, "조문가지번호").text = "0"
+    ET.SubElement(repeated, "조문제목").text = "용도지역안에서의 건폐율"
 
     direct, _ = _keyword_root(
         "행정규칙", "행정규칙명", "개발제한구역 관리지침",
@@ -144,27 +150,44 @@ def test_integrated_search_merges_keyword_rows_without_duplicates(window) -> Non
     roots = [(AI_RELATED_AGENCY, related), (AI_SEARCH_AGENCY, direct)]
     rows, total = window.resource_tab._parse_keyword_rows(roots, [])
 
-    assert total == 2
-    assert [row["label"] for row in rows] == ["연관검색", "직접검색"]
-    assert [row["id"] for row in rows] == ["001234", "009999"]
+    assert total == 3
+    assert [row["label"] for row in rows] == [
+        "연관검색", "연관검색", "직접검색"
+    ]
+    assert [row["id"] for row in rows] == ["001234", "001234", "009999"]
+    assert [row["display_name"] for row in rows[:2]] == [
+        "제77조 용도지역의 건폐율",
+        "제84조 용도지역안에서의 건폐율",
+    ]
+    assert [row["keyword_jo"] for row in rows[:2]] == ["007700", "008400"]
+    assert [row["related"] for row in rows[:2]] == [
+        "국토의 계획 및 이용에 관한 법률",
+        "국토의 계획 및 이용에 관한 법률",
+    ]
     # 본문 조회는 기존 법령ㆍ행정규칙 경로를 그대로 탄다.
-    assert [row["target"] for row in rows] == ["law", "admrul"]
+    assert [row["target"] for row in rows] == ["law", "law", "admrul"]
     assert rows[0]["effective"] == "2024.07.01"
     assert not any(row["id"] == "007777" for row in rows)
 
 
-def test_integrated_search_drops_laws_the_list_search_already_found(window) -> None:
-    related, _ = _keyword_root(
+def test_integrated_search_keeps_keyword_hits_already_found_by_list_search(
+    window,
+) -> None:
+    related, node = _keyword_root(
         "법령", "법령명", "국토의 계획 및 이용에 관한 법률",
         "법령ID", "001234", "소관부처명", "국토교통부",
     )
+    ET.SubElement(node, "조문번호").text = "77"
+    ET.SubElement(node, "조문제목").text = "용도지역의 건폐율"
     already_found = [{"target": "law", "id": "001234", "name": "목록검색 결과"}]
 
     rows, total = window.resource_tab._parse_keyword_rows(
         [(AI_RELATED_AGENCY, related)], already_found
     )
 
-    assert (rows, total) == ([], 0)
+    assert total == 1
+    assert rows[0]["display_name"] == "제77조 용도지역의 건폐율"
+    assert rows[0]["name"] == "국토의 계획 및 이용에 관한 법률"
 
 
 def test_missing_keyword_payload_is_not_an_error(window) -> None:

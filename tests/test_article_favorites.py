@@ -98,6 +98,31 @@ def test_article_favorite_can_be_removed_without_touching_the_law(
     assert cache.is_favorite(ROW)
 
 
+def test_repeated_article_favorite_checks_read_the_file_once(
+    tmp_path, monkeypatch
+) -> None:
+    from pathlib import Path
+
+    cache = _cache(tmp_path)
+    cache.set_article_favorite(ROW, "25", "제25조", True)
+    path = cache.path_for_row(ROW)
+    reads = {"count": 0}
+    original = Path.read_text
+
+    def counting_read(self, *args, **kwargs):
+        if self == path:
+            reads["count"] += 1
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", counting_read)
+    assert cache.is_article_favorite(ROW, "25")
+    first = reads["count"]
+    assert first >= 1
+    assert cache.is_article_favorite(ROW, "25")
+    assert cache.is_article_favorite(ROW, "30") is False
+    assert reads["count"] == first
+
+
 def test_unsaved_law_cannot_hold_an_article_favorite(tmp_path) -> None:
     cache = LawDocumentCache(tmp_path / "saved")
     assert not cache.set_article_favorite(ROW, "25", "제25조", True)

@@ -67,7 +67,7 @@ def test_hanging_indent_collapses_to_first_line_position() -> None:
 
 
 def test_indent_hierarchy_is_preserved() -> None:
-    # 화면 위계(① 0px < 1. 12px < 가. 28px)가 붙여넣기에서도 유지되어야 한다.
+    # 화면 위계(① 12px < 1. 24px < 가. 40px)가 붙여넣기에서도 유지되어야 한다.
     def left_pt(margin_px: int, indent_px: int) -> int:
         source = (
             f'<p style=" margin-left:{margin_px}px; '

@@ -530,6 +530,35 @@ class LawDocumentCache(QObject):
         self.changed.emit()
         return True
 
+    def _read_json_cached(self, path: Path) -> dict[str, object] | None:
+        """저장 JSON을 mtime·크기 기준으로 기억해 같은 파일을 반복 파싱하지 않는다."""
+        try:
+            if not path.is_file():
+                self._snapshot_memory.pop(path, None)
+                return None
+            stat = path.stat()
+            cached = self._snapshot_memory.get(path)
+            if cached is not None and cached[:2] == (
+                stat.st_mtime_ns,
+                stat.st_size,
+            ):
+                self._snapshot_memory.move_to_end(path)
+                return cached[2]
+            record = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(record, dict):
+                return None
+            self._snapshot_memory[path] = (
+                stat.st_mtime_ns,
+                stat.st_size,
+                record,
+            )
+            self._snapshot_memory.move_to_end(path)
+            while len(self._snapshot_memory) > self._snapshot_memory_limit:
+                self._snapshot_memory.popitem(last=False)
+            return record
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            return None
+
     def article_favorites(self, row: dict[str, object]) -> list[dict[str, object]]:
         """이 법령에서 조·항·호·목 단위로 걸어 둔 즐겨찾기를 돌려준다.
 
@@ -537,14 +566,8 @@ class LawDocumentCache(QObject):
         ``favorite_articles``로 함께 둔다. 조문만 따로 저장하면 본문이
         없어 열 수도, 현행 여부를 볼 수도 없기 때문이다.
         """
-        path = self.path_for_row(row)
-        try:
-            if not path.is_file():
-                return []
-            record = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, TypeError, ValueError, json.JSONDecodeError):
-            return []
-        if not isinstance(record, dict):
+        record = self._read_json_cached(self.path_for_row(row))
+        if record is None:
             return []
         return self._article_favorites(record)
 
@@ -646,6 +669,7 @@ class LawDocumentCache(QObject):
                 encoding="utf-8",
             )
             temporary_path.replace(path)
+            self._snapshot_memory.pop(path, None)
         except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
             self.last_error = str(exc)
             return False

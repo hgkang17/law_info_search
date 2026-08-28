@@ -451,8 +451,8 @@ def body_to_html(
             for line in bullet_lines
         )
         # 호(1., 5의2. 등)와 수립지침 번호는 스페이스 한 칸 정도만
-        # 들여쓰고, 동그라미 항 번호(①, ② 등)는 여백 없이 맞춘다.
-        # 하위 목과 세부항목은 기존 24px 단계 차이를 유지한다.
+        # 들여쓰고, 일반 법령의 항ㆍ호ㆍ목ㆍ세목은 각 단계에 12px를
+        # 더한다. 하위 목과 세부항목의 24px 단계 차이는 유지한다.
         if guideline_layout and ADMIN_RULE_PAREN_ITEM_PATTERN.match(
             bullet_marker
         ):
@@ -469,7 +469,7 @@ def body_to_html(
             not guideline_layout
             and bullet_marker in "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳"
         ):
-            left_margin = 0
+            left_margin = 12
         elif guideline_layout and ADMIN_RULE_CLAUSE_PATTERN.match(
             bullet_marker
         ):
@@ -492,12 +492,14 @@ def body_to_html(
         elif not guideline_layout and LAW_SUBPARAGRAPH_PATTERN.match(
             bullet_marker
         ):
-            # 일반 법령의 숫자 항목은 기존 12px 여백을 유지한다.
-            left_margin = 12
+            # 일반 법령의 숫자 호는 항보다 12px 더 들여쓴다.
+            left_margin = 24
         else:
             left_margin = (
                 0 if bullet_level == 0 else 4 + (bullet_level - 1) * 24
             )
+            if not guideline_layout:
+                left_margin += 12
         # 표식은 실제 글자 폭만 사용하고, 뒤에는 줄바꿈되지 않는
         # 공백 한 칸만 둔다.
         # QTextDocument의 표는 첫 열을 임의로 늘려 번호 뒤에 큰

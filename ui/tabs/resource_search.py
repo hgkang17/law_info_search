@@ -210,6 +210,12 @@ def _browser_href_at(browser, position: QPoint) -> str:
 class ResourceSearchTab(QWidget):
     """법령·행정규칙·자치법규와 각 별표·서식을 통합 검색."""
 
+    # 조문 제목 왼쪽 별표. 제N조 블록에만 큰 왼쪽 여백을 두면 ①·1. 항호가
+    # 조보다 앞에 있는 것처럼 보이므로, 별 크기와 틈만큼만 자리를 낸다.
+    _ARTICLE_FAVORITE_SIZE = 16
+    _ARTICLE_FAVORITE_GAP = 2
+    _ARTICLE_FAVORITE_HEADING_MARGIN = 14.0
+
     def __init__(
         self,
         oc_provider,
@@ -2035,10 +2041,11 @@ class ResourceSearchTab(QWidget):
         root_frame.setFrameFormat(frame_format)
 
         viewport = self.detail_view.viewport()
+        star_size = self._ARTICLE_FAVORITE_SIZE
         for article in self._current_three_stage_articles:
             favorite_button = QPushButton("☆", viewport)
             favorite_button.setObjectName("articleFavoriteButton")
-            favorite_button.setFixedSize(18, 18)
+            favorite_button.setFixedSize(star_size, star_size)
             favorite_button.setCursor(Qt.CursorShape.PointingHandCursor)
             favorite_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             favorite_button.clicked.connect(
@@ -2084,18 +2091,41 @@ class ResourceSearchTab(QWidget):
             block = block.next()
         if not document_prepared:
             self._apply_inline_subordinate_links()
-        for article in self._current_three_stage_articles:
-            position = self._three_stage_anchor_positions.get(article["anchor"])
-            if position is None:
-                continue
-            cursor = QTextCursor(self.detail_view.document())
-            cursor.setPosition(position)
-            block_format = cursor.blockFormat()
-            block_format.setTopMargin(14.0)
-            # 별이 제N조 글자와 겹치지 않도록 조문 첫 블록에만 자리를 낸다.
-            # 문서 전체 왼쪽 여백을 바꾸면 제목·기본정보까지 함께 밀린다.
-            block_format.setLeftMargin(max(24.0, block_format.leftMargin()))
-            cursor.setBlockFormat(block_format)
+        document = self.detail_view.document()
+        try:
+            document.contentsChanged.disconnect(
+                self._schedule_three_stage_button_positions
+            )
+            connected = True
+        except (RuntimeError, TypeError):
+            connected = False
+        heading_margin = self._ARTICLE_FAVORITE_HEADING_MARGIN
+        try:
+            for article in self._current_three_stage_articles:
+                position = self._three_stage_anchor_positions.get(
+                    article["anchor"]
+                )
+                if position is None:
+                    continue
+                cursor = QTextCursor(document)
+                cursor.setPosition(position)
+                block_format = cursor.blockFormat()
+                changed = False
+                if block_format.topMargin() < 14.0:
+                    block_format.setTopMargin(14.0)
+                    changed = True
+                # 별이 제N조 글자와 겹치지 않도록 조문 첫 블록에만 자리를 낸다.
+                # 문서 전체 왼쪽 여백을 바꾸면 제목·기본정보까지 함께 밀린다.
+                if block_format.leftMargin() != heading_margin:
+                    block_format.setLeftMargin(heading_margin)
+                    changed = True
+                if changed:
+                    cursor.setBlockFormat(block_format)
+        finally:
+            if connected:
+                document.contentsChanged.connect(
+                    self._schedule_three_stage_button_positions
+                )
         self._refresh_inline_article_favorites()
         self._schedule_three_stage_button_positions()
 
@@ -2103,6 +2133,8 @@ class ResourceSearchTab(QWidget):
         """본문의 조문별 별표를 저장 상태와 맞춘다."""
         if not hasattr(self, "_article_favorite_buttons"):
             return
+        favorite_keys: dict[str, set[tuple[str, str, str, str]]] = {}
+        star_size = self._ARTICLE_FAVORITE_SIZE
         for article, button in zip(
             self._current_three_stage_articles,
             self._article_favorite_buttons,
@@ -2111,10 +2143,21 @@ class ResourceSearchTab(QWidget):
             jo = str(article.get("jo") or "")
             law_name = str(article.get("law_name") or "")
             row = self._law_row(law_id, law_name) if law_id and jo else None
-            favorite = bool(
-                row is not None
-                and self.law_cache.is_article_favorite(row, jo)
-            )
+            favorite = False
+            if row is not None:
+                keys = favorite_keys.get(law_id)
+                if keys is None:
+                    keys = {
+                        (
+                            str(entry.get("jo") or ""),
+                            str(entry.get("hang") or ""),
+                            str(entry.get("ho") or ""),
+                            str(entry.get("mok") or ""),
+                        )
+                        for entry in self.law_cache.article_favorites(row)
+                    }
+                    favorite_keys[law_id] = keys
+                favorite = (jo, "", "", "") in keys
             label = str(article.get("label") or self._law_reference_label(jo))
             button.setText("★" if favorite else "☆")
             button.setEnabled(row is not None)
@@ -2127,8 +2170,8 @@ class ResourceSearchTab(QWidget):
                 "QPushButton#articleFavoriteButton {"
                 f"color: {'#e2a400' if favorite else '#aeb9c5'};"
                 "border:none; background:transparent; padding:0;"
-                "font-size:14px; min-width:18px; max-width:18px;"
-                "min-height:18px; max-height:18px;}"
+                f"font-size:13px; min-width:{star_size}px; max-width:{star_size}px;"
+                f"min-height:{star_size}px; max-height:{star_size}px;}}"
                 "QPushButton#articleFavoriteButton:hover {color:#e2a400;}"
             )
 
@@ -2430,7 +2473,10 @@ class ResourceSearchTab(QWidget):
             cursor = QTextCursor(self.detail_view.document())
             cursor.setPosition(position)
             rect = self.detail_view.cursorRect(cursor)
-            button_x = max(1, rect.left() - button.width() - 4)
+            button_x = max(
+                1,
+                rect.left() - button.width() - self._ARTICLE_FAVORITE_GAP,
+            )
             button_y = rect.top()
             visible = (
                 rect.bottom() >= 0
@@ -6733,7 +6779,7 @@ class ResourceSearchTab(QWidget):
                 values = (
                     str(row["label"]),
                     str(row["id"]),
-                    str(row["name"]),
+                    str(row.get("display_name") or row["name"]),
                     str(row["related"]),
                     str(row["date"]),
                     str(row["effective"]),
@@ -7174,22 +7220,43 @@ class ResourceSearchTab(QWidget):
             total_count = len(rows)
         return rows, total_count
 
+    @staticmethod
+    def _keyword_result_number(value: str) -> str:
+        return str(int(value)) if value.isdigit() else value
+
+    @classmethod
+    def _keyword_result_provision(cls, node: object) -> str:
+        """키워드검색 XML 한 건의 조문 표기를 단독 검색과 같게 만든다."""
+        item_tag = str(getattr(node, "tag", "")).rsplit("}", 1)[-1]
+        is_annex = "별표서식" in item_tag
+        if is_annex:
+            number = cls._keyword_result_number(_find_text(node, "별표서식번호"))
+            branch = cls._keyword_result_number(
+                _find_text(node, "별표서식가지번호")
+            )
+            title = _find_text(node, "별표서식제목")
+            prefix = f"별표·서식 {number}" if number else "별표·서식"
+        else:
+            number = cls._keyword_result_number(_find_text(node, "조문번호"))
+            branch = cls._keyword_result_number(_find_text(node, "조문가지번호"))
+            title = _find_text(node, "조문제목")
+            prefix = f"제{number}조" if number else "조문"
+        if branch and branch != "0":
+            prefix += f"의{branch}"
+        return f"{prefix} {title}".strip()
+
     def _parse_keyword_rows(
-        self, roots: object, existing: list[dict[str, object]]
+        self, roots: object, _existing: list[dict[str, object]]
     ) -> tuple[list[dict[str, object]], int]:
         """연관검색ㆍ직접검색 응답을 통합검색 목록의 행으로 옮긴다.
 
-        두 API는 조문 단위로 답하므로 같은 법령이 여러 번 나온다. 통합검색
-        목록은 법령 단위라서 처음 나온 것만 남기고, 목록 검색으로 이미
-        찾은 법령과 겹치는 것도 뺀다. 별표ㆍ서식 항목은 이 응답만으로는
-        본문을 열 수 있는 일련번호를 얻지 못해 제외한다.
+        두 API의 조문 단위 결과를 단독 연관검색ㆍ직접검색과 같은 건수로
+        보존한다. 같은 법령이 목록검색에 있거나 여러 조문이 검색되어도
+        각각 별도 검색결과이므로 버리지 않는다. 별표ㆍ서식 항목은 이
+        응답만으로 본문을 열 수 있는 일련번호를 얻지 못해 제외한다.
         """
         if not isinstance(roots, list) or not roots:
             return [], 0
-        seen = {
-            (str(row.get("target")), str(row.get("id")))
-            for row in existing
-        }
         rows: list[dict[str, object]] = []
         for entry in roots:
             try:
@@ -7214,10 +7281,15 @@ class ResourceSearchTab(QWidget):
                 item_id = _find_text(node, "행정규칙ID" if is_admin else "법령ID")
                 if not name or not item_id:
                     continue
-                key = (target, item_id)
-                if key in seen:
-                    continue
-                seen.add(key)
+                provision = self._keyword_result_provision(node)
+                article_number = _find_text(node, "조문번호")
+                article_branch = _find_text(node, "조문가지번호")
+                keyword_jo = ""
+                if article_number.isdigit():
+                    keyword_jo = law_unit_code(
+                        article_number,
+                        article_branch if article_branch.isdigit() else "",
+                    )
                 organization = _find_text(
                     node, "발령기관명" if is_admin else "소관부처명"
                 )
@@ -7227,7 +7299,14 @@ class ResourceSearchTab(QWidget):
                         "label": label,
                         "id": item_id,
                         "name": name,
-                        "related": organization,
+                        # 내부 본문ㆍ저장 경로는 실제 법령명을 계속 쓰고,
+                        # 통합 목록의 명칭 열만 조문 단위 결과로 보여 준다.
+                        "display_name": (
+                            provision
+                            if provision not in ("조문", "별표·서식")
+                            else name
+                        ),
+                        "related": name,
                         "organization": organization,
                         "date": self._display_date(
                             _find_text(node, "발령일자" if is_admin else "공포일자")
@@ -7239,6 +7318,8 @@ class ResourceSearchTab(QWidget):
                             _find_text(node, "시행일자")
                         ),
                         "short_name": "",
+                        "keyword_provision": provision,
+                        "keyword_jo": keyword_jo,
                         "raw": {},
                     }
                 )
@@ -7352,6 +7433,7 @@ class ResourceSearchTab(QWidget):
             cached_record = self.law_cache.load_for_row(row)
             if cached_record is not None:
                 self.open_cached_law(cached_record, clear_highlights=False)
+                self._schedule_keyword_article_scroll(row)
                 return True
         elif not force_api:
             cached_snapshot = self.law_cache.load_snapshot(row)
@@ -7399,6 +7481,19 @@ class ResourceSearchTab(QWidget):
             ),
         )
         return True
+
+    def _schedule_keyword_article_scroll(self, row: dict[str, object]) -> None:
+        """통합 키워드 결과로 연 법령을 해당 조문 위치에 맞춘다."""
+        jo = str(row.get("keyword_jo") or "")
+        if str(row.get("target") or "") != "law" or not jo:
+            return
+        key = f"{row['target']}:{row['id'] or row['name']}"
+
+        def scroll() -> None:
+            if self._active_document_key == key:
+                self.scroll_to_favorite_article(jo)
+
+        QTimer.singleShot(0, scroll)
 
     def _open_cached_resource_snapshot(
         self,
@@ -7691,6 +7786,7 @@ class ResourceSearchTab(QWidget):
                 status += f" · 저장 실패: {self.law_cache.last_error}"
         self.status_label.setText(status)
         self._finalize_pending_favorite(dict(self.pending_row))
+        self._schedule_keyword_article_scroll(self.pending_row)
 
     @staticmethod
     def _snapshot_matches_row(

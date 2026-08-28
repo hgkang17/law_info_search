@@ -280,6 +280,7 @@ def test_full_law_body_has_article_favorite_stars_on_heading_left(tmp_path) -> N
     tab.open_cached_law({"row": dict(ROW), "payload": payload})
     tab._set_reading_mode(True)
     app.processEvents()
+    tab._position_three_stage_buttons()
 
     assert len(tab._article_favorite_buttons) == 2
     first_star = tab._article_favorite_buttons[0]
@@ -291,6 +292,15 @@ def test_full_law_body_has_article_favorite_stars_on_heading_left(tmp_path) -> N
     cursor.setPosition(position)
     heading_rect = tab.detail_view.cursorRect(cursor)
     assert first_star.geometry().right() < heading_rect.left()
+    assert first_star.width() == ResourceSearchTab._ARTICLE_FAVORITE_SIZE
+    assert (
+        heading_rect.left() - first_star.geometry().right()
+        <= ResourceSearchTab._ARTICLE_FAVORITE_GAP + 1
+    )
+    assert (
+        cursor.blockFormat().leftMargin()
+        == ResourceSearchTab._ARTICLE_FAVORITE_HEADING_MARGIN
+    )
 
     first_star.click()
     assert tab.law_cache.is_article_favorite(ROW, "000100")
@@ -300,6 +310,45 @@ def test_full_law_body_has_article_favorite_stars_on_heading_left(tmp_path) -> N
     first_star.click()
     assert not tab.law_cache.is_article_favorite(ROW, "000100")
     assert first_star.text() == "☆"
+
+
+def test_inline_favorite_refresh_loads_saved_file_once(
+    tmp_path, monkeypatch
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    tab = _tab(tmp_path)
+    payload = {
+        "법령": {
+            "기본정보": {
+                "법령명_한글": ROW["name"],
+                "법령ID": ROW["id"],
+            },
+            "조문": {
+                "조문단위": [
+                    {"조문번호": str(index), "조문내용": f"제{index}조 본문"}
+                    for index in range(1, 6)
+                ]
+            },
+        }
+    }
+    assert tab.law_cache.save(dict(ROW), payload)
+    tab.resize(1200, 760)
+    tab.show()
+    tab.open_cached_law({"row": dict(ROW), "payload": payload})
+    tab._set_reading_mode(True)
+    app.processEvents()
+    assert len(tab._article_favorite_buttons) == 5
+
+    calls = {"count": 0}
+    original = tab.law_cache.article_favorites
+
+    def counting(row):
+        calls["count"] += 1
+        return original(row)
+
+    monkeypatch.setattr(tab.law_cache, "article_favorites", counting)
+    tab._refresh_inline_article_favorites()
+    assert calls["count"] == 1
 
 
 def test_star_toggles_saved_document(tmp_path) -> None:
