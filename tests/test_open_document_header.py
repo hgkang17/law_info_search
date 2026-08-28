@@ -233,6 +233,22 @@ def test_favorite_article_opens_in_full_reading_mode_with_back_button(
         assert resource._reading_mode is False
         assert window.tabs.currentWidget() is window.favorites_tab
         assert window.favorite_navigation_button.isChecked()
+
+        # 같은 조항호목을 다시 열어 탭의 ×로 닫아도 빈 ``안내``를
+        # 전체 화면에 남기지 않고, ◀와 똑같이 즐겨찾기로 돌아간다.
+        window._open_favorite(record)
+        qt_app.processEvents()
+        article_key = resource._active_document_key
+        assert resource._reading_mode is True
+
+        resource._close_document_tab_by_key(article_key)
+        qt_app.processEvents()
+
+        assert resource._reading_mode is False
+        assert window.tabs.currentWidget() is window.favorites_tab
+        assert window.favorite_navigation_button.isChecked()
+        assert resource.detail_card.isHidden()
+        assert resource._document_tab_index(article_key) == -1
     finally:
         window.close()
         qt_app.processEvents()
