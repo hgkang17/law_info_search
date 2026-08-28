@@ -1188,6 +1188,9 @@ class LawSearchWindow(QMainWindow):
             self._update_download_worker.wait(31_000)
         self.ai_review_tab.shutdown()
         self.resource_tab.ai_chat_panel.shutdown()
+        self.central_tab.shutdown()
+        self.expc_tab.shutdown()
+        self.prec_tab.shutdown()
         super().closeEvent(event)
 
     def _activate_favorites_page(self, *_args: object) -> None:

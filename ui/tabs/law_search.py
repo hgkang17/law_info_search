@@ -35,6 +35,7 @@ from ui.widgets import (
 from ui.dialogs import (
     MemoNoteDialog,
 )
+from ui.tabs.ai_chat_panel import AiChatPanel
 from models.law import (
     EXPC_AGENCY,
     PREC_AGENCY,
@@ -60,7 +61,7 @@ from utils.parsing import (
     whitespace_insensitive_contains,
     serialize_agency_search_payload,
 )
-from PySide6.QtCore import QRect, QTimer, QUrl, Qt
+from PySide6.QtCore import QEvent, QRect, QTimer, QUrl, Qt
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QKeySequence, QShortcut, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import QAbstractItemView, QApplication, QComboBox, QDialog, QDoubleSpinBox, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton, QSizePolicy, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
 from html import escape
@@ -107,6 +108,7 @@ class LawSearchTab(QWidget):
         )
         self._reading_mode = False
         self._normal_window_margins: tuple[int, int, int, int] | None = None
+        self.ai_chat_panel: AiChatPanel | None = None
         self._build_ui()
         install_text_color_shortcuts(self)
         self.law_cache.changed.connect(self._refresh_snapshot_checks)
@@ -335,7 +337,18 @@ class LawSearchTab(QWidget):
         self.expand_detail_button.setToolTip("F11: 본문 크게 보기로 전환")
         self.expand_detail_button.clicked.connect(self._toggle_reading_mode)
 
-        self.close_detail_button = QPushButton("×")
+        self.ai_agent_button = QPushButton("AI\n에이전트")
+        self.ai_agent_button.setObjectName("readingModeButton")
+        self.ai_agent_button.setProperty("buttonMode", "ai")
+        self.ai_agent_button.setFixedSize(58, 42)
+        self.ai_agent_button.setToolTip(
+            "보고 있는 본문이나 선택한 부분에 대해 AI 에이전트에게 물어봅니다."
+        )
+        self.ai_agent_button.clicked.connect(self._toggle_ai_chat)
+
+        # 머리말 레이아웃에 넣으면 크게 보기 옆에서 아래로 내려와 보인다.
+        # 본문 카드의 자식으로 띄워 실제 오른쪽 위 모서리에 고정한다.
+        self.close_detail_button = QPushButton("×", detail_card)
         self.close_detail_button.setObjectName("caseDetailCloseButton")
         self.close_detail_button.setFixedSize(22, 22)
         self.close_detail_button.setFlat(True)
@@ -343,6 +356,7 @@ class LawSearchTab(QWidget):
         self.close_detail_button.setToolTip("분할 본문 닫기")
         self.close_detail_button.setAccessibleName("분할 본문 닫기")
         self.close_detail_button.clicked.connect(self._hide_detail_split)
+        detail_card.installEventFilter(self)
 
         self.copy_button = QPushButton("본문 복사")
         self.copy_button.setObjectName("ghostButton")
@@ -360,9 +374,9 @@ class LawSearchTab(QWidget):
         detail_head.addWidget(self.memo_button)
         detail_head.addStretch()
         detail_head.addWidget(self.expand_detail_button)
-        detail_head.addWidget(
-            self.close_detail_button, 0, Qt.AlignmentFlag.AlignTop
-        )
+        detail_head.addWidget(self.ai_agent_button)
+        # 우상단에 겹쳐 놓은 × 아래로 도구 단추가 들어가지 않게 비워 둔다.
+        detail_head.addSpacing(22)
         detail_head.addWidget(self.copy_button)
         detail_layout.addLayout(detail_head)
 
@@ -449,6 +463,23 @@ class LawSearchTab(QWidget):
         self.reading_mode_shortcut = QShortcut(QKeySequence("F11"), self)
         self.reading_mode_shortcut.activated.connect(self._toggle_reading_mode)
 
+    def eventFilter(self, watched, event) -> bool:
+        if (
+            watched is getattr(self, "detail_card", None)
+            and event.type() in (QEvent.Type.Resize, QEvent.Type.Show)
+        ):
+            QTimer.singleShot(0, self._position_close_detail_button)
+        return super().eventFilter(watched, event)
+
+    def _position_close_detail_button(self) -> None:
+        """닫기 ×를 본문 카드의 오른쪽 위 테두리에 가깝게 고정한다."""
+        button = getattr(self, "close_detail_button", None)
+        card = getattr(self, "detail_card", None)
+        if button is None or card is None:
+            return
+        button.move(max(0, card.width() - button.width() - 5), 5)
+        button.raise_()
+
     def _show_detail_split(self) -> None:
         """검색 목록 옆에 질의회신·해석례·판례 본문 칸을 연다."""
         if self._reading_mode:
@@ -456,18 +487,127 @@ class LawSearchTab(QWidget):
         self.detail_card.show()
         self.main_splitter.setStretchFactor(0, 4)
         self.main_splitter.setStretchFactor(1, 12)
-        self.main_splitter.setSizes(self._normal_splitter_sizes)
+        sizes = list(self._normal_splitter_sizes)
+        if self.ai_chat_panel is not None:
+            sizes.append(0)
+        self.main_splitter.setSizes(sizes)
+        QTimer.singleShot(0, self._position_close_detail_button)
         QTimer.singleShot(0, self.memo_marker_bar.refresh_after_layout_change)
 
     def _hide_detail_split(self) -> None:
         """새 검색에서는 본문 칸을 닫고 결과 목록을 다시 넓힌다."""
         if self._reading_mode:
             self._set_reading_mode(False)
+        self._hide_ai_chat()
         total = sum(self.main_splitter.sizes()) or self.main_splitter.width()
         self.detail_card.hide()
         self.main_splitter.setStretchFactor(0, 1)
         self.main_splitter.setStretchFactor(1, 0)
-        self.main_splitter.setSizes([max(1, total), 0])
+        sizes = [max(1, total), 0]
+        if self.ai_chat_panel is not None:
+            self.main_splitter.setStretchFactor(2, 0)
+            sizes.append(0)
+        self.main_splitter.setSizes(sizes)
+
+    def _chat_context(self) -> tuple[str, str]:
+        """AI가 현재 사례 본문 또는 사용자가 드래그한 부분을 근거로 삼는다."""
+        selected = self.detail_view.textCursor().selectedText()
+        if selected.strip():
+            return selected.replace(" ", "\n"), "선택한 부분"
+        return self.detail_view.toPlainText(), "본문 전체"
+
+    def _resource_action(self, name: str, *args: object):
+        """AI 답변의 법령 링크·즐겨찾기를 기존 법령검색 기능에 맡긴다."""
+        resource_tab = getattr(self.window(), "resource_tab", None)
+        action = getattr(resource_tab, name, None)
+        if action is None:
+            return False
+        return action(*args)
+
+    def _ensure_ai_chat_panel(self) -> AiChatPanel:
+        if self.ai_chat_panel is not None:
+            return self.ai_chat_panel
+
+        panel = AiChatPanel(self.recent_search_manager.settings, parent=self)
+        panel.context_source = self._chat_context
+        panel.oc_provider = self.oc_provider
+        panel.document_cache = self.law_cache
+        panel.favorite_handler = lambda *args: self._resource_action(
+            "add_favorite_by_id", *args
+        )
+        panel.favorite_checker = lambda *args: self._resource_action(
+            "is_favorite_by_id", *args
+        )
+        panel.article_favorite_handler = lambda *args: self._resource_action(
+            "add_article_favorite_by_id", *args
+        )
+        panel.article_favorite_checker = lambda *args: self._resource_action(
+            "is_article_favorite_by_id", *args
+        )
+        panel.reference_handler = lambda *args: self._resource_action(
+            "open_reference_link", *args
+        )
+        panel.closeRequested.connect(self._hide_ai_chat)
+        panel.hide()
+        self.main_splitter.addWidget(panel)
+        self.main_splitter.setCollapsible(2, True)
+        self.main_splitter.setStretchFactor(2, 0)
+        self.ai_chat_panel = panel
+
+        # 독립 AI 화면·법령 본문 AI와 같은 저장 채팅을 쓰므로, 어느 곳에서
+        # 목록을 비워도 이미 열린 패널들이 즉시 함께 비운다.
+        window = self.window()
+        peers = [
+            getattr(window, "ai_review_tab", None),
+            getattr(getattr(window, "resource_tab", None), "ai_chat_panel", None),
+        ]
+        for tab_name in ("central_tab", "expc_tab", "prec_tab"):
+            peer_tab = getattr(window, tab_name, None)
+            peers.append(getattr(peer_tab, "ai_chat_panel", None))
+        for peer in peers:
+            if peer is None or peer is panel:
+                continue
+            panel.chatHistoryCleared.connect(peer.apply_external_history_clear)
+            peer.chatHistoryCleared.connect(panel.apply_external_history_clear)
+        return panel
+
+    def _toggle_ai_chat(self, *_args: object) -> None:
+        panel = self._ensure_ai_chat_panel()
+        if panel.isVisible():
+            self._hide_ai_chat()
+        else:
+            self._show_ai_chat()
+
+    def _show_ai_chat(self) -> None:
+        panel = self._ensure_ai_chat_panel()
+        sizes = self.main_splitter.sizes()
+        total = sum(sizes) or self.main_splitter.width()
+        left_width = 0 if self._reading_mode else sizes[0]
+        chat_width = max(300, total // 4)
+        detail_width = max(1, total - left_width - chat_width)
+        panel.show()
+        self.main_splitter.setStretchFactor(2, 4)
+        self.main_splitter.setSizes([left_width, detail_width, chat_width])
+        panel.input_edit.setFocus()
+
+    def _hide_ai_chat(self, *_args: object) -> None:
+        panel = self.ai_chat_panel
+        if panel is None or not panel.isVisible():
+            return
+        sizes = self.main_splitter.sizes()
+        total = sum(sizes) or self.main_splitter.width()
+        left_width = 0 if self._reading_mode else sizes[0]
+        panel.hide()
+        self.main_splitter.setStretchFactor(2, 0)
+        self.main_splitter.setSizes(
+            [left_width, max(1, total - left_width), 0]
+        )
+        self.detail_view.setFocus()
+
+    def shutdown(self) -> None:
+        """필요할 때 만든 AI 패널의 백그라운드 작업을 앱 종료 전에 정리."""
+        if self.ai_chat_panel is not None:
+            self.ai_chat_panel.shutdown()
 
     def _toggle_reading_mode(self, *_args: object) -> None:
         self._set_reading_mode(not self._reading_mode)
@@ -489,7 +629,7 @@ class LawSearchTab(QWidget):
         if expanded:
             current_sizes = self.main_splitter.sizes()
             if sum(current_sizes) > 0:
-                self._normal_splitter_sizes = current_sizes
+                self._normal_splitter_sizes = current_sizes[:2]
             if central_layout is not None:
                 self._normal_window_margins = central_layout.getContentsMargins()
 
@@ -526,13 +666,36 @@ class LawSearchTab(QWidget):
             else 0.0
         )
         if expanded:
-            self.main_splitter.setSizes([0, max(1, sum(self._normal_splitter_sizes))])
+            current_sizes = self.main_splitter.sizes()
+            total = sum(current_sizes) or sum(self._normal_splitter_sizes)
+            chat_width = (
+                current_sizes[2]
+                if self.ai_chat_panel is not None
+                and self.ai_chat_panel.isVisible()
+                and len(current_sizes) > 2
+                else 0
+            )
+            sizes = [0, max(1, total - chat_width)]
+            if self.ai_chat_panel is not None:
+                sizes.append(chat_width)
+            self.main_splitter.setSizes(sizes)
             self.expand_detail_button.setText("원래\n화면")
             self.expand_detail_button.setToolTip("F11: 원래 화면으로 돌아가기")
             self.restore_view_button.show()
             self.detail_view.setFocus()
         else:
-            self.main_splitter.setSizes(self._normal_splitter_sizes)
+            current_sizes = self.main_splitter.sizes()
+            chat_width = (
+                current_sizes[2]
+                if self.ai_chat_panel is not None
+                and self.ai_chat_panel.isVisible()
+                and len(current_sizes) > 2
+                else 0
+            )
+            sizes = list(self._normal_splitter_sizes)
+            if self.ai_chat_panel is not None:
+                sizes.append(chat_width)
+            self.main_splitter.setSizes(sizes)
             self.expand_detail_button.setText("크게\n보기")
             self.restore_view_button.hide()
             self.expand_detail_button.setToolTip("F11: 본문 크게 보기로 전환")

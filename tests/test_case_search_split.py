@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import pytest
-from PySide6.QtCore import QSettings
-from PySide6.QtWidgets import QApplication, QTableWidgetItem
+from PySide6.QtCore import QSettings, Signal
+from PySide6.QtWidgets import QApplication, QFrame, QLineEdit, QTableWidgetItem
 
 from storage.cache import LawDocumentCache
 from storage.recent import RecentSearchManager
+from ui.tabs import law_search as law_search_module
 from ui.tabs.law_search import LawSearchTab
 
 
@@ -150,6 +151,16 @@ def test_small_close_button_replaces_detail_lookup_button(
         assert tab.close_detail_button.text() == "×"
         assert tab.close_detail_button.width() <= 24
         assert tab.close_detail_button.height() <= 24
+        assert tab.close_detail_button.x() >= (
+            tab.detail_card.width() - tab.close_detail_button.width() - 6
+        )
+        assert tab.close_detail_button.y() <= 6
+        assert (
+            tab.ai_agent_button.mapTo(
+                tab.detail_card, tab.ai_agent_button.rect().topRight()
+            ).x()
+            < tab.close_detail_button.x()
+        )
 
         tab.close_detail_button.click()
         qt_app.processEvents()
@@ -157,6 +168,75 @@ def test_small_close_button_replaces_detail_lookup_button(
         assert tab.detail_card.isHidden()
         assert tab.main_splitter.sizes()[1] == 0
         assert not tab._reading_mode
+    finally:
+        tab.close()
+        qt_app.processEvents()
+
+
+def test_ai_agent_button_opens_contextual_side_panel(
+    qt_app, tmp_path, monkeypatch
+) -> None:
+    class FakeAiChatPanel(QFrame):
+        chatHistoryCleared = Signal(str)
+        closeRequested = Signal()
+
+        def __init__(self, _settings, parent=None) -> None:
+            super().__init__(parent)
+            self.input_edit = QLineEdit(self)
+            self.shutdown_called = False
+
+        def apply_external_history_clear(self, _provider_name: str) -> None:
+            pass
+
+        def shutdown(self) -> None:
+            self.shutdown_called = True
+
+    monkeypatch.setattr(law_search_module, "AiChatPanel", FakeAiChatPanel)
+    tab = _tab(tmp_path)
+    try:
+        tab._show_detail_split()
+        tab.detail_view.setPlainText("질의요지와 회답 본문")
+        qt_app.processEvents()
+
+        assert tab.ai_agent_button.text() == "AI\n에이전트"
+        assert tab.ai_agent_button.x() > tab.expand_detail_button.x()
+
+        tab.ai_agent_button.click()
+        qt_app.processEvents()
+
+        assert tab.ai_chat_panel is not None
+        assert tab.ai_chat_panel.isVisible()
+        assert tab.main_splitter.sizes()[2] > 0
+        assert tab.ai_chat_panel.context_source() == (
+            "질의요지와 회답 본문",
+            "본문 전체",
+        )
+
+        tab._set_reading_mode(True)
+        qt_app.processEvents()
+        assert tab.main_splitter.sizes()[0] == 0
+        assert tab.main_splitter.sizes()[2] > 0
+
+        tab._set_reading_mode(False)
+        qt_app.processEvents()
+        assert all(size > 0 for size in tab.main_splitter.sizes())
+
+        tab.ai_agent_button.click()
+        qt_app.processEvents()
+        assert not tab.ai_chat_panel.isVisible()
+        assert tab.main_splitter.sizes()[2] == 0
+
+        tab.ai_agent_button.click()
+        qt_app.processEvents()
+        tab.close_detail_button.click()
+        qt_app.processEvents()
+        assert tab.detail_card.isHidden()
+        assert not tab.ai_chat_panel.isVisible()
+        assert tab.main_splitter.sizes()[1:] == [0, 0]
+
+        panel = tab.ai_chat_panel
+        tab.shutdown()
+        assert panel.shutdown_called
     finally:
         tab.close()
         qt_app.processEvents()
