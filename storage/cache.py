@@ -115,6 +115,13 @@ class LawDocumentCache(QObject):
             Path, tuple[int, int, dict[str, object]]
         ] = OrderedDict()
         self._snapshot_memory_limit = 6
+        # 목록 화면은 저장한 모든 파일을 훑는다. 본문까지 매번 파싱하면
+        # 저장 건수에 그대로 비례해 느려지므로, 가벼운 목록 항목만 따로
+        # 기억하고 파일이 바뀐 것만 다시 읽는다.
+        self._list_index: dict[str, dict[str, object]] = {}
+        self._list_index_loaded = False
+        # ``directory``는 테스트와 설정이 갈아 끼우므로 원본과 함께 둔다.
+        self._resolved_directory: tuple[Path | None, Path | None] = (None, None)
         try:
             self.directory.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
@@ -773,17 +780,14 @@ class LawDocumentCache(QObject):
             return False
 
     def list_favorites(self) -> list[dict[str, object]]:
+        """즐겨찾기 저장 기록 전체(본문 포함).
+
+        목록만 그릴 때는 본문이 필요 없으므로 ``favorite_entries``를 쓴다.
+        """
         records = [
             record for record in self.list_records() if record.get("favorite")
         ]
-
-        def favorite_order(record: dict[str, object]) -> int:
-            try:
-                return int(record.get("favorite_order"))
-            except (TypeError, ValueError):
-                return 1_000_000_000
-
-        records.sort(key=favorite_order)
+        records.sort(key=self._favorite_order)
         return records
 
     def set_favorite_order(self, paths: list[object]) -> bool:
@@ -855,11 +859,189 @@ class LawDocumentCache(QObject):
             self.changed.emit()
         return True
 
+    def _cache_directory(self) -> Path:
+        """저장 폴더의 실제 경로. 파일마다 다시 풀지 않는다.
+
+        ``load``가 파일 하나마다 ``directory.resolve()``를 불러, 저장
+        건수의 두 배만큼 경로 해석 시스템 호출이 났다. 폴더가 실제로
+        생긴 뒤의 값만 기억해 둔다. 없는 경로의 ``resolve``는 정규화되지
+        않은 값을 돌려주므로 그것을 기억하면 폴더가 생긴 다음에도 계속
+        어긋난 값으로 비교하게 된다.
+        """
+        directory = self.directory
+        remembered, resolved = self._resolved_directory
+        if remembered == directory and resolved is not None:
+            return resolved
+        resolved = directory.resolve()
+        if directory.is_dir():
+            self._resolved_directory = (directory, resolved)
+        return resolved
+
+    # 목록 화면이 실제로 읽는 필드. 저장 기록에는 본문 ``payload``ㆍ
+    # ``html``ㆍ``rendered_html``이 함께 들어 있어 한 건이 수백 KB에
+    # 이르지만, 목록은 이름ㆍ구분ㆍ날짜ㆍ즐겨찾기 표시만 쓴다.
+    LIST_ENTRY_FIELDS = (
+        "kind",
+        "name",
+        "saved_at",
+        "effective_date",
+        "favorite",
+        "favorite_order",
+        "favorite_folder",
+        "favorite_articles",
+    )
+    # ``row``에서 구분ㆍ이름을 정할 때 보는 값들.
+    LIST_ENTRY_ROW_FIELDS = (
+        "target",
+        "kind",
+        "id",
+        "name",
+        "title",
+        "provision",
+        "agency",
+        "date",
+        "effective",
+    )
+    # 색인 파일도 같은 폴더에 두므로 목록에서 반드시 빼야 한다.
+    LIST_INDEX_NAME = "_목록색인.json"
+    LIST_INDEX_VERSION = 1
+
+    @classmethod
+    def _list_entry(cls, record: dict[str, object], path: Path) -> dict[str, object]:
+        """저장 기록에서 목록에 필요한 부분만 옮겨 담는다."""
+        entry: dict[str, object] = {
+            key: record[key] for key in cls.LIST_ENTRY_FIELDS if key in record
+        }
+        source_row = record.get("row")
+        row: dict[str, object] = {}
+        if isinstance(source_row, dict):
+            row = {
+                key: source_row[key]
+                for key in cls.LIST_ENTRY_ROW_FIELDS
+                if key in source_row
+            }
+        entry["row"] = row
+        entry["path"] = str(path)
+        return entry
+
+    def _list_index_path(self) -> Path:
+        return self.directory / self.LIST_INDEX_NAME
+
+    def _load_list_index(self) -> None:
+        """지난번에 만든 목록 색인을 읽어 둔다. 없거나 깨졌으면 빈 채로 둔다."""
+        if self._list_index_loaded:
+            return
+        self._list_index_loaded = True
+        try:
+            stored = json.loads(
+                self._list_index_path().read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError, json.JSONDecodeError):
+            return
+        if not isinstance(stored, dict):
+            return
+        if stored.get("version") != self.LIST_INDEX_VERSION:
+            return
+        entries = stored.get("entries")
+        if not isinstance(entries, dict):
+            return
+        for name, value in entries.items():
+            if isinstance(value, dict) and isinstance(value.get("entry"), dict):
+                self._list_index[str(name)] = value
+
+    def _save_list_index(self) -> None:
+        """색인을 파일로 남긴다. 실패해도 목록 자체는 이미 만들어졌다."""
+        try:
+            self._list_index_path().write_text(
+                json.dumps(
+                    {
+                        "version": self.LIST_INDEX_VERSION,
+                        "entries": self._list_index,
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+        except (OSError, TypeError, ValueError):
+            # 색인은 어디까지나 가속 수단이다. 못 써도 다음번에 다시 읽으면 된다.
+            pass
+
+    def list_entries(self) -> list[dict[str, object]]:
+        """목록 화면용 가벼운 저장 기록.
+
+        본문을 뺀 필드만 담아 돌려준다. 본문이 필요한 자리는 ``load``로
+        그때 다시 읽는다. 파일마다 수정 시각과 크기를 확인해 바뀐 것만
+        다시 파싱하므로, 창을 켤 때 같은 목록을 여러 번 만들어도 디스크를
+        한 번만 훑는다.
+        """
+        self.last_error = ""
+        entries: list[dict[str, object]] = []
+        try:
+            paths = [
+                path
+                for path in self.directory.glob("*.json")
+                if path.name != self.LIST_INDEX_NAME
+            ]
+        except OSError as exc:
+            self.last_error = str(exc)
+            return entries
+        self._load_list_index()
+        fresh: dict[str, dict[str, object]] = {}
+        changed = False
+        for path in paths:
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            signature = [stat.st_mtime_ns, stat.st_size]
+            cached = self._list_index.get(path.name)
+            if cached is not None and cached.get("signature") == signature:
+                entry = dict(cached["entry"])
+                # 폴더가 통째로 옮겨졌을 수 있으므로 경로는 늘 지금 값을 쓴다.
+                entry["path"] = str(path)
+                fresh[path.name] = cached
+                entries.append(entry)
+                continue
+            record = self.load(path)
+            if record is None:
+                changed = True
+                continue
+            entry = self._list_entry(record, path)
+            fresh[path.name] = {"signature": signature, "entry": entry}
+            entries.append(entry)
+            changed = True
+        if changed or len(fresh) != len(self._list_index):
+            self._list_index = fresh
+            self._save_list_index()
+        else:
+            self._list_index = fresh
+        entries.sort(
+            key=lambda item: str(item.get("saved_at") or ""), reverse=True
+        )
+        return entries
+
+    def favorite_entries(self) -> list[dict[str, object]]:
+        """즐겨찾기만 골라 저장해 둔 순서대로 돌려준다."""
+        entries = [entry for entry in self.list_entries() if entry.get("favorite")]
+        entries.sort(key=self._favorite_order)
+        return entries
+
+    @staticmethod
+    def _favorite_order(record: dict[str, object]) -> int:
+        try:
+            return int(record.get("favorite_order"))
+        except (TypeError, ValueError):
+            return 1_000_000_000
+
     def list_records(self) -> list[dict[str, object]]:
         records: list[dict[str, object]] = []
         self.last_error = ""
         try:
-            paths = list(self.directory.glob("*.json"))
+            paths = [
+                path
+                for path in self.directory.glob("*.json")
+                if path.name != self.LIST_INDEX_NAME
+            ]
         except OSError as exc:
             self.last_error = str(exc)
             return records
@@ -876,7 +1058,7 @@ class LawDocumentCache(QObject):
         self.last_error = ""
         try:
             resolved = Path(path).resolve()
-            if resolved.parent != self.directory.resolve():
+            if resolved.parent != self._cache_directory():
                 raise ValueError("저장된 법령 폴더 밖의 파일은 열 수 없습니다.")
             record = json.loads(resolved.read_text(encoding="utf-8"))
             if not isinstance(record, dict):

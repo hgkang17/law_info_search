@@ -559,7 +559,7 @@ class ViewedLawsTab(QWidget):
         valid_categories = set(fixed_by_category)
 
         record_category_counts: dict[str, dict[str, int]] = {}
-        for record in self.law_cache.list_favorites():
+        for record in self.law_cache.favorite_entries():
             folder_id = str(record.get("favorite_folder") or "")
             if not folder_id:
                 continue
@@ -1228,10 +1228,13 @@ class ViewedLawsTab(QWidget):
             )
 
     def refresh(self) -> None:
+        # 목록은 이름ㆍ구분ㆍ날짜ㆍ즐겨찾기 표시만 쓴다. 본문까지 들어
+        # 있는 기록을 읽으면 저장 건수에 비례해 창 여는 시간이 늘어난다.
+        # 실제로 열 때는 ``_open_path``가 그 파일만 다시 읽는다.
         self.records = (
-            self.law_cache.list_favorites()
+            self.law_cache.favorite_entries()
             if self.favorites_only
-            else self.law_cache.list_records()
+            else self.law_cache.list_entries()
         )
         self._populate()
         if self.law_cache.last_error:

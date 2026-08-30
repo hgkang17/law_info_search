@@ -21,6 +21,16 @@ from .patterns import (
     ADMIN_RULE_SENTENCE_TAIL_ITEM_PATTERN,
     _INLINE_PAREN_ITEM_PATTERN,
     _CIRCLED_REFERENCE_TAIL_PATTERN,
+    _ADMIN_CLAUSE_REFERENCE_TAIL_PATTERN,
+    _PAREN_ITEM_REFERENCE_TAIL_PATTERN,
+    _PAREN_ITEM_RANGE_TAIL_PATTERN,
+    _PAREN_ITEM_RANGE_PREFIX_PATTERN,
+    _PAREN_ITEM_PARTICLE_TAIL_PATTERN,
+    _PAREN_ITEM_PART_REFERENCE_PATTERN,
+    _CIRCLED_PARTICLE_TAIL_PATTERN,
+    _CLOSING_PAREN_ITEM_PATTERN,
+    _FOOTNOTE_MARK_TAIL_PATTERN,
+    _HEADING_RANGE_TAIL_PATTERN,
     _MARKER_ONLY_LINE_PATTERN,
     ADMIN_RULE_PAREN_REFERENCE_LINE_PATTERN,
     ADMIN_RULE_PAREN_ITEM_PATTERN,
@@ -224,22 +234,15 @@ def split_inline_paren_items(line: str) -> list[str]:
         # ``3-2-8-1. (3)에 해당하는``의 (3)은 목록이 아니라 다른
         # 지침 항목의 참조다. 화면 변환 단계가 정규화된 문장을 다시
         # 훑더라도 새 항목으로 재분리하지 않는다.
-        if not re.match(
-            r"\s*(?:부터|까지|내지|에서|에|의|항|호|목|을|를|은|는|이|가)"
-            r"(?=\s|\(|$)",
-            line[match.end() :],
-        )
+        if not _PAREN_ITEM_REFERENCE_TAIL_PATTERN.match(line, match.end())
         # ``※ (1) 단서 중``은 목록이 아니라 각주 번호다.
-        and not re.search(r"※\s*$", line[: match.start()])
+        and not _FOOTNOTE_MARK_TAIL_PATTERN.search(line, 0, match.start())
     ]
     for first_index, first in enumerate(matches):
         # ``(1)부터(3)까지``, ``(1) 부터 (4)까지``는 연속 목록이 아니라
         # 범위를 가리키는 한 표현이다. 뒤의 (3)ㆍ(4)을 새 항목으로
         # 쪼개지 않도록 목록 판정보다 먼저 제외한다.
-        if re.match(
-            r"\s*(?:부터|까지|내지)(?=\s|\()",
-            line[first.end() :],
-        ):
+        if _PAREN_ITEM_RANGE_TAIL_PATTERN.match(line, first.end()):
             continue
         first_number = int(first.group(1))
         starts_line = not line[: first.start()].strip()
@@ -288,7 +291,7 @@ def split_inline_closing_paren_items(line: str) -> list[str]:
     # ``1) 용도, 2) 규모``만 대상으로 한다. ``※ (1)과 (2)에 따른``의
     # 괄호 번호는 숫자 앞에 여는 괄호가 있으므로 닫는 괄호형 목록에서
     # 제외한다.
-    matches = list(re.finditer(r"(?<![\d(])(\d{1,2})\)\s*", line))
+    matches = list(_CLOSING_PAREN_ITEM_PATTERN.finditer(line))
     for first_index, first in enumerate(matches):
         if int(first.group(1)) != 1:
             continue
@@ -347,34 +350,27 @@ def split_paren_item_after_sentence_end(
         if match.start() == 0:
             continue
         tail = line[match.end() :].lstrip()
-        if re.search(r"※\s*$", line[: match.start()]):
+        if _FOOTNOTE_MARK_TAIL_PATTERN.search(line, 0, match.start()):
             continue
         # ``(1)부터(3)까지``와 ``(1) ~ (8)의``는 새 항목이 아니라
         # 범위 참조다. 앞 문장이 완결형이어도 여기서는 자르지 않는다.
-        if re.match(r"(?:부터|까지|내지|[~∼～])", tail):
+        if _PAREN_ITEM_RANGE_PREFIX_PATTERN.match(tail):
             continue
         # ``경우 (1)에서 정한 변경``처럼 괄호번호 뒤에 조사가 붙으면
         # 새 목록이 아니라 앞 문장의 참조다. HTML 변환 단계에서 이미
         # 병합한 참조를 다시 분리하지 않는다.
-        if administrative_rule and re.match(
-            r"(?:의|에|에서|부터|까지|대로|와|과|를|을|및)"
-            r"(?=\s|[,.;:)\]]|$)",
-            tail,
+        if administrative_rule and _PAREN_ITEM_PARTICLE_TAIL_PATTERN.match(
+            tail
         ):
             continue
         # ``3-2-7-1. (3) ③에서 정하는``도 같은 조항 내부 참조다.
         # 정규화 단계에서 붙인 문장을 HTML 변환 단계가 다시 (3) 항목으로
         # 분리하지 않도록 동그라미 번호+조사 형식도 제외한다.
-        if administrative_rule and re.match(
-            rf"[{CIRCLED_NUMBER_MARKERS}]\s*"
-            r"(?:의|에|에서|부터|까지|대로|와|과|를|을)"
-            r"(?=\s|[,.;:)\]]|$)",
-            tail,
-        ):
+        if administrative_rule and _CIRCLED_PARTICLE_TAIL_PATTERN.match(tail):
             continue
         # ``④ ... (2) 단서에 따른 경우``의 (2)는 새 하위항목이
         # 아니라 다른 항목의 특정 부분을 가리키는 참조다.
-        if re.match(r"(?:본문|단서|전단|후단)(?=\s|에|의|을|를)", tail):
+        if _PAREN_ITEM_PART_REFERENCE_PATTERN.match(tail):
             continue
         prefix = line[: match.start()].rstrip()
         circled_prefix = LAW_PARAGRAPH_PATTERN.match(prefix)
@@ -588,14 +584,9 @@ def insert_admin_clause_breaks(text: str) -> str:
         # 항목을 인용한 문장이다. 실제 항목(``2-6-8. 주민제안...``)과
         # 구분하지 않으면 인용 번호에서 문단이 끊기고 다음 항목의 경계도
         # 함께 무너진다.
-        tail = text[match.end() :]
-        if re.match(
-            r"\s*(?:(?:의|에|에서|부터|까지|대로|와|과|를|을|및)"
-            r"(?=\s|[,.;:)\]]|$)|규정(?:을|에)(?=\s|[,.;:)\]]|$)|"
-            rf"[{CIRCLED_NUMBER_MARKERS}]\s*(?:의|에|에서|부터|까지|대로|와|과|를|을)"
-            r"(?=\s|[,.;:)\]]|$)|\(\d+\)\s*(?:[,.;]|및(?=\s|$)))",
-            tail,
-        ):
+        # 꼬리를 슬라이스로 떠서 넘기면 매치마다 본문 나머지를 통째로
+        # 복사한다. 조문이 길수록 제곱으로 늘어나므로 위치만 넘긴다.
+        if _ADMIN_CLAUSE_REFERENCE_TAIL_PATTERN.match(text, match.end()):
             return match.group(1)
         return f"\n{match.group(1)}"
 
@@ -635,7 +626,7 @@ def insert_admin_clause_breaks(text: str) -> str:
     def circled_break(match: re.Match) -> str:
         # ``⑩ ①ㆍ②ㆍ⑤ㆍ⑥ㆍ⑧ 및 ⑨의 규정``의 ①~⑨는 새 항목이
         # 아니라 ⑩ 본문에서 다른 항목을 가리키는 참조번호다.
-        if _CIRCLED_REFERENCE_TAIL_PATTERN.match(text[match.end() :]):
+        if _CIRCLED_REFERENCE_TAIL_PATTERN.match(text, match.end()):
             return match.group(1)
         return f"\n{match.group(1)}"
 
@@ -787,7 +778,7 @@ def insert_admin_clause_breaks(text: str) -> str:
         for match in heading_token.finditer(line):
             if match.start() == segment_start:
                 continue
-            if re.match(r"\s*(?:부터|까지)", line[match.end() :]):
+            if _HEADING_RANGE_TAIL_PATTERN.match(line, match.end()):
                 # ``제1장부터 제3장까지``는 제목이 아니라 범위 인용이다.
                 continue
             prefix = line[segment_start : match.start()].strip()
@@ -1089,67 +1080,6 @@ def article_jo_label(jo: str) -> str:
     main = int(code[:4])
     branch = int(code[4:])
     return f"제{main}조" + (f"의{branch}" if branch else "")
-
-
-def extract_law_article(data: object, jo: str) -> str:
-    """법령 상세 JSON에서 한 조의 본문만 고른다.
-
-    조항호목 API가 아니라 저장해 둔 법령 전문에서 읽을 때 쓴다.
-    """
-    if not isinstance(data, dict):
-        return ""
-    law = data.get("법령", data)
-    if not isinstance(law, dict):
-        return ""
-    units = law.get("조문", {})
-    units = units.get("조문단위") if isinstance(units, dict) else units
-    try:
-        code = normalize_article_jo(jo)
-    except ValueError:
-        return ""
-    matched = _law_units_for_jo(units, code)
-    return law_article_text(matched)
-
-
-def _law_units_for_jo(units: object, code: str) -> list:
-    main = str(int(code[:4]))
-    branch = int(code[4:])
-    label = article_jo_label(code)
-    matched: list = []
-    for unit in json_list(units):
-        if not isinstance(unit, dict):
-            continue
-        key = json_text(unit.get("조문키"))
-        if key:
-            try:
-                if normalize_article_jo(key) == code:
-                    matched.append(unit)
-                    continue
-            except ValueError:
-                pass
-        number = re.sub(r"\D", "", json_text(unit.get("조문번호")))
-        if number:
-            try:
-                same_number = str(int(number)) == main
-            except ValueError:
-                same_number = False
-            if same_number:
-                branch_text = re.sub(
-                    r"\D", "", json_text(unit.get("조문가지번호"))
-                )
-                unit_branch = int(branch_text or "0")
-                if unit_branch == branch:
-                    matched.append(unit)
-                    continue
-        content = json_text(unit.get("조문내용"))
-        if not content:
-            continue
-        if branch:
-            if content.startswith(label):
-                matched.append(unit)
-        elif re.match(rf"^{re.escape(label)}(?!의)", content):
-            matched.append(unit)
-    return matched
 
 
 def document_plain_text(data: object, category: str = "law") -> str:

@@ -88,6 +88,38 @@ def main() -> None:
     report["window_rss_delta_mb"] = round(process_memory_mb() - memory_before, 2)
     report["window_python_peak_mb"] = round(peak / (1024 * 1024), 2)
 
+    # --- 저장 목록 만들기 ---------------------------------------------
+    # 창을 켤 때 저장 목록ㆍ즐겨찾기 화면이 저장 폴더를 몇 번 훑는다.
+    # 본문까지 다시 파싱하면 저장 건수에 그대로 비례해 느려지므로,
+    # 색인이 살아 있을 때와 처음부터 다시 만들 때를 나눠 잰다.
+    law_cache = window.law_cache
+    saved_files = 0
+    saved_bytes = 0
+    try:
+        for path in law_cache.directory.glob("*.json"):
+            if path.name == type(law_cache).LIST_INDEX_NAME:
+                continue
+            saved_files += 1
+            saved_bytes += path.stat().st_size
+    except OSError:
+        pass
+    report["saved_records"] = {
+        "files": saved_files,
+        "total_mb": round(saved_bytes / (1024 * 1024), 1),
+    }
+    if saved_files:
+        law_cache.list_entries()
+        report["list_entries_cached"] = repeat(law_cache.list_entries, rounds=5)
+
+        def rebuild_list_entries() -> None:
+            law_cache._list_index = {}
+            law_cache._list_index_loaded = True
+            law_cache._snapshot_memory.clear()
+            law_cache.list_entries()
+
+        report["list_entries_rebuild"] = repeat(rebuild_list_entries, rounds=3)
+        report["list_records_full"] = repeat(law_cache.list_records, rounds=3)
+
     # --- 화면 전환 때 갱신되는 전역 열린 본문 표시줄 -----------------
     resource = window.resource_tab
     for index in range(30):

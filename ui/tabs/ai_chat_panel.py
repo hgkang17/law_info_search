@@ -84,6 +84,7 @@ from llm.ai_cli_setup import (
     AiCliSetupError,
     AiCliSpec,
     cli_login_status,
+    cli_version,
     ensure_cli,
     launch_cli_login,
 )
@@ -1441,9 +1442,9 @@ class AiChatPanel(QFrame):
         if not version:
             tooltip = "설치되어 있지 않습니다. [확인]을 누르면 설치합니다."
         elif connected:
-            tooltip = f"{version}" + (f"{_NEWLINE}{detail}" if detail else "")
+            tooltip = f"{version}\n{detail}" if detail else version
         else:
-            tooltip = f"{version}{_NEWLINE}로그인이 필요합니다."
+            tooltip = f"{version}\n로그인이 필요합니다."
         self._cli_statuses[label] = (status_text, state)
         self._remember_cli_connection(label, connected, tooltip if connected else "")
         spec = self._connection_spec()

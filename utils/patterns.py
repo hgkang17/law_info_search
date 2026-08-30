@@ -72,9 +72,54 @@ _CIRCLED_REFERENCE_TAIL_PATTERN = re.compile(
     # "②항 또는 ③항의 집단취락"처럼 번호에 항·호·목이 바로 붙으면
     # 새 항목이 아니라 다른 항목을 가리키는 참조번호다.
     # "② 항만시설"처럼 사이에 공백이 있으면 본문이므로 제외한다.
-    r"^(?:[항호목](?=[의을를과와이가에도만은는,\s]|$)"
+    # 늘 ``match``로만 쓰므로 시작 위치는 이미 고정된다. 앞의 ``^``를
+    # 두면 본문 중간 위치를 ``match(text, pos)``로 넘길 수 없어 뺐다.
+    # 슬라이스로 꼬리를 떠서 넘기면 본문 길이에 제곱으로 늘어난다.
+    r"(?:[항호목](?=[의을를과와이가에도만은는,\s]|$)"
     r"|\s*(?:[ㆍ·,;]|및(?=\s|$)|의(?=\s|$)|에서(?=\s|$)|에(?=\s|$)|부터|까지))"
 )
+
+
+# 아래는 한 줄ㆍ한 본문을 훑으며 매치마다 부르는 꼬리ㆍ머리 판정들이다.
+# 리터럴로 두면 호출 때마다 정규식 캐시를 뒤진다. 조문 하나를 정규화하는
+# 동안 만 번 넘게 불리는 자리라 미리 컴파일해 둔다. 패턴 자체는 옮기기
+# 전과 같은 문자열이므로 적용 범위는 바뀌지 않는다.
+_ADMIN_CLAUSE_REFERENCE_TAIL_PATTERN = re.compile(
+    r"\s*(?:(?:의|에|에서|부터|까지|대로|와|과|를|을|및)"
+    r"(?=\s|[,.;:)\]]|$)|규정(?:을|에)(?=\s|[,.;:)\]]|$)|"
+    rf"[{CIRCLED_NUMBER_MARKERS}]\s*(?:의|에|에서|부터|까지|대로|와|과|를|을)"
+    r"(?=\s|[,.;:)\]]|$)|\(\d+\)\s*(?:[,.;]|및(?=\s|$)))"
+)
+
+_PAREN_ITEM_REFERENCE_TAIL_PATTERN = re.compile(
+    r"\s*(?:부터|까지|내지|에서|에|의|항|호|목|을|를|은|는|이|가)"
+    r"(?=\s|\(|$)"
+)
+
+_PAREN_ITEM_RANGE_TAIL_PATTERN = re.compile(r"\s*(?:부터|까지|내지)(?=\s|\()")
+
+_FOOTNOTE_MARK_TAIL_PATTERN = re.compile(r"※\s*$")
+
+_CLOSING_PAREN_ITEM_PATTERN = re.compile(r"(?<![\d(])(\d{1,2})\)\s*")
+
+_PAREN_ITEM_RANGE_PREFIX_PATTERN = re.compile(r"(?:부터|까지|내지|[~∼～])")
+
+_PAREN_ITEM_PARTICLE_TAIL_PATTERN = re.compile(
+    r"(?:의|에|에서|부터|까지|대로|와|과|를|을|및)"
+    r"(?=\s|[,.;:)\]]|$)"
+)
+
+_CIRCLED_PARTICLE_TAIL_PATTERN = re.compile(
+    rf"[{CIRCLED_NUMBER_MARKERS}]\s*"
+    r"(?:의|에|에서|부터|까지|대로|와|과|를|을)"
+    r"(?=\s|[,.;:)\]]|$)"
+)
+
+_PAREN_ITEM_PART_REFERENCE_PATTERN = re.compile(
+    r"(?:본문|단서|전단|후단)(?=\s|에|의|을|를)"
+)
+
+_HEADING_RANGE_TAIL_PATTERN = re.compile(r"\s*(?:부터|까지)")
 
 
 _MARKER_ONLY_LINE_PATTERN = re.compile(

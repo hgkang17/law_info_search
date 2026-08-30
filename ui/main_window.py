@@ -115,8 +115,12 @@ class LawSearchWindow(QMainWindow):
         self.setWindowIcon(QIcon(str(LOGO_PATH)))
         self.resize(1440, 860)
         self.setMinimumSize(1040, 680)
-        self._build_ui()
+        # 스타일시트를 창을 다 만든 뒤에 걸면 Qt가 완성된 위젯 나무 전체를
+        # 2천 줄짜리 규칙과 다시 맞춰 본다(창 하나에 66ms). 먼저 걸어 두면
+        # 위젯이 만들어질 때 제 몫만 맞춘다. 규칙을 읽는 비용 자체는
+        # 0.1ms뿐이라 순서만 바꿔도 된다.
         self._apply_style()
+        self._build_ui()
         self.resource_tab.query_input.setFocus()
         self._mouse_back_pressed = False
         # Esc는 포커스가 어디에 있든 같게 동작해야 한다. 조문 팝업이 뜬 직후에는

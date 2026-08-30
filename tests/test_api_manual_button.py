@@ -11,7 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
 from PySide6.QtWidgets import QApplication
 
-from ui.assets import API_KEY_MANUAL_PATH, MANUAL_DIR
+from ui.assets import MANUAL_DIR
 from ui.main_window import LawSearchWindow
 
 SPEC = Path(__file__).resolve().parent.parent / "국가법령정보 통합검색.spec"
