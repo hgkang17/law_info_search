@@ -123,6 +123,33 @@ def main() -> None:
         rebuild_open_document_tabs, rounds=5
     )
 
+    # --- 대량 검색 결과 표 생성 ---------------------------------------
+    def result_rows(count: int) -> list[dict[str, object]]:
+        return [
+            {
+                "target": "law",
+                "label": "법령",
+                "id": f"perf-result-{index}",
+                "name": f"성능 측정용 법령 이름 {index} 긴 제목과 검색어",
+                "display_name": f"성능 측정용 법령 이름 {index} 긴 제목과 검색어",
+                "related": "성능 측정 기관",
+                "date": "20260830",
+                "effective": "20260830",
+            }
+            for index in range(count)
+        ]
+
+    def render_result_rows(count: int) -> None:
+        resource.result_rows = result_rows(count)
+        resource._render_result_rows()
+        module.resize_adaptive_result_rows(resource.result_table)
+        app.processEvents()
+
+    report["resource_result_table"] = {
+        str(count): repeat(lambda count=count: render_result_rows(count), rounds=3)
+        for count in (100, 500, 1000)
+    }
+
     # --- 저장된 법령 본문으로 렌더링 측정 -----------------------------
     # 저장소에 둔 개발용 표본으로 잰다. 프로그램이 실행 중에 쓰는 자리
     # (storage.paths.LAW_CACHE_DIR)는 사용자 폴더라 기계마다 내용이 달라

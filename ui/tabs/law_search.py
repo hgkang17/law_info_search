@@ -25,6 +25,7 @@ from ui.widgets import (
     RecentSearchBar,
     ResultHeaderView,
     StableHorizontalTableWidget,
+    batch_table_updates,
     build_restore_view_button,
     build_search_result_head,
     prompt_oc_api_key,
@@ -593,9 +594,7 @@ class LawSearchTab(QWidget):
             window.tabs.tabBar().setVisible(not expanded)
 
         if central_layout is not None:
-            if expanded:
-                central_layout.setContentsMargins(6, 6, 6, 6)
-            elif self._normal_window_margins is not None:
+            if self._normal_window_margins is not None:
                 central_layout.setContentsMargins(*self._normal_window_margins)
         self.root_layout.setContentsMargins(
             0 if expanded else 12,
@@ -1374,47 +1373,48 @@ class LawSearchTab(QWidget):
         self.result_filter_input.clear()
         self._updating_cache_checks = True
         try:
-            self.result_table.setRowCount(len(rows))
-            for row_index, row in enumerate(rows):
-                self.result_table.setItem(
-                    row_index, 0, self._snapshot_item_for_row(row)
-                )
-                if self.is_prec:
-                    values = (
-                        str(row["title"]),
-                        str(row["case_number"]),
-                        str(row["date"]),
-                        str(row["court"]),
-                        str(row["data_source"]),
+            with batch_table_updates(self.result_table):
+                self.result_table.setRowCount(len(rows))
+                for row_index, row in enumerate(rows):
+                    self.result_table.setItem(
+                        row_index, 0, self._snapshot_item_for_row(row)
                     )
-                else:
-                    common_values = (
-                        str(row["title"]),
-                        str(row["case_number"]),
-                        str(row["date"]),
-                        str(row["inquiry_org"]),
-                    )
-                    values = (
-                        (str(row["agency"]),) + common_values
-                        if self.is_central
-                        else common_values
-                    )
-                for column, value in enumerate(values, start=1):
-                    display_value = (
-                        " ".join(value.split())
-                        if column == self.title_column
-                        else value
-                    )
-                    item = QTableWidgetItem(display_value)
-                    if column == self.title_column:
-                        item.setToolTip(display_value)
-                        font = item.font()
-                        font.setFamily(FONT_FAMILY)
-                        font.setWeight(QFont.Weight.Medium)
-                        item.setFont(font)
+                    if self.is_prec:
+                        values = (
+                            str(row["title"]),
+                            str(row["case_number"]),
+                            str(row["date"]),
+                            str(row["court"]),
+                            str(row["data_source"]),
+                        )
                     else:
-                        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                    self.result_table.setItem(row_index, column, item)
+                        common_values = (
+                            str(row["title"]),
+                            str(row["case_number"]),
+                            str(row["date"]),
+                            str(row["inquiry_org"]),
+                        )
+                        values = (
+                            (str(row["agency"]),) + common_values
+                            if self.is_central
+                            else common_values
+                        )
+                    for column, value in enumerate(values, start=1):
+                        display_value = (
+                            " ".join(value.split())
+                            if column == self.title_column
+                            else value
+                        )
+                        item = QTableWidgetItem(display_value)
+                        if column == self.title_column:
+                            item.setToolTip(display_value)
+                            font = item.font()
+                            font.setFamily(FONT_FAMILY)
+                            font.setWeight(QFont.Weight.Medium)
+                            item.setFont(font)
+                        else:
+                            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                        self.result_table.setItem(row_index, column, item)
         finally:
             self._updating_cache_checks = False
 

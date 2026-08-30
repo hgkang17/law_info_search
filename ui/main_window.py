@@ -944,7 +944,14 @@ class LawSearchWindow(QMainWindow):
         source = str(document["source"])
         if source == "resource":
             # 자리를 옮기기 전에 지금 어디였는지 붙들어 둔다.
-            restorer = self._current_page_restorer()
+            existing_restorer = getattr(
+                self.resource_tab, "_reading_mode_exit_callback", None
+            )
+            restorer = (
+                existing_restorer
+                if self.resource_tab._reading_mode and existing_restorer is not None
+                else self._current_page_restorer()
+            )
             self.navigation.setCurrentRow(1)
             index = self.resource_tab._document_tab_index(str(document["key"]))
             if index >= 0:

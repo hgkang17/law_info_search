@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass
 import re
 from PySide6.QtCore import (
@@ -247,34 +248,59 @@ def resize_adaptive_result_rows(table: QTableWidget) -> None:
     wrap_columns = tuple(getattr(table, "_adaptive_wrap_columns", ()))
     single_height = max(26, table.fontMetrics().height() + 8)
     double_height = max(single_height, table.fontMetrics().lineSpacing() * 2 + 8)
-    for row in range(table.rowCount()):
-        needs_two_lines = False
-        for column in wrap_columns:
-            if table.isColumnHidden(column):
-                continue
-            item = table.item(row, column)
-            if item is None or not item.text():
-                continue
-            available_width = max(20, table.columnWidth(column) - 12)
-            layout = QTextLayout(item.text(), table.font())
-            text_option = QTextOption()
-            text_option.setWrapMode(
-                QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere
-            )
-            layout.setTextOption(text_option)
-            layout.beginLayout()
-            first_line = layout.createLine()
-            if first_line.isValid():
-                first_line.setLineWidth(available_width)
-            second_line = layout.createLine()
-            if second_line.isValid():
-                needs_two_lines = True
-            layout.endLayout()
-            if needs_two_lines:
-                break
-        table.setRowHeight(
-            row, double_height if needs_two_lines else single_height
-        )
+    updates_were_enabled = table.updatesEnabled()
+    table.setUpdatesEnabled(False)
+    try:
+        for row in range(table.rowCount()):
+            needs_two_lines = False
+            for column in wrap_columns:
+                if table.isColumnHidden(column):
+                    continue
+                item = table.item(row, column)
+                if item is None or not item.text():
+                    continue
+                available_width = max(20, table.columnWidth(column) - 12)
+                layout = QTextLayout(item.text(), table.font())
+                text_option = QTextOption()
+                text_option.setWrapMode(
+                    QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere
+                )
+                layout.setTextOption(text_option)
+                layout.beginLayout()
+                first_line = layout.createLine()
+                if first_line.isValid():
+                    first_line.setLineWidth(available_width)
+                second_line = layout.createLine()
+                if second_line.isValid():
+                    needs_two_lines = True
+                layout.endLayout()
+                if needs_two_lines:
+                    break
+            target_height = double_height if needs_two_lines else single_height
+            if table.rowHeight(row) != target_height:
+                table.setRowHeight(row, target_height)
+    finally:
+        table.setUpdatesEnabled(updates_were_enabled)
+
+
+@contextmanager
+def batch_table_updates(table: QTableWidget):
+    """대량 셀 교체 중 신호ㆍ페인트ㆍ열 자동 폭 계산을 미룬다."""
+    signals_were_blocked = table.blockSignals(True)
+    updates_were_enabled = table.updatesEnabled()
+    header = table.horizontalHeader()
+    resize_modes = tuple(
+        header.sectionResizeMode(column) for column in range(table.columnCount())
+    )
+    table.setUpdatesEnabled(False)
+    header.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+    try:
+        yield
+    finally:
+        for column, resize_mode in enumerate(resize_modes):
+            header.setSectionResizeMode(column, resize_mode)
+        table.blockSignals(signals_were_blocked)
+        table.setUpdatesEnabled(updates_were_enabled)
 
 
 def configure_adaptive_result_rows(

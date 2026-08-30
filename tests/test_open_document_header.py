@@ -189,16 +189,74 @@ def test_law_search_hides_fixed_detail_pane(qt_app) -> None:
     window = LawSearchWindow()
     try:
         resource = window.resource_tab
+        normal_margins = window.centralWidget().layout().getContentsMargins()
         assert resource.detail_card.isHidden()
         assert resource.detail_button.parentWidget() is resource.result_card
         assert resource.detail_button.isHidden()
 
         resource._set_reading_mode(True)
         assert not resource.detail_card.isHidden()
+        assert window.centralWidget().layout().getContentsMargins() == normal_margins
 
         resource._set_reading_mode(False)
         assert resource.detail_card.isHidden()
         assert resource.main_splitter.sizes()[1] == 0
+    finally:
+        window.close()
+        qt_app.processEvents()
+
+
+def test_header_document_switch_keeps_favorites_as_back_destination(qt_app) -> None:
+    """즐겨찾기에서 연 뒤 상단 본문 탭을 바꿔도 ◀는 즐겨찾기로 간다."""
+    window = LawSearchWindow()
+    try:
+        resource = window.resource_tab
+        other_row = {
+            "target": "law",
+            "id": "000002",
+            "label": "법령",
+            "name": "다른 법령",
+        }
+        resource._open_document_tab(other_row)
+        resource._set_detail_document(
+            other_row["name"],
+            [("법령ID", other_row["id"])],
+            [("조문", "제1조 다른 법령 본문")],
+            build_toc=True,
+        )
+
+        favorite_record = {
+            "row": {
+                "target": "law",
+                "id": "009294",
+                "label": "법령",
+                "name": "국토의 계획 및 이용에 관한 법률",
+            },
+            "payload": {
+                "법령": {
+                    "기본정보": {
+                        "법령명_한글": "국토의 계획 및 이용에 관한 법률",
+                        "법령ID": "009294",
+                    },
+                    "조문": {"조문단위": []},
+                }
+            },
+        }
+        window._activate_favorites_page()
+        window._open_favorite(favorite_record)
+        window._refresh_open_documents()
+
+        other_token = next(
+            token
+            for token in window._open_document_descriptors
+            if token.endswith("law:000002")
+        )
+        window._activate_open_document(other_token)
+        resource._exit_reading_mode()
+        qt_app.processEvents()
+
+        assert window.tabs.currentWidget() is window.favorites_tab
+        assert window.favorite_navigation_button.isChecked()
     finally:
         window.close()
         qt_app.processEvents()

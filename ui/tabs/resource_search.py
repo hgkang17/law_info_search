@@ -31,6 +31,7 @@ from ui.widgets import (
     SearchHighlightDelegate,
     StableHorizontalTableWidget,
     TabStripScrollArea,
+    batch_table_updates,
     build_restore_view_button,
     build_search_result_head,
     prompt_oc_api_key,
@@ -379,10 +380,9 @@ class ResourceSearchTab(QWidget):
         self._sync_detail_button_visibility()
 
     def _sync_detail_button_visibility(self) -> None:
-        """법령·행정규칙·자치법규는 더블클릭이 본문이라 조회 단추를 숨긴다."""
+        """여러 유형이 섞인 통합검색에서만 공용 열기 단추를 보인다."""
         self.detail_button.setVisible(
-            self.category_target not in ("law", "admrul", "ordin")
-            and not self.is_keyword_category
+            self.category_target == RESOURCE_ALL_TARGET
         )
 
     def attach_keyword_page(self, widget) -> None:
@@ -672,8 +672,8 @@ class ResourceSearchTab(QWidget):
         detail_head.addStretch()
         detail_head.addWidget(self.expand_detail_button)
 
-        # 별표·서식·통합검색만 결과 제목줄에 본문 조회를 둔다.
-        # 법령·행정규칙·자치법규는 더블클릭이 바로 크게 보기라 단추를 숨긴다.
+        # 여러 유형이 섞인 통합검색만 결과 제목줄에 공용 열기 단추를 둔다.
+        # 단일 유형은 결과 더블클릭이나 별표 원문 링크로 열 수 있다.
         result_head.layout.addWidget(self.detail_button)
         self._sync_detail_button_visibility()
 
@@ -1075,9 +1075,7 @@ class ResourceSearchTab(QWidget):
             window.tabs.tabBar().setVisible(not expanded)
 
         if central_layout is not None:
-            if expanded:
-                central_layout.setContentsMargins(6, 6, 6, 6)
-            elif self._normal_window_margins is not None:
+            if self._normal_window_margins is not None:
                 central_layout.setContentsMargins(*self._normal_window_margins)
         self.root_layout.setContentsMargins(
             0 if expanded else 12,
@@ -6472,31 +6470,32 @@ class ResourceSearchTab(QWidget):
     def _render_result_rows(self) -> None:
         self._updating_cache_checks = True
         try:
-            self.result_table.setRowCount(len(self.result_rows))
-            for row_index, row in enumerate(self.result_rows):
-                self.result_table.setItem(
-                    row_index, 0, self._cache_item_for_row(row)
-                )
-                values = (
-                    str(row["label"]),
-                    str(row["id"]),
-                    str(row.get("display_name") or row["name"]),
-                    str(row["related"]),
-                    str(row["date"]),
-                    str(row["effective"]),
-                )
-                for column, value in enumerate(values, start=1):
-                    item = QTableWidgetItem(" ".join(value.split()))
-                    if column in (1, 2, 5, 6):
-                        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                    if column in (3, 4):
-                        item.setToolTip(item.text())
-                    if column == 2:
-                        item.setForeground(QColor("#1768aa"))
-                        font = item.font()
-                        font.setWeight(QFont.Weight.DemiBold)
-                        item.setFont(font)
-                    self.result_table.setItem(row_index, column, item)
+            with batch_table_updates(self.result_table):
+                self.result_table.setRowCount(len(self.result_rows))
+                for row_index, row in enumerate(self.result_rows):
+                    self.result_table.setItem(
+                        row_index, 0, self._cache_item_for_row(row)
+                    )
+                    values = (
+                        str(row["label"]),
+                        str(row["id"]),
+                        str(row.get("display_name") or row["name"]),
+                        str(row["related"]),
+                        str(row["date"]),
+                        str(row["effective"]),
+                    )
+                    for column, value in enumerate(values, start=1):
+                        item = QTableWidgetItem(" ".join(value.split()))
+                        if column in (1, 2, 5, 6):
+                            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                        if column in (3, 4):
+                            item.setToolTip(item.text())
+                        if column == 2:
+                            item.setForeground(QColor("#1768aa"))
+                            font = item.font()
+                            font.setWeight(QFont.Weight.DemiBold)
+                            item.setFont(font)
+                        self.result_table.setItem(row_index, column, item)
         finally:
             self._updating_cache_checks = False
 
