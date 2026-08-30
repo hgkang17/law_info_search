@@ -3289,13 +3289,21 @@ class ResourceSearchTab(QWidget):
             and str(state_row.get("target")) == "law"
             else ""
         )
+        save_row = {"target": "law", "id": request["item_id"]}
         if snapshot.get("rendered_html") and state_id == str(
             request["item_id"]
         ):
-            self.law_cache.update_snapshot(
-                {"target": "law", "id": request["item_id"]},
-                snapshot,
+            # 법령ID가 같아도 화면이 전문이라는 보장은 없다. 조문 하나만
+            # 담긴 화면이 전문 저장 파일을 덮으면 다음부터 즐겨찾기로 열
+            # 때마다 그 한 조문만 뜬다. 저장해 둔 원문과 견줘 조문이 크게
+            # 줄어드는 덮어쓰기는 하지 않는다.
+            saved = self.law_cache.load_for_row(save_row)
+            covers = self._snapshot_covers_payload(
+                str(snapshot.get("rendered_plain_text") or ""),
+                saved.get("payload") if isinstance(saved, dict) else None,
             )
+            if covers:
+                self.law_cache.update_snapshot(save_row, snapshot)
         link_count = sum(len(links) for links in links_by_article.values())
         if link_count:
             self.status_label.setText(
@@ -7483,6 +7491,53 @@ class ResourceSearchTab(QWidget):
         self._finalize_pending_favorite(dict(self.pending_row))
         self._schedule_keyword_article_scroll(self.pending_row)
 
+    # 저장 화면이 그 법령 "전문"인지 재는 최소 기준. 조문 수가 이보다
+    # 적은 법령은 애초에 비교가 의미 없어 통과시킨다.
+    _SNAPSHOT_ARTICLE_FLOOR = 4
+    # 전문이라면 조문 대부분이 들어 있다. 절반은 아주 너그러운 선으로,
+    # 멀쩡한 화면을 잘못 버리지 않으면서 조문 한두 개짜리 화면은 확실히
+    # 걸러낸다.
+    _SNAPSHOT_COVERAGE_RATIO = 0.5
+
+    @staticmethod
+    def _article_labels(text: str) -> set[str]:
+        """본문에서 조 번호 표지만 모은다. 가지번호(제3조의2)도 구분한다."""
+        return set(re.findall(r"제\d+조(?:의\d+)?", str(text or "")))
+
+    @classmethod
+    def _payload_article_labels(cls, payload: object) -> set[str]:
+        """저장된 법령 원문 JSON이 담고 있는 조 번호."""
+        if not isinstance(payload, dict):
+            return set()
+        law = payload.get("법령", payload)
+        if not isinstance(law, dict):
+            return set()
+        units = law.get("조문", {})
+        units = units.get("조문단위") if isinstance(units, dict) else units
+        labels: set[str] = set()
+        for unit in json_list(units):
+            if not isinstance(unit, dict):
+                continue
+            labels |= cls._article_labels(json_text(unit.get("조문내용")))
+        return labels
+
+    @classmethod
+    def _snapshot_covers_payload(
+        cls, plain_text: str, payload: object
+    ) -> bool:
+        """저장 화면이 원문의 조문을 대부분 담고 있는지 본다.
+
+        3단비교 링크 보강이 조문 하나짜리 화면을 법령 전문 저장 파일에
+        덮어쓴 적이 있다. 그러면 첫 줄은 여전히 법령 이름이라
+        ``_snapshot_matches_row``를 통과하고, 즐겨찾기로 열 때마다
+        제1조만 뜬 채 스스로 낫지 않았다. 조문 수까지 봐야 걸린다.
+        """
+        expected = cls._payload_article_labels(payload)
+        if len(expected) < cls._SNAPSHOT_ARTICLE_FLOOR:
+            return True
+        covered = cls._article_labels(plain_text) & expected
+        return len(covered) >= len(expected) * cls._SNAPSHOT_COVERAGE_RATIO
+
     @staticmethod
     def _snapshot_matches_row(
         row: dict[str, object], plain_text: str
@@ -7535,6 +7590,9 @@ class ResourceSearchTab(QWidget):
             or not isinstance(articles, list)
             or snapshot_terms != tuple(self.highlight_terms)
             or not ResourceSearchTab._snapshot_matches_row(row, plain_text)
+            or not ResourceSearchTab._snapshot_covers_payload(
+                plain_text, record.get("payload")
+            )
         ):
             return False
 
