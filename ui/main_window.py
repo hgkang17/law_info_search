@@ -927,19 +927,42 @@ class LawSearchWindow(QMainWindow):
         document = self._open_document_descriptors.get(token)
         return document if isinstance(document, dict) else None
 
-    def _open_document_closable(self, index: int) -> bool:
-        """본문 탭으로 열려 있는 것만 여기서 닫을 수 있다.
+    # 표시줄에서 직접 닫을 수 있는 항목. 법령 본문은 화면 안 탭을 지우고,
+    # 질의회신ㆍ해석례ㆍ판례는 화면에 붙은 본문 칸을 비운다. 연관검색ㆍ
+    # 직접검색은 검색어를 바꾸면 결과가 통째로 바뀌는 화면이라 뺀다.
+    _CLOSABLE_DOCUMENT_TABS = {
+        "central": "central_tab",
+        "expc": "expc_tab",
+        "prec": "prec_tab",
+    }
 
-        연관법령ㆍ판례처럼 화면 자체를 가리키는 항목은 닫을 대상이 없다.
-        """
+    def _open_document_closable(self, index: int) -> bool:
+        """표시줄에서 닫을 수 있는 항목인지 알려 준다."""
         document = self._open_document_descriptor_at(index)
-        return bool(document) and str(document.get("source")) == "resource"
+        if not document:
+            return False
+        source = str(document.get("source"))
+        return source == "resource" or source in self._CLOSABLE_DOCUMENT_TABS
 
     def _close_open_document_tab(self, index: int) -> None:
         document = self._open_document_descriptor_at(index)
-        if document is None or str(document.get("source")) != "resource":
+        if document is None:
             return
-        self.resource_tab._close_document_tab_by_key(str(document["key"]))
+        source = str(document.get("source"))
+        if source == "resource":
+            self.resource_tab._close_document_tab_by_key(str(document["key"]))
+            return
+        attribute = self._CLOSABLE_DOCUMENT_TABS.get(source)
+        if attribute is None:
+            return
+        tab = getattr(self, attribute, None)
+        close = getattr(tab, "close_open_document", None)
+        if close is None:
+            return
+        close()
+        # 본문 탭 쪽은 자기 화면이 알아서 갱신을 예약한다. 이쪽은
+        # 표시줄만 바뀌므로 여기서 직접 예약한다.
+        self._schedule_open_documents_refresh()
 
     def _activate_open_document(self, token: str) -> None:
         document = self._open_document_descriptors.get(token)

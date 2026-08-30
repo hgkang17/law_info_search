@@ -1827,6 +1827,23 @@ class LawSearchTab(QWidget):
             self._pending_detail_row = None
         self.status_label.setText(f"{agency.name} ID {item_id} 본문 조회 완료")
 
+    def close_open_document(self) -> None:
+        """열린 본문 표시줄에서 이 화면의 본문을 닫는다.
+
+        법령 본문은 화면 안에 탭이 여러 개라 탭 하나를 지우면 되지만,
+        질의회신ㆍ해석례ㆍ판례는 화면 하나에 본문 칸이 붙어 있는 구조다.
+        그래서 오랫동안 표시줄에서 지울 방법이 없었고, 한 번 연 본문이
+        새 검색을 할 때까지 계속 남았다. 여기서 본문 상태를 비우면
+        ``_collect_open_documents``가 다음 갱신에서 이 화면을 뺀다.
+        """
+        self._active_detail_row = None
+        self._pending_detail_row = None
+        self.current_detail_text = ""
+        self.detail_view.clear()
+        self.copy_button.setEnabled(False)
+        self._set_visible_memos([])
+        self._hide_detail_split()
+
     def copy_detail(self) -> None:
         if not self.current_detail_text:
             return
