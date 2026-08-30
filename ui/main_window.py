@@ -104,6 +104,7 @@ class LawSearchWindow(QMainWindow):
         self._active_document_token = ""
         self._open_document_descriptors: dict[str, dict[str, object]] = {}
         self._open_document_order: list[str] = []
+        self._open_document_tab_signature: tuple[tuple[str, str, str], ...] = ()
         self._open_document_refresh_pending = False
         self._update_check_worker: UpdateCheckWorker | None = None
         self._update_download_worker: UpdateDownloadWorker | None = None
@@ -854,12 +855,40 @@ class LawSearchWindow(QMainWindow):
             str(item["token"]): item for item in documents
         }
 
+        tab_signature = tuple(
+            (
+                str(document["token"]),
+                self._two_line_open_document_title(str(document["short"])),
+                str(document["full"]),
+            )
+            for document in documents
+        )
+        active_index = next(
+            (
+                index
+                for index, document in enumerate(documents)
+                if document["token"] == self._active_document_token
+            ),
+            -1,
+        )
+        if tab_signature == self._open_document_tab_signature:
+            if (
+                active_index >= 0
+                and self.open_document_tabs.currentIndex() != active_index
+            ):
+                self.open_document_tabs.blockSignals(True)
+                self.open_document_tabs.setCurrentIndex(active_index)
+                self.open_document_tabs.blockSignals(False)
+                self.open_document_tab_strip.ensure_visible(
+                    self.open_document_tabs.tabRect(active_index)
+                )
+            return
+
         self.open_document_tabs.blockSignals(True)
         while self.open_document_tabs.count():
             self.open_document_tabs.removeTab(
                 self.open_document_tabs.count() - 1
             )
-        active_index = -1
         for document in documents:
             token = str(document["token"])
             index = self.open_document_tabs.addTab(
@@ -875,6 +904,7 @@ class LawSearchWindow(QMainWindow):
             )
             if token == self._active_document_token:
                 active_index = index
+        self._open_document_tab_signature = tab_signature
         if active_index >= 0:
             self.open_document_tabs.setCurrentIndex(active_index)
         self.open_document_tabs.blockSignals(False)

@@ -88,6 +88,41 @@ def main() -> None:
     report["window_rss_delta_mb"] = round(process_memory_mb() - memory_before, 2)
     report["window_python_peak_mb"] = round(peak / (1024 * 1024), 2)
 
+    # --- 화면 전환 때 갱신되는 전역 열린 본문 표시줄 -----------------
+    resource = window.resource_tab
+    for index in range(30):
+        key = f"law:perf-{index}"
+        state = resource._empty_document_state()
+        state.update(
+            {
+                "row": {
+                    "target": "law",
+                    "id": f"perf-{index}",
+                    "name": f"성능 측정용 법령 {index}",
+                },
+                "plain_text": "제1조 성능 측정용 본문",
+            }
+        )
+        resource._document_states[key] = state
+    resource._active_document_key = "law:perf-0"
+    window._refresh_open_documents()
+
+    def refresh_unchanged_documents() -> None:
+        window._refresh_open_documents()
+        app.processEvents()
+
+    def rebuild_open_document_tabs() -> None:
+        window._open_document_tab_signature = ()
+        window._refresh_open_documents()
+        app.processEvents()
+
+    report["open_document_refresh_unchanged_30"] = repeat(
+        refresh_unchanged_documents, rounds=10
+    )
+    report["open_document_refresh_forced_rebuild_30"] = repeat(
+        rebuild_open_document_tabs, rounds=5
+    )
+
     # --- 저장된 법령 본문으로 렌더링 측정 -----------------------------
     # 저장소에 둔 개발용 표본으로 잰다. 프로그램이 실행 중에 쓰는 자리
     # (storage.paths.LAW_CACHE_DIR)는 사용자 폴더라 기계마다 내용이 달라

@@ -79,6 +79,48 @@ def test_text_selection_does_not_rebuild_open_document_tabs(qt_app) -> None:
         qt_app.processEvents()
 
 
+def test_unchanged_documents_do_not_rebuild_header_tabs(qt_app) -> None:
+    """화면만 오갈 때 같은 열린 본문 탭을 삭제하고 다시 만들지 않는다."""
+    window = LawSearchWindow()
+    try:
+        resource = window.resource_tab
+        key = "law:009294"
+        state = resource._empty_document_state()
+        state.update(
+            {
+                "row": {
+                    "target": "law",
+                    "id": "009294",
+                    "name": "국토의 계획 및 이용에 관한 법률",
+                    "short_name": "국토계획법",
+                },
+                "plain_text": "제1조 목적 본문",
+            }
+        )
+        resource._document_states[key] = state
+        resource._active_document_key = key
+        resource.current_detail_text = "제1조 목적 본문"
+        window.navigation.setCurrentRow(1)
+        window._refresh_open_documents()
+
+        removals: list[int] = []
+        original_remove = window.open_document_tabs.removeTab
+
+        def counted_remove(index: int) -> None:
+            removals.append(index)
+            original_remove(index)
+
+        window.open_document_tabs.removeTab = counted_remove
+        window._refresh_open_documents()
+
+        assert removals == []
+        assert window.open_document_tabs.count() == 1
+        assert window.open_document_tabs.tabText(0) == "국토계획법"
+    finally:
+        window.close()
+        qt_app.processEvents()
+
+
 def test_header_document_title_wraps_without_ellipsis() -> None:
     wrap = LawSearchWindow._two_line_open_document_title
 
