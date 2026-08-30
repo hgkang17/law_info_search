@@ -1352,12 +1352,49 @@ class ResourceSearchTab(QWidget):
         )
 
     @staticmethod
+    def _document_identity(row: object) -> str:
+        """저장 파일 주소로 쓰는 문서 신원. 모르면 빈 글자.
+
+        저장소가 파일 이름을 정할 때 쓰는 규칙을 그대로 빌린다. 같은
+        규칙을 두 벌 두면 언젠가 어긋나고, 어긋나는 순간 이 검사가
+        무력해진다.
+        """
+        if not isinstance(row, dict) or not row:
+            return ""
+        try:
+            return LawDocumentCache._cache_key(row)
+        except (AttributeError, TypeError, ValueError):
+            return ""
+
+    @classmethod
+    def _snapshot_belongs_to(
+        cls, snapshot: dict[str, object], row: dict[str, object]
+    ) -> bool:
+        """이 화면을 이 행의 저장 파일에 써도 되는지 본다.
+
+        신원을 못 밝히는 화면(예전 판이 만든 것)은 여기서 막지 않는다.
+        막아 버리면 멀쩡한 저장까지 사라진다. 그런 화면은 조문 수를
+        보는 ``_snapshot_covers_payload``가 계속 뒤를 받친다.
+        """
+        rendered_for = str(snapshot.get("rendered_for") or "")
+        if not rendered_for:
+            return True
+        return rendered_for == cls._document_identity(row)
+
+    @staticmethod
     def _law_render_snapshot_from_state(
         state: dict[str, object],
     ) -> dict[str, object]:
         """법률 저장본을 다시 조립하지 않고 표시하는 최소 화면 상태."""
         return {
             "render_snapshot_version": LAW_RENDER_SNAPSHOT_VERSION,
+            # 이 화면이 어느 문서의 것인지 스스로 밝힌다. 저장 위치를
+            # 부르는 쪽에서 따로 계산하다 보니, 조문 하나짜리 화면이
+            # 법령 전문 파일에 저장되는 일이 있었다. 신원을 화면에
+            # 붙여 두면 어긋난 곳에 쓰는 것을 쓰기 직전에 막을 수 있다.
+            "rendered_for": ResourceSearchTab._document_identity(
+                state.get("row")
+            ),
             # QTextDocument.toHtml() 결과는 원본보다 몇 배 장황하고,
             # 다시 setHtml() 할 때 국토계획법 기준 1초 이상 걸렸다.
             # 최초에 만든 간결한 HTML을 저장하고 링크·메모·색상은
@@ -3302,7 +3339,7 @@ class ResourceSearchTab(QWidget):
                 str(snapshot.get("rendered_plain_text") or ""),
                 saved.get("payload") if isinstance(saved, dict) else None,
             )
-            if covers:
+            if self._snapshot_belongs_to(snapshot, save_row) and covers:
                 self.law_cache.update_snapshot(save_row, snapshot)
         link_count = sum(len(links) for links in links_by_article.values())
         if link_count:
@@ -7443,10 +7480,17 @@ class ResourceSearchTab(QWidget):
             f"{self.pending_row['label']} ID {self.pending_row['id']} 본문 조회 완료"
         )
         if target == "law" and save_cache:
+            # 지금 화면이 정말 이 행의 것일 때만 화면까지 함께 저장한다.
+            # 어긋나면 원문만 저장하고 화면은 다음에 열 때 다시 그린다.
+            fresh_snapshot = self._active_law_render_snapshot()
+            if not self._snapshot_belongs_to(
+                fresh_snapshot, dict(self.pending_row)
+            ):
+                fresh_snapshot = {}
             if self.law_cache.save(
                 dict(self.pending_row),
                 payload,
-                snapshot=self._active_law_render_snapshot(),
+                snapshot=fresh_snapshot,
             ):
                 status += " · 실행 폴더에 저장됨"
             else:
@@ -7713,7 +7757,9 @@ class ResourceSearchTab(QWidget):
         if not restored_render:
             self._show_detail(payload, save_cache=False)
             snapshot = self._active_law_render_snapshot()
-            if snapshot.get("rendered_html"):
+            if snapshot.get("rendered_html") and self._snapshot_belongs_to(
+                snapshot, row
+            ):
                 self.law_cache.update_snapshot(row, snapshot)
         if had_rendered_document:
             restored_formats = 0
