@@ -384,17 +384,20 @@ def body_to_html(
     current_law_id: str = "",
     use_api_links: bool = False,
     administrative_rule: bool = False,
+    administrative_rule_normalized: bool = False,
 ) -> str:
     """일반 본문과 법령 계층·글머리표 문단을 Qt용 HTML로 변환.
 
     장·절·조 제목은 굵게 구분하고 항·호·목은 단계별 내어쓰기를 적용한다.
     글머리표로 시작한 줄 뒤의 연속된 줄은 같은 항목으로 묶는다.
+    ``administrative_rule_normalized``는 이 호출 직전에
+    ``normalize_admin_rule_text``를 적용한 값에만 사용한다.
     """
     # 행정규칙은 이름만으로 번호체계를 가릴 수 없다. 본문 앞부분의
     # 첫 조항 표지로 수립지침식(1-1-1.)과 법령식(제1조)을 나눈다.
     # 앞 8,000자만 보므로 본문 전체를 한 번 더 훑지는 않는다.
     guideline_layout = administrative_rule and uses_guideline_numbering(value)
-    if administrative_rule:
+    if administrative_rule and not administrative_rule_normalized:
         # 저장된 구버전 원문도 화면을 열 때 최신 줄바꿈 규칙을 적용한다.
         # 이미 정규화된 텍스트에는 변화가 없어 반복 적용해도 안전하다.
         value = normalize_admin_rule_text(value, guideline=guideline_layout)

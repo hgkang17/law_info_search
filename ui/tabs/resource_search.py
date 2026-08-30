@@ -60,7 +60,6 @@ from storage.paths import (
     LAW_RENDER_SNAPSHOT_VERSION,
     SEARCH_RESULT_CACHE_DIR,
 )
-from workers.download_worker import PdfDownloadWorker
 from workers.search_worker import (
     AnnexReferenceWorker,
     ResourceApiWorker,
@@ -95,9 +94,9 @@ from utils.patterns import (
     CIRCLED_NUMBER_MARKERS,
     LAW_UNIT_REFERENCE_PATTERN,
 )
-from PySide6.QtCore import QBuffer, QEvent, QIODevice, QPoint, QPointF, QRect, QTimer, QUrl, QUrlQuery, Qt
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QTimer, QUrl, QUrlQuery, Qt
 from PySide6.QtGui import QBrush, QColor, QCursor, QDesktopServices, QFont, QKeySequence, QShortcut, QTextCharFormat, QTextCursor, QTextDocument, QTextFormat
-from PySide6.QtWidgets import QAbstractItemView, QApplication, QComboBox, QDialog, QDoubleSpinBox, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMenu, QMessageBox, QProgressBar, QPushButton, QSizePolicy, QSpinBox, QSplitter, QStackedWidget, QTabBar, QTableWidget, QTableWidgetItem, QTextEdit, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QApplication, QComboBox, QDialog, QDoubleSpinBox, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMenu, QMessageBox, QProgressBar, QPushButton, QSizePolicy, QSplitter, QStackedWidget, QTabBar, QTableWidget, QTableWidgetItem, QTextEdit, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 from datetime import datetime
 from html import escape, unescape
 from pathlib import Path
@@ -110,8 +109,6 @@ import re
 import binascii
 from urllib.parse import unquote
 import xml.etree.ElementTree as ET
-from PySide6.QtPdf import QPdfDocument
-from PySide6.QtPdfWidgets import QPdfView
 from ui.dialogs import _position_dialog_beside
 
 
@@ -803,67 +800,10 @@ class ResourceSearchTab(QWidget):
         self.memo_marker_bar.activated.connect(self._open_memo_marker_popup)
         self._visible_memos: list[dict[str, object]] = []
 
-        self.pdf_view = QPdfView()
-        self.pdf_view.setPageMode(QPdfView.PageMode.MultiPage)
-        self._pdf_zoom_factor = 1.0
-        self.pdf_view.setZoomMode(QPdfView.ZoomMode.Custom)
-        self.pdf_view.setZoomFactor(self._pdf_zoom_factor)
-        self.pdf_view.installEventFilter(self)
-        self.pdf_view.viewport().installEventFilter(self)
-        self.pdf_document = QPdfDocument(self)
-        self.pdf_view.setDocument(self.pdf_document)
-        self._pdf_preview_generation = 0
         self.pdf_preview_popup = PdfPreviewPopup(self)
         # 고정해 둔 미리보기는 그대로 두고 새 별표를 옆에 띄운다.
         self._extra_pdf_popups: list[PdfPreviewPopup] = []
-        self.pdf_view.hide()
-        self.pdf_status_label = QLabel("PDF를 불러오는 중...")
-        self.pdf_status_label.setObjectName("mutedText")
-        self.pdf_status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        pdf_title = QLabel("PDF 미리보기")
-        pdf_title.setObjectName("detailSectionTitle")
-        pdf_title.setContentsMargins(10, 0, 0, 0)
-        self.pdf_zoom_spin = QSpinBox()
-        self.pdf_zoom_spin.setObjectName("pdfZoomSpin")
-        self.pdf_zoom_spin.setRange(20, 300)
-        self.pdf_zoom_spin.setSingleStep(5)
-        self.pdf_zoom_spin.setSuffix("%")
-        self.pdf_zoom_spin.setValue(100)
-        self.pdf_zoom_spin.setKeyboardTracking(False)
-        self.pdf_zoom_spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.pdf_zoom_spin.setFixedWidth(76)
-        self.pdf_zoom_spin.setToolTip(
-            "PDF 배율을 직접 입력하거나 위·아래 버튼으로 5%씩 조절합니다. "
-            "미리보기 안에서 Ctrl+휠로도 조절할 수 있습니다."
-        )
-        self.pdf_zoom_spin.valueChanged.connect(self._set_pdf_zoom_percent)
-        pdf_title_row = QHBoxLayout()
-        pdf_title_row.setContentsMargins(0, 0, 0, 0)
-        pdf_title_row.setSpacing(6)
-        pdf_title_row.addWidget(pdf_title)
-        pdf_title_row.addStretch(1)
-        pdf_title_row.addWidget(self.pdf_zoom_spin)
-        self.pdf_page = QWidget()
-        self.pdf_page.setObjectName("inlinePdfPreview")
-        pdf_page_layout = QVBoxLayout(self.pdf_page)
-        pdf_page_layout.setContentsMargins(0, 0, 0, 0)
-        pdf_page_layout.setSpacing(6)
-        pdf_page_layout.addLayout(pdf_title_row)
-        pdf_page_layout.addWidget(self.pdf_status_label)
-        pdf_page_layout.addWidget(self.pdf_view, 1)
-        self.pdf_page.hide()
-
-        self.detail_pdf_splitter = QSplitter(Qt.Orientation.Vertical)
-        self.detail_pdf_splitter.setChildrenCollapsible(False)
-        self.detail_pdf_splitter.addWidget(self.detail_view)
-        self.detail_pdf_splitter.addWidget(self.pdf_page)
-        self.detail_pdf_splitter.setStretchFactor(0, 0)
-        self.detail_pdf_splitter.setStretchFactor(1, 1)
-
-        self.detail_stack = QStackedWidget()
-        self.detail_stack.addWidget(self.detail_pdf_splitter)
-
-        detail_view_row_layout.addWidget(self.detail_stack, 1)
+        detail_view_row_layout.addWidget(self.detail_view, 1)
         detail_view_row_layout.addWidget(self.memo_marker_bar)
         detail_body_layout.addWidget(detail_view_row, 1)
 
@@ -1331,7 +1271,6 @@ class ResourceSearchTab(QWidget):
         previous_base_foregrounds = capture_base_foreground_spans(
             self.detail_view.document()
         )
-        self._close_pdf_preview()
         self.detail_search.begin_document_change()
         try:
             font = QFont(DETAIL_FONT_FAMILY)
@@ -2507,7 +2446,6 @@ class ResourceSearchTab(QWidget):
             visible = (
                 rect.bottom() >= 0
                 and button_y <= viewport.height()
-                and self.detail_stack.currentIndex() == 0
             )
             if not visible:
                 button.hide()
@@ -2540,7 +2478,6 @@ class ResourceSearchTab(QWidget):
             visible = (
                 rect.bottom() >= 0
                 and button_y <= viewport.height()
-                and self.detail_stack.currentIndex() == 0
             )
             if not visible:
                 button.hide()
@@ -2587,15 +2524,6 @@ class ResourceSearchTab(QWidget):
         self.detail_search.set_base_selections([])
         self.toc_tree.clearSelection()
 
-    def _set_pdf_zoom_percent(self, percent: int) -> None:
-        self._pdf_zoom_factor = max(0.2, min(3.0, int(percent) / 100.0))
-        self.pdf_view.setZoomMode(QPdfView.ZoomMode.Custom)
-        self.pdf_view.setZoomFactor(self._pdf_zoom_factor)
-
-    def _adjust_pdf_zoom(self, delta: float) -> None:
-        step = 5 if delta > 0 else -5
-        self.pdf_zoom_spin.setValue(self.pdf_zoom_spin.value() + step)
-
     def eventFilter(self, watched, event) -> bool:
         if (
             watched is self.detail_view.viewport()
@@ -2623,15 +2551,6 @@ class ResourceSearchTab(QWidget):
             and event.type() in (QEvent.Type.Resize, QEvent.Type.Show)
         ):
             self._schedule_three_stage_button_positions()
-        if (
-            event.type() == QEvent.Type.Wheel
-            and watched in (self.pdf_view, self.pdf_view.viewport())
-            and event.modifiers() & Qt.KeyboardModifier.ControlModifier
-        ):
-            delta = event.angleDelta().y()
-            if delta:
-                self._adjust_pdf_zoom(0.05 if delta > 0 else -0.05)
-            return True
         return super().eventFilter(watched, event)
 
     def _show_pdf_preview(self, url: str) -> None:
@@ -2714,71 +2633,6 @@ class ResourceSearchTab(QWidget):
                     min(corner.y() + step, area.bottom() - popup.height()),
                 ),
             )
-        return
-        self._pdf_preview_generation += 1
-        generation = self._pdf_preview_generation
-        self.detail_stack.setCurrentIndex(0)
-        self.pdf_page.show()
-        available_height = max(500, self.detail_pdf_splitter.height())
-        # PDF 미리보기가 제목까지 포함해 위쪽 메타정보 영역을 거의
-        # 전부 덮도록, 구분선 손잡이 정도만 남기고 접는다. 필요하면
-        # 구분선을 아래로 끌어 다시 펼칠 수 있다.
-        link_height = 1
-        self.detail_pdf_splitter.setSizes(
-            [link_height, max(400, available_height - link_height)]
-        )
-        self.pdf_zoom_spin.setValue(75)
-        self.pdf_view.hide()
-        self.pdf_status_label.setText("PDF를 불러오는 중...")
-        self.pdf_status_label.show()
-        worker = PdfDownloadWorker(url, self)
-        # 몇 번째 미리보기 요청인지를 작업 자체에 붙여 둔다. lambda로
-        # 묶어 넘기면 받는 QObject가 없어 직접 연결이 되고, 아래 슬롯이
-        # 내려받기 스레드에서 돌아 QBuffer를 이 위젯 밑에 만들다 죽는다.
-        worker.generation = generation
-        self._pdf_worker = worker
-        worker.succeeded.connect(self._on_pdf_downloaded)
-        worker.failed.connect(self._on_pdf_failed)
-        worker.finished.connect(worker.deleteLater)
-        worker.start()
-
-    def _on_pdf_downloaded(self, data: bytes) -> None:
-        generation = int(getattr(self.sender(), "generation", -1))
-        if generation != self._pdf_preview_generation:
-            return
-        self._pdf_buffer = QBuffer(self)
-        self._pdf_buffer.setData(data)
-        self._pdf_buffer.open(QIODevice.OpenModeFlag.ReadOnly)
-        self.pdf_document.statusChanged.connect(self._on_pdf_status_changed)
-        self.pdf_document.load(self._pdf_buffer)
-
-    def _on_pdf_status_changed(self, status: QPdfDocument.Status) -> None:
-        if status == QPdfDocument.Status.Ready:
-            self.pdf_status_label.hide()
-            self.pdf_view.show()
-        elif status == QPdfDocument.Status.Error:
-            self.pdf_status_label.setText(
-                f"PDF를 여는 데 실패했습니다: {self.pdf_document.error()}"
-            )
-        else:
-            return
-        try:
-            self.pdf_document.statusChanged.disconnect(
-                self._on_pdf_status_changed
-            )
-        except (TypeError, RuntimeError):
-            pass
-
-    def _on_pdf_failed(self, message: str) -> None:
-        generation = int(getattr(self.sender(), "generation", -1))
-        if generation != self._pdf_preview_generation:
-            return
-        self.pdf_status_label.setText(f"PDF 다운로드에 실패했습니다: {message}")
-
-    def _close_pdf_preview(self) -> None:
-        self._pdf_preview_generation += 1
-        self.detail_stack.setCurrentIndex(0)
-        self.pdf_page.hide()
 
     def _open_three_stage_comparison(
         self, article: dict[str, str]
@@ -5050,6 +4904,7 @@ class ResourceSearchTab(QWidget):
                         ),
                         use_api_links=True,
                         administrative_rule=target == "admrul",
+                        administrative_rule_normalized=target == "admrul",
                     )
                     + "</div>"
                 )
@@ -8295,6 +8150,7 @@ class ResourceSearchTab(QWidget):
                 current_law_id=current_law_id,
                 use_api_links=True,
                 administrative_rule=administrative_rule,
+                administrative_rule_normalized=administrative_rule,
             )
             html_parts.append(f'<div class="content">{section_html}</div>')
             plain_parts.extend(("", f"[{label}]", value))

@@ -25,8 +25,6 @@ from PySide6.QtWidgets import (
     QSpacerItem,
     QStackedWidget,
     QTableWidgetItem,
-    QTabBar,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -656,9 +654,6 @@ class LawSearchWindow(QMainWindow):
             view = getattr(tab, "detail_view", None)
             if view is not None:
                 view.textChanged.connect(self._schedule_open_documents_refresh)
-                view.selectionChanged.connect(
-                    self._schedule_open_documents_refresh
-                )
         self.resource_tab.document_tabs.currentChanged.connect(
             self._schedule_open_documents_refresh
         )

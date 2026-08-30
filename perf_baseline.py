@@ -56,7 +56,16 @@ def main() -> None:
         "measured_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "python": sys.version.split()[0],
         "source_lines": sum(
-            1 for _ in (APP_DIR / "molit_cgm_expc_qt.py").open(encoding="utf-8")
+            sum(1 for _ in path.open(encoding="utf-8"))
+            for directory in (
+                "ui",
+                "utils",
+                "workers",
+                "storage",
+                "models",
+                "llm",
+            )
+            for path in (APP_DIR / directory).rglob("*.py")
         ),
     }
 
@@ -148,12 +157,13 @@ def main() -> None:
         report["insert_admin_clause_breaks"] = repeat(
             lambda: module.insert_admin_clause_breaks(body), rounds=5
         )
-        report["body_to_html_admin"] = repeat(
+        report["normalize_and_body_to_html_admin"] = repeat(
             lambda: module.body_to_html(
-                module.insert_admin_clause_breaks(body),
+                module.normalize_admin_rule_text(body),
                 (),
                 use_api_links=True,
                 administrative_rule=True,
+                administrative_rule_normalized=True,
             ),
             rounds=3,
         )

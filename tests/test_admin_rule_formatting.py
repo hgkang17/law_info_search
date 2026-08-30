@@ -14,10 +14,23 @@ from utils.formatting import body_to_html
 from utils.constants import FONT_FAMILY
 from utils.parsing import (
     insert_admin_clause_breaks,
+    normalize_admin_rule_text,
     split_inline_closing_paren_items,
     split_inline_paren_items,
 )
 from ui.tabs.resource_search import ResourceSearchTab
+
+
+def test_pre_normalized_admin_rule_skips_only_duplicate_normalization() -> None:
+    _app = QApplication.instance() or QApplication([])
+    source = "3-1-2-2. 전용주거지역(1) 공통기준\n① 첫 번째 기준"
+    normalized = normalize_admin_rule_text(source)
+
+    assert body_to_html(source, administrative_rule=True) == body_to_html(
+        normalized,
+        administrative_rule=True,
+        administrative_rule_normalized=True,
+    )
 
 
 def test_guideline_first_parenthesized_item_moves_below_clause_title() -> None:

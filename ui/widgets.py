@@ -22,7 +22,6 @@ from PySide6.QtGui import (
     QColor,
     QCursor,
     QFont,
-    QFontMetrics,
     QKeySequence,
     QPainter,
     QPen,
@@ -54,7 +53,6 @@ from PySide6.QtWidgets import (
     QTextBrowser,
     QTextEdit,
     QTreeWidget,
-    QVBoxLayout,
     QWidget,
 )
 from PySide6.QtCore import QPointF

@@ -63,7 +63,7 @@ from utils.parsing import (
     whitespace_insensitive_contains,
     serialize_agency_search_payload,
 )
-from PySide6.QtCore import QEvent, QRect, QTimer, QUrl, Qt
+from PySide6.QtCore import QRect, QTimer, QUrl, Qt
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QKeySequence, QShortcut, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import QAbstractItemView, QApplication, QComboBox, QDialog, QDoubleSpinBox, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton, QSizePolicy, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
 from html import escape

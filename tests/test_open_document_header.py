@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import QApplication, QLabel
 
 from ui.main_window import LawSearchWindow
@@ -54,6 +55,25 @@ def test_header_shows_active_document_without_binding_global_ai(qt_app) -> None:
         assert resource.ai_chat_panel.minimumWidth() == 0
         assert not resource.main_splitter.isCollapsible(2)
         assert resource._chat_context() == ("제1조 목적 본문", "본문 전체")
+    finally:
+        window.close()
+        qt_app.processEvents()
+
+
+def test_text_selection_does_not_rebuild_open_document_tabs(qt_app) -> None:
+    window = LawSearchWindow()
+    try:
+        view = window.resource_tab.detail_view
+        view.setPlainText("선택해 볼 법령 본문")
+        qt_app.processEvents()
+        window._open_document_refresh_pending = False
+
+        cursor = view.textCursor()
+        cursor.setPosition(0)
+        cursor.setPosition(4, QTextCursor.MoveMode.KeepAnchor)
+        view.setTextCursor(cursor)
+
+        assert not window._open_document_refresh_pending
     finally:
         window.close()
         qt_app.processEvents()
