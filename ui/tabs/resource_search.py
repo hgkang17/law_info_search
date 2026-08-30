@@ -94,6 +94,13 @@ from utils.patterns import (
     CIRCLED_NUMBER_MARKERS,
     LAW_UNIT_REFERENCE_PATTERN,
 )
+from utils.three_stage_alignment import (
+    block_index_for_unit_or_none,
+    hang_groups_from_blocks,
+    html_to_plain_text,
+    law_content_blocks,
+    primary_source_unit,
+)
 from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QTimer, QUrl, QUrlQuery, Qt
 from PySide6.QtGui import QBrush, QColor, QCursor, QDesktopServices, QFont, QKeySequence, QShortcut, QTextCharFormat, QTextCursor, QTextDocument, QTextFormat
 from PySide6.QtWidgets import QAbstractItemView, QApplication, QComboBox, QDialog, QDoubleSpinBox, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMenu, QMessageBox, QProgressBar, QPushButton, QSizePolicy, QSplitter, QStackedWidget, QTabBar, QTableWidget, QTableWidgetItem, QTextEdit, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
@@ -3447,16 +3454,6 @@ class ResourceSearchTab(QWidget):
             return CIRCLED_NUMBER_MARKERS[number - 1]
         return ""
 
-    _LAW_BLOCK_START_PATTERN = re.compile(
-        r'<div class="legal-indent level-[012]"'
-    )
-    _MOK_MARKER_PATTERN = re.compile(
-        r"^([가나다라마바사아자차카타파하])\.$"
-    )
-    _BULLET_MARKER_PATTERN = re.compile(
-        r'<span class="bullet-marker"[^>]*>(.*?)&nbsp;</span>', re.S
-    )
-
     @classmethod
     def _split_comparison_item(cls, item_html: str) -> tuple[str, str]:
         """비교 항목 HTML을 (법령명ㆍ조제목 머리, 본문 안쪽)으로 나눈다."""
@@ -3486,9 +3483,7 @@ class ResourceSearchTab(QWidget):
             show_law_name=show_law_name,
         )
         head, inner = self._split_comparison_item(html)
-        groups = self._hang_groups_from_blocks(
-            self._law_content_blocks(inner)
-        )
+        groups = hang_groups_from_blocks(law_content_blocks(inner))
         fragments: list[dict] = []
         show_head = True
         for group in groups:
@@ -3504,7 +3499,7 @@ class ResourceSearchTab(QWidget):
 
     @classmethod
     def _fragment_plain_text(cls, fragment: dict) -> str:
-        return cls._html_to_plain_text(
+        return html_to_plain_text(
             "".join(block["html"] for block in fragment["blocks"])
         )
 
@@ -3525,157 +3520,6 @@ class ResourceSearchTab(QWidget):
         return "".join(
             self._fragment_cell_html(fragment) for fragment in fragments
         )
-
-    @classmethod
-    def _law_content_blocks(cls, inner_html: str) -> list[dict[str, str]]:
-        """본문을 항ㆍ호ㆍ목 덩어리로 나눠 각 덩어리의 단위 코드를 붙인다.
-
-        시행령을 법률 항 옆에, 시행규칙을 시행령 호ㆍ목 옆에 놓으려면
-        같은 단위로 잘라야 한다. ``1)`` 같은 세목(level-3)은 자기 목
-        덩어리에 딸려 간다.
-        """
-        starts = [
-            match.start()
-            for match in cls._LAW_BLOCK_START_PATTERN.finditer(inner_html)
-        ]
-        if not starts:
-            return [{"hang": "", "ho": "", "mok": "", "html": inner_html}]
-        blocks: list[dict[str, str]] = []
-        if starts[0] > 0:
-            blocks.append(
-                {
-                    "hang": "",
-                    "ho": "",
-                    "mok": "",
-                    "html": inner_html[: starts[0]],
-                }
-            )
-        bounds = starts + [len(inner_html)]
-        current_hang = ""
-        current_ho = ""
-        for index, start in enumerate(starts):
-            chunk = inner_html[start : bounds[index + 1]]
-            marker_match = cls._BULLET_MARKER_PATTERN.search(chunk)
-            marker = marker_match.group(1).strip() if marker_match else ""
-            hang, ho, mok = current_hang, current_ho, ""
-            circled = CIRCLED_NUMBER_MARKERS.find(marker)
-            number_match = re.fullmatch(r"(\d+)(?:의(\d+))?\.", marker)
-            mok_match = cls._MOK_MARKER_PATTERN.fullmatch(marker)
-            if len(marker) == 1 and circled >= 0:
-                current_hang = law_unit_code(str(circled + 1))
-                current_ho = ""
-                hang, ho, mok = current_hang, "", ""
-            elif number_match:
-                try:
-                    current_ho = law_unit_code(
-                        number_match.group(1), number_match.group(2) or ""
-                    )
-                except ValueError:
-                    current_ho = ""
-                hang, ho, mok = current_hang, current_ho, ""
-            elif mok_match:
-                mok = mok_match.group(1)
-                hang, ho = current_hang, current_ho
-            blocks.append(
-                {"hang": hang, "ho": ho, "mok": mok, "html": chunk}
-            )
-        return blocks
-
-    @staticmethod
-    def _html_to_plain_text(html: str) -> str:
-        text = unescape(re.sub(r"<[^>]+>", " ", html or ""))
-        return re.sub(r"\s+", " ", text).strip()
-
-    @classmethod
-    def _hang_groups_from_blocks(
-        cls, blocks: list[dict[str, str]]
-    ) -> list[list[dict[str, str]]]:
-        """항 덩어리와 그에 딸린 호를 묶는다. 다음 항이 나오면 새 묶음."""
-        groups: list[list[dict[str, str]]] = []
-        current: list[dict[str, str]] = []
-        for block in blocks:
-            starts_new_hang = bool(block.get("hang") and not block.get("ho"))
-            if starts_new_hang and current:
-                groups.append(current)
-                current = [block]
-                continue
-            current.append(block)
-        if current:
-            groups.append(current)
-        if (
-            len(groups) >= 2
-            and not groups[0][0].get("hang")
-            and not groups[0][0].get("ho")
-            and not groups[0][0].get("mok")
-            and not cls._html_to_plain_text(
-                "".join(block["html"] for block in groups[0])
-            )
-        ):
-            groups[1] = groups[0] + groups[1]
-            groups = groups[1:]
-        return groups
-
-    @staticmethod
-    def _block_index_for_unit_or_none(
-        blocks: list[dict[str, str]],
-        hang: str,
-        ho: str,
-        mok: str = "",
-    ) -> int | None:
-        """근거 항ㆍ호ㆍ목이 이 묶음 안에 있으면 번호를, 없으면 None."""
-        if mok:
-            for index, block in enumerate(blocks):
-                if block.get("mok") != mok:
-                    continue
-                if ho and block.get("ho") != ho:
-                    continue
-                if hang and block.get("hang") and block["hang"] != hang:
-                    continue
-                return index
-            return None
-        if ho:
-            for index, block in enumerate(blocks):
-                if block.get("ho") != ho or block.get("mok"):
-                    continue
-                if hang and block.get("hang") and block["hang"] != hang:
-                    continue
-                return index
-            for index, block in enumerate(blocks):
-                if block.get("ho") != ho:
-                    continue
-                if hang and block.get("hang") and block["hang"] != hang:
-                    continue
-                return index
-        if hang:
-            for index, block in enumerate(blocks):
-                if block.get("hang") == hang and not block.get("ho"):
-                    return index
-        return None
-
-    @staticmethod
-    def _primary_source_unit(
-        units: list[dict[str, str]],
-    ) -> tuple[str, str, str]:
-        """하위법령이 든 근거 중 첫 번째 항ㆍ호ㆍ목을 돌려준다."""
-        for unit in units:
-            hang = str(unit.get("source_hang") or "")
-            ho = str(unit.get("source_ho") or "")
-            mok = str(unit.get("source_mok") or "")
-            if hang or ho or mok:
-                return hang, ho, mok
-        return "", "", ""
-
-    @classmethod
-    def _block_index_for_unit(
-        cls,
-        blocks: list[dict[str, str]],
-        hang: str,
-        ho: str,
-        mok: str = "",
-    ) -> int:
-        """근거 항ㆍ호ㆍ목에 해당하는 덩어리 번호를 찾는다."""
-        found = cls._block_index_for_unit_or_none(blocks, hang, ho, mok)
-        return 0 if found is None else found
 
     @staticmethod
     def _three_stage_source_inner_label(unit: dict[str, str]) -> str:
@@ -3988,7 +3832,7 @@ class ResourceSearchTab(QWidget):
         base_head = re.sub(
             r'<div class="comparison-law-name">.*?</div>', "", base_head, count=1
         )
-        blocks = self._law_content_blocks(base_inner)
+        blocks = law_content_blocks(base_inner)
         base_code = self._three_stage_article_code(base_node)
 
         def column_law_name(nodes: list[dict], fallback_name: str) -> str:
@@ -4011,12 +3855,12 @@ class ResourceSearchTab(QWidget):
                 fallback_law_name="시행령",
                 show_law_name=node_law_name != decree_header,
             ):
-                hang, ho, mok = self._primary_source_unit(
+                hang, ho, mok = primary_source_unit(
                     self._law_source_units_referenced_by_decree(
                         self._fragment_plain_text(fragment), base_code
                     )
                 )
-                matched = self._block_index_for_unit_or_none(
+                matched = block_index_for_unit_or_none(
                     blocks, hang, ho, mok
                 )
                 if matched is None:
@@ -4051,14 +3895,14 @@ class ResourceSearchTab(QWidget):
                         if not decree_code
                         or unit.get("article_code") == decree_code
                     ]
-                    hang, ho, mok = self._primary_source_unit(units)
+                    hang, ho, mok = primary_source_unit(units)
                     if not hang and not ho and not mok:
                         if head:
                             rule_bins[0].append(rule)
                         else:
                             still.append(rule)
                         continue
-                    block_index = self._block_index_for_unit_or_none(
+                    block_index = block_index_for_unit_or_none(
                         decree_blocks, hang, ho, mok
                     )
                     if block_index is None:
@@ -4110,12 +3954,12 @@ class ResourceSearchTab(QWidget):
             0,
         )
         for rule in remaining_rules:
-            hang, ho, mok = self._primary_source_unit(
+            hang, ho, mok = primary_source_unit(
                 self._law_source_units_referenced_by_decree(
                     self._fragment_plain_text(rule), base_code
                 )
             )
-            matched = self._block_index_for_unit_or_none(
+            matched = block_index_for_unit_or_none(
                 blocks, hang, ho, mok
             )
             row_index = leftover_row if matched is None else matched

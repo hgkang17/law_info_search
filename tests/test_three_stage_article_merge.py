@@ -13,6 +13,12 @@ from storage.cache import LawDocumentCache
 from storage.recent import RecentSearchManager
 from ui.tabs.resource_search import ResourceSearchTab
 from utils.parsing import insert_admin_clause_breaks
+from utils.three_stage_alignment import (
+    block_index_for_unit,
+    hang_groups_from_blocks,
+    law_content_blocks,
+    primary_source_unit,
+)
 
 
 def _tab(tmp_path) -> ResourceSearchTab:
@@ -184,7 +190,7 @@ LAW_CONTENT_HTML = (
 
 def test_law_content_splits_into_subparagraph_blocks() -> None:
     """시행령을 근거 호ㆍ목 옆에 세우려면 법률 본문도 같은 단위로 잘려야 한다."""
-    blocks = ResourceSearchTab._law_content_blocks(LAW_CONTENT_HTML)
+    blocks = law_content_blocks(LAW_CONTENT_HTML)
 
     assert [(block["ho"], block.get("mok") or "") for block in blocks] == [
         ("", ""),
@@ -197,16 +203,14 @@ def test_law_content_splits_into_subparagraph_blocks() -> None:
 
 
 def test_block_index_matches_the_source_subparagraph() -> None:
-    blocks = ResourceSearchTab._law_content_blocks(LAW_CONTENT_HTML)
+    blocks = law_content_blocks(LAW_CONTENT_HTML)
 
-    assert ResourceSearchTab._block_index_for_unit(blocks, "", "000200") == 3
-    assert ResourceSearchTab._block_index_for_unit(blocks, "", "000502") == 4
-    assert ResourceSearchTab._block_index_for_unit(blocks, "", "000100") == 1
-    assert ResourceSearchTab._block_index_for_unit(
-        blocks, "", "000100", "가"
-    ) == 2
+    assert block_index_for_unit(blocks, "", "000200") == 3
+    assert block_index_for_unit(blocks, "", "000502") == 4
+    assert block_index_for_unit(blocks, "", "000100") == 1
+    assert block_index_for_unit(blocks, "", "000100", "가") == 2
     # 근거를 찾지 못하면 조문 머리 줄에 모은다.
-    assert ResourceSearchTab._block_index_for_unit(blocks, "", "009900") == 0
+    assert block_index_for_unit(blocks, "", "009900") == 0
 
 
 def test_primary_source_unit_skips_empty_references() -> None:
@@ -215,7 +219,7 @@ def test_primary_source_unit_skips_empty_references() -> None:
         {"source_hang": "", "source_ho": "000800", "source_mok": "다"},
     ]
 
-    assert ResourceSearchTab._primary_source_unit(units) == (
+    assert primary_source_unit(units) == (
         "",
         "000800",
         "다",
@@ -486,7 +490,11 @@ def _comparison_column_pairs(html: str) -> list[tuple[str, str]]:
     """헤더를 뺀 각 행의 (시행령 칸, 시행규칙 칸). rowspan 뒤 2칸 행도 포함한다."""
     pairs: list[tuple[str, str]] = []
     for row in re.findall(r"<tr>(.*?)</tr>", html, re.DOTALL)[1:]:
-        tds = re.findall(r"<td[^>]*>(.*?)</td>", row, re.DOTALL)
+        tds = re.findall(
+            r'<td class="comparison-cell"[^>]*>(.*?)</td>',
+            row,
+            re.DOTALL,
+        )
         if len(tds) == 3:
             pairs.append((tds[1], tds[2]))
         elif len(tds) == 2:
@@ -528,7 +536,7 @@ def test_hang_groups_keep_subparagraphs_with_their_paragraph() -> None:
         {"hang": "000300", "ho": "", "html": "③"},
         {"hang": "000300", "ho": "000100", "html": "1."},
     ]
-    groups = ResourceSearchTab._hang_groups_from_blocks(blocks)
+    groups = hang_groups_from_blocks(blocks)
     assert [[block["html"] for block in group] for group in groups] == [
         ["①", "1.", "3."],
         ["②"],
@@ -661,7 +669,11 @@ def test_uncited_decree_paragraph_does_not_jump_to_the_top(tmp_path) -> None:
     )
     law_rows = []
     for row in re.findall(r"<tr>(.*?)</tr>", html, re.DOTALL)[1:]:
-        tds = re.findall(r"<td[^>]*>(.*?)</td>", row, re.DOTALL)
+        tds = re.findall(
+            r'<td class="comparison-cell"[^>]*>(.*?)</td>',
+            row,
+            re.DOTALL,
+        )
         if len(tds) == 3:
             law_rows.append(tds)
 
@@ -691,7 +703,11 @@ def test_decree_paragraph_two_aligns_to_law_paragraph_three(tmp_path) -> None:
     )
     law_rows = []
     for row in re.findall(r"<tr>(.*?)</tr>", html, re.DOTALL)[1:]:
-        tds = re.findall(r"<td[^>]*>(.*?)</td>", row, re.DOTALL)
+        tds = re.findall(
+            r'<td class="comparison-cell"[^>]*>(.*?)</td>',
+            row,
+            re.DOTALL,
+        )
         if len(tds) == 3:
             law_rows.append(tds)
 
