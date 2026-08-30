@@ -191,6 +191,21 @@ def test_keyword_reading_mode_hides_outer_law_category_bar(window) -> None:
     assert keyword.detail_card.isHidden()
 
 
+def test_switching_keyword_category_clears_previous_reading_mode(window) -> None:
+    """같은 메인 탭 안에서 키워드 화면을 바꿔도 공용 UI가 복원된다."""
+    window._show_keyword_category("ai_search")
+    direct = window.ai_search_tab
+    direct._show_detail_split()
+    direct._set_reading_mode(True)
+
+    window._show_keyword_category("ai_related")
+
+    assert window.ai_tabs.currentWidget() is window.ai_related_tab
+    assert not direct._reading_mode
+    assert not window.resource_tab.category_tabs.isHidden()
+    assert not window.navigation_card.isHidden()
+
+
 def _keyword_root(tag, name_field, name, id_field, item_id, org_field, org):
     root = ET.Element("결과")
     node = ET.SubElement(root, tag, {"id": "1"})

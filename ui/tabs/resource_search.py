@@ -294,6 +294,9 @@ class ResourceSearchTab(QWidget):
         self.reference_popup.favoriteRequested.connect(
             self._toggle_reference_favorite
         )
+        self.reference_popup.refreshRequested.connect(
+            self._refresh_reference_popup
+        )
         self.reference_popup.hover_guard = (
             lambda popup=self.reference_popup: self._cursor_over_reference_link(
                 popup
@@ -1179,9 +1182,6 @@ class ResourceSearchTab(QWidget):
             lambda bar=scroll_bar, ratio=scroll_ratio: bar.setValue(
                 round(ratio * bar.maximum())
             ),
-        )
-        self.reference_popup.refreshRequested.connect(
-            self._refresh_reference_popup
         )
         QTimer.singleShot(0, self.memo_marker_bar.refresh_after_layout_change)
 

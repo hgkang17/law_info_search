@@ -5,10 +5,12 @@ from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
+from storage.cache import LawDocumentCache
+from storage.recent import RecentSearchManager
 from ui.dialogs import LawReferencePopup
 from ui.main_window import LawSearchWindow
 from ui.tabs.resource_search import ResourceSearchTab
@@ -59,6 +61,38 @@ def test_reference_popup_refresh_button_tracks_request_and_emits_popup() -> None
     assert not popup.refresh_button.isEnabled()
     popup.set_error("일시 오류")
     assert popup.refresh_button.isEnabled()
+
+
+def test_reading_mode_does_not_duplicate_reference_refresh_connection(
+    tmp_path, monkeypatch
+) -> None:
+    """크게 보기를 반복해도 팝업 갱신은 클릭당 한 번만 처리한다."""
+    app = QApplication.instance() or QApplication([])
+    refreshed: list[object] = []
+    monkeypatch.setattr(
+        ResourceSearchTab,
+        "_refresh_reference_popup",
+        lambda _self, popup: refreshed.append(popup),
+    )
+    settings = QSettings(
+        str(tmp_path / "resource.ini"), QSettings.Format.IniFormat
+    )
+    tab = ResourceSearchTab(
+        lambda: "test-oc",
+        RecentSearchManager(settings),
+        LawDocumentCache(tmp_path / "saved"),
+    )
+    try:
+        for _ in range(4):
+            tab._set_reading_mode(True)
+            tab._set_reading_mode(False)
+        tab.reference_popup.refreshRequested.emit(tab.reference_popup)
+        app.processEvents()
+
+        assert refreshed == [tab.reference_popup]
+    finally:
+        tab.close()
+        app.processEvents()
 
 
 def test_reference_popup_favorite_button_tracks_exact_unit() -> None:

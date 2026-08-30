@@ -1176,6 +1176,11 @@ class LawSearchWindow(QMainWindow):
 
     def _show_keyword_category(self, target: str) -> None:
         """법령검색 탭으로 옮기고 연관검색ㆍ직접검색 카테고리를 고른다."""
+        # 같은 메인 페이지 안에서는 navigation 신호가 다시 나지 않는다.
+        # 이때 다른 키워드 화면의 크게 보기 상태를 남겨 두면 공용 메뉴와
+        # 카테고리 바가 숨은 채 새 화면만 바뀌어 서로 겹친다.
+        if self.resource_tab.category_target != target:
+            self._reset_reading_modes_for_page_change()
         self.navigation.setCurrentRow(1)
         self.resource_tab.select_category(target)
 
