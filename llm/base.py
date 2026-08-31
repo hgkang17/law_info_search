@@ -81,6 +81,18 @@ class LlmProvider(ABC):
         """
         return self.fallback_models
 
+    def fetch_validated_models(self) -> tuple[ModelInfo, ...]:
+        """API 키를 확인한 뒤 현재 쓸 수 있는 모델을 돌려준다.
+
+        키 검증이 따로 필요 없는 제공자는 기존 목록 조회를 그대로 쓴다.
+        같은 원격 목록으로 검증과 조회를 함께 할 수 있는 제공자는 이 메서드를
+        재정의해 네트워크 왕복을 한 번으로 줄인다.
+        """
+        validate = getattr(self, "validate_api_key", None)
+        if callable(validate):
+            validate()
+        return self.fetch_models()
+
     @abstractmethod
     def start_chat(
         self, context: str = "", *, oc_key: str = "", law_cache=None

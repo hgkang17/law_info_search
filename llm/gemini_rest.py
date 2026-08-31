@@ -27,6 +27,9 @@ BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 # 안 되는 것은 빨리 알려 주고, 답을 기다리는 시간은 넉넉히 준다.
 CONNECT_TIMEOUT = 10
 READ_TIMEOUT = 300
+# 모델 선택 화면은 본문 생성과 달리 오래 기다릴 이유가 없다. 느린 연결에서도
+# 창을 닫거나 다른 제공자로 옮길 수 있도록 목록 조회만 짧게 제한한다.
+MODEL_READ_TIMEOUT = 20
 
 
 class GeminiApiError(RuntimeError):
@@ -83,7 +86,12 @@ class GeminiRestClient:
             params = {"pageSize": 200}
             if page_token:
                 params["pageToken"] = page_token
-            payload = self._request("GET", "/models", params=params)
+            payload = self._request(
+                "GET",
+                "/models",
+                params=params,
+                timeout=(CONNECT_TIMEOUT, MODEL_READ_TIMEOUT),
+            )
             found = payload.get("models")
             if isinstance(found, list):
                 models.extend(item for item in found if isinstance(item, dict))
@@ -133,11 +141,12 @@ class GeminiRestClient:
 
     # ------------------------------------------------------------------ 공통
     def _request(self, method: str, path: str, **kwargs) -> dict:
+        timeout = kwargs.pop("timeout", (CONNECT_TIMEOUT, READ_TIMEOUT))
         try:
             response = self._session.request(
                 method,
                 f"{BASE_URL}{path}",
-                timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
+                timeout=timeout,
                 **kwargs,
             )
         except requests.RequestException as error:

@@ -41,6 +41,28 @@ PALETTE_COLORS: tuple[tuple[str, str], ...] = (
 )
 
 
+WORKBENCH_COLORS: dict[str, str] = {
+    "canvas": "#f1f5f7",
+    "surface": "#ffffff",
+    "ink": "#172b3a",
+    "navy": "#15324b",
+    "accent": "#087e8b",
+    "accent_hover": "#076b76",
+    "border": "#d5dfe5",
+    "focus": "#4fb7bd",
+    "muted": "#526176",
+}
+
+
+def apply_workbench_color_tokens(style_sheet: str) -> str:
+    """QSS의 의미 기반 작업대 색상 토큰을 실제 색으로 치환한다."""
+    for role, value in WORKBENCH_COLORS.items():
+        style_sheet = style_sheet.replace(
+            f"__WB_{role.upper()}__", value
+        )
+    return style_sheet
+
+
 USER_BACKGROUND_ALPHA = 128
 
 
@@ -377,7 +399,7 @@ def build_color_palette_toolbar(
     """
     color_tools = QWidget()
     color_tools.setObjectName("colorTools")
-    color_tools.setFixedSize(198, 42)
+    color_tools.setFixedSize(246, 50)
     color_tools.setSizePolicy(
         QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
     )
@@ -402,7 +424,7 @@ def build_color_palette_toolbar(
         for color_name, color_value in PALETTE_COLORS:
             button = QPushButton("")
             button.setObjectName("paletteColorButton")
-            button.setFixedSize(18, 20)
+            button.setFixedSize(24, 24)
             button.setToolTip(
                 palette_color_tooltip(
                     row_label, color_name, color_value, background=is_background
@@ -413,7 +435,7 @@ def build_color_palette_toolbar(
                 "QPushButton {"
                 f"background:{palette_swatch_color(color_value, background=is_background)}; "
                 "border:1px solid #8b98a8; "
-                "border-radius:3px; padding:0; min-height:18px;"
+                "border-radius:3px; padding:0; min-height:24px;"
                 "} QPushButton:hover { border:2px solid #1768aa; }"
             )
             button.clicked.connect(

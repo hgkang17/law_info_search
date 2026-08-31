@@ -17,7 +17,8 @@ __pycache__/
 
 # 로컬 설정·임시 파일
 .claude/
-.impeccable/
+.impeccable/*
+!.impeccable/design.json
 .vscode/
 대화_요약.md
 # 외부 저장소에서 받아 오는 AI 도구 스킬. skills-lock.json으로 다시 받을

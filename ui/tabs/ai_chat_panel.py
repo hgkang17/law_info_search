@@ -8,8 +8,10 @@
 from __future__ import annotations
 
 import functools
+import hashlib
 import json
 import re
+import threading
 import time
 from html import escape, unescape
 from urllib.parse import quote
@@ -81,6 +83,7 @@ from llm.inquiries import is_inquiry_target, split_doc_reference
 from llm.ai_cli_setup import (
     CLAUDE_CLI,
     CODEX_CLI,
+    AiCliCancelled,
     AiCliSetupError,
     AiCliSpec,
     cli_login_status,
@@ -560,12 +563,24 @@ class AiConnectionWorker(QObject):
     def __init__(self, spec: AiCliSpec) -> None:
         super().__init__()
         self._spec = spec
+        self._cancelled = threading.Event()
+
+    def stop(self) -> None:
+        self._cancelled.set()
 
     def run(self) -> None:
         try:
-            version, installed = ensure_cli(self._spec, self.progress.emit)
+            version, installed = ensure_cli(
+                self._spec,
+                self.progress.emit,
+                self._cancelled.is_set,
+            )
             self.progress.emit(f"{self._spec.label} 로그인 여부를 확인하는 중…")
-            logged_in, login_detail = cli_login_status(self._spec)
+            logged_in, login_detail = cli_login_status(
+                self._spec, self._cancelled.is_set
+            )
+            if self._cancelled.is_set():
+                return
             if logged_in is False:
                 self.progress.emit(
                     f"{self._spec.label} 로그인 브라우저를 여는 중…"
@@ -582,6 +597,8 @@ class AiConnectionWorker(QObject):
                 logged_in,
                 login_detail,
             )
+        except AiCliCancelled:
+            pass
         except AiCliSetupError as error:
             self.failed.emit(str(error))
         except Exception as error:  # noqa: BLE001 - 작업 스레드 오류를 화면에 전달
@@ -605,20 +622,227 @@ class AiCliCheckWorker(QObject):
     def __init__(self, specs: tuple[AiCliSpec, ...]) -> None:
         super().__init__()
         self._specs = specs
+        self._cancelled = threading.Event()
+
+    def stop(self) -> None:
+        self._cancelled.set()
 
     def run(self) -> None:
         try:
             for spec in self._specs:
-                version = cli_version(spec)
+                if self._cancelled.is_set():
+                    break
+                version = cli_version(spec, self._cancelled.is_set)
                 if version is None:
                     self.checked.emit(spec.label, "", False, "")
                     continue
-                logged_in, detail = cli_login_status(spec)
+                logged_in, detail = cli_login_status(
+                    spec, self._cancelled.is_set
+                )
                 self.checked.emit(spec.label, version, logged_in, detail)
+        except AiCliCancelled:
+            pass
         except Exception as error:  # noqa: BLE001 - 확인 실패로 화면이 죽으면 안 된다
             self.checked.emit("", "", None, str(error))
         finally:
             self.finished.emit()
+
+
+class CliStatusCoordinator(QObject):
+    """앱 안의 모든 AI 패널이 CLI 상태 확인 한 번을 함께 사용한다."""
+
+    checked = Signal(str, str, object, str)
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._results: list[tuple[str, str, object, str]] = []
+        self._thread: QThread | None = None
+        self._worker: AiCliCheckWorker | None = None
+
+    def request(self) -> None:
+        if self._results:
+            for result in self._results:
+                QTimer.singleShot(
+                    0,
+                    lambda values=result: self.checked.emit(*values),
+                )
+            return
+        if self._thread is not None:
+            return
+
+        worker = AiCliCheckWorker(tuple(CLI_SPECS.values()))
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.checked.connect(self._remember_result)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._finished)
+        self._worker = worker
+        self._thread = thread
+        thread.start()
+
+    def _remember_result(
+        self, label: str, version: str, logged_in: object, detail: str
+    ) -> None:
+        result = (label, version, logged_in, detail)
+        self._results.append(result)
+        self.checked.emit(*result)
+
+    def _finished(self) -> None:
+        self._worker = None
+        self._thread = None
+
+    def shutdown(self) -> None:
+        worker = self._worker
+        thread = self._thread
+        if worker is not None:
+            worker.stop()
+        if thread is not None:
+            thread.quit()
+            thread.wait(5000)
+        self._worker = None
+        self._thread = None
+
+
+class ModelCatalogWorker(QObject):
+    """API 키 검증과 모델 목록 조회를 GUI 밖에서 수행한다."""
+
+    succeeded = Signal(str, object)
+    failed = Signal(str, str)
+    finished = Signal()
+
+    def __init__(self, request_key: str, provider_class, api_key: str) -> None:
+        super().__init__()
+        self._request_key = request_key
+        self._provider_class = provider_class
+        self._api_key = api_key
+
+    def run(self) -> None:
+        try:
+            provider = self._provider_class(self._api_key)
+            models = provider.fetch_validated_models()
+            self.succeeded.emit(self._request_key, tuple(models))
+        except LlmError as error:
+            self.failed.emit(self._request_key, str(error))
+        except Exception as error:  # noqa: BLE001 - 네트워크 작업 오류를 화면에 전달
+            self.failed.emit(
+                self._request_key,
+                f"모델 목록을 확인하지 못했습니다: {error}",
+            )
+        finally:
+            self._api_key = ""
+            self.finished.emit()
+
+
+class ModelCatalogCoordinator(QObject):
+    """같은 제공자·API 키의 모델 조회를 여러 패널이 한 번만 공유한다."""
+
+    resolved = Signal(str, object)
+    failed = Signal(str, str)
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._cache: dict[str, tuple] = {}
+        self._threads: dict[str, QThread] = {}
+        self._workers: dict[str, ModelCatalogWorker] = {}
+
+    @staticmethod
+    def request_key(provider_class, api_key: str) -> str:
+        digest = hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+        return f"{provider_class.name}:{digest}"
+
+    def request(self, provider_class, api_key: str) -> str:
+        request_key = self.request_key(provider_class, api_key)
+        cached = self._cache.get(request_key)
+        if cached is not None:
+            QTimer.singleShot(
+                0,
+                self,
+                lambda key=request_key, models=cached: (
+                    self.resolved.emit(key, models)
+                ),
+            )
+            return request_key
+        if request_key in self._threads:
+            return request_key
+
+        worker = ModelCatalogWorker(request_key, provider_class, api_key)
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.succeeded.connect(self._model_catalog_resolved)
+        worker.failed.connect(self.failed.emit)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(
+            lambda key=request_key: self._model_catalog_finished(key)
+        )
+        self._workers[request_key] = worker
+        self._threads[request_key] = thread
+        thread.start()
+        return request_key
+
+    def _model_catalog_resolved(self, request_key: str, models: object) -> None:
+        normalized = tuple(models) if isinstance(models, (list, tuple)) else ()
+        self._cache[request_key] = normalized
+        self.resolved.emit(request_key, normalized)
+
+    def _model_catalog_finished(self, request_key: str) -> None:
+        self._workers.pop(request_key, None)
+        self._threads.pop(request_key, None)
+
+    def shutdown(self) -> None:
+        """종료 시 제한시간 안에서 진행 중인 네트워크 작업을 정리한다."""
+        threads = tuple(self._threads.values())
+        for thread in threads:
+            thread.quit()
+        for thread in threads:
+            thread.wait(22_000)
+        self._workers.clear()
+        self._threads.clear()
+
+
+_MODEL_CATALOG_COORDINATOR: ModelCatalogCoordinator | None = None
+_CLI_STATUS_COORDINATOR: CliStatusCoordinator | None = None
+_AI_SHUTDOWN_BOUND = False
+
+
+def _bind_background_shutdown(application: QApplication | None) -> None:
+    global _AI_SHUTDOWN_BOUND
+    if application is None or _AI_SHUTDOWN_BOUND:
+        return
+    application.aboutToQuit.connect(shutdown_ai_background_services)
+    application.lastWindowClosed.connect(shutdown_ai_background_services)
+    _AI_SHUTDOWN_BOUND = True
+
+
+def cli_status_coordinator() -> CliStatusCoordinator:
+    global _CLI_STATUS_COORDINATOR
+    if _CLI_STATUS_COORDINATOR is None:
+        application = QApplication.instance()
+        _CLI_STATUS_COORDINATOR = CliStatusCoordinator(application)
+        _bind_background_shutdown(application)
+    return _CLI_STATUS_COORDINATOR
+
+
+def model_catalog_coordinator() -> ModelCatalogCoordinator:
+    global _MODEL_CATALOG_COORDINATOR
+    if _MODEL_CATALOG_COORDINATOR is None:
+        application = QApplication.instance()
+        _MODEL_CATALOG_COORDINATOR = ModelCatalogCoordinator(application)
+        _bind_background_shutdown(application)
+    return _MODEL_CATALOG_COORDINATOR
+
+
+def shutdown_ai_background_services() -> None:
+    """창 종료 전에 앱 공용 AI 백그라운드 작업을 정리한다."""
+    if _CLI_STATUS_COORDINATOR is not None:
+        _CLI_STATUS_COORDINATOR.shutdown()
+    if _MODEL_CATALOG_COORDINATOR is not None:
+        _MODEL_CATALOG_COORDINATOR.shutdown()
 
 
 class AiChatPanel(QFrame):
@@ -666,8 +890,11 @@ class AiChatPanel(QFrame):
         )
         self._connection_thread: QThread | None = None
         self._connection_worker: AiConnectionWorker | None = None
-        self._auto_check_thread: QThread | None = None
-        self._auto_check_worker: AiCliCheckWorker | None = None
+        self._cli_status_coordinator = cli_status_coordinator()
+        self._cli_status_requested = False
+        self._model_catalog_request_key = ""
+        self._model_catalog_reload_pending = False
+        self._model_catalog = model_catalog_coordinator()
         self._session: ChatSession | None = None
         self._active_provider_name = ""
         self._provider_chat_states: dict[str, dict[str, object]] = {}
@@ -738,11 +965,25 @@ class AiChatPanel(QFrame):
         self._reveal_timer.timeout.connect(self._reveal_tick)
 
         self._build_ui()
+        self._cli_status_coordinator.checked.connect(self._auto_check_result)
+        self._model_catalog.resolved.connect(self._model_catalog_resolved)
+        self._model_catalog.failed.connect(self._model_catalog_failed)
         self._restore_settings()
-        # 켤 때마다 [확인]을 누르게 하지 않는다. 저장해 둔 결과로 일단
-        # 그리고, 실제 상태는 뒤에서 한 번 확인해 바로잡는다. 그 사이에
-        # 로그아웃했을 수도 있으므로 기억한 값만 믿지는 않는다.
-        QTimer.singleShot(0, self._auto_check_cli)
+        # CLI 확인은 패널이 실제로 처음 보일 때 시작한다. 생성만 된 숨은
+        # 패널까지 외부 프로세스를 깨우면 앱 시작과 테스트 종료가 느려진다.
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._start_visible_background_checks()
+
+    def _start_visible_background_checks(self) -> None:
+        """처음 화면에 들어왔을 때 필요한 비동기 확인만 시작한다."""
+        if not self._cli_status_requested:
+            self._cli_status_requested = True
+            self._auto_check_cli()
+        if self._model_catalog_reload_pending:
+            self._model_catalog_reload_pending = False
+            self._reload_models()
 
     # ------------------------------------------------------------------ 화면
     def _build_ui(self) -> None:
@@ -766,7 +1007,6 @@ class AiChatPanel(QFrame):
             self.history_toggle_button.setObjectName("aiChatHistoryToggle")
             # 정원으로 그리므로 가로세로를 같게 둔다.
             self.history_toggle_button.setFixedSize(28, 28)
-            self.history_toggle_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             self.history_toggle_button.setCursor(Qt.CursorShape.PointingHandCursor)
             self.history_toggle_button.setToolTip("채팅 목록 보기")
             self.history_toggle_button.setAccessibleName("채팅 목록")
@@ -886,15 +1126,15 @@ class AiChatPanel(QFrame):
         # 이 단추에만 크기를 못 박는다.
         self.gemini_manual_button = QPushButton("?")
         self.gemini_manual_button.setObjectName("geminiManualButton")
-        self.gemini_manual_button.setFixedSize(22, 22)
+        self.gemini_manual_button.setFixedSize(28, 28)
         self.gemini_manual_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.gemini_manual_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.gemini_manual_button.setToolTip("Gemini API 키 발급 방법 보기")
+        self.gemini_manual_button.setAccessibleName("Gemini API 키 발급 도움말")
         self.gemini_manual_button.setStyleSheet(
             "QPushButton#geminiManualButton {"
-            " min-width: 22px; max-width: 22px;"
-            " min-height: 22px; max-height: 22px;"
-            " padding: 0; border-radius: 11px;"
+            " min-width: 28px; max-width: 28px;"
+            " min-height: 28px; max-height: 28px;"
+            " padding: 0; border-radius: 14px;"
             " border: 1px solid #aec4d7; background: #eef3f7;"
             " color: #17324b; font-weight: 700; }"
             "QPushButton#geminiManualButton:hover {"
@@ -1375,9 +1615,15 @@ class AiChatPanel(QFrame):
             # 저장된 키가 있으면 열자마자 한 번 실제 모델 목록으로
             # 바꿔 둔다. "갱신" 단추를 눌러야만 진짜 목록이 보이는 것은
             # 있는 줄도 모르면 그냥 별칭만 쓰게 되는 구조라 좋지 않다.
-            # 창이 뜨는 도중에 부르면 첫 그리기가 API 응답을 기다리며
-            # 멈추므로, 한 틱 늦춰 화면이 보인 뒤에 부른다.
-            QTimer.singleShot(0, self._reload_models)
+            # 생성만 된 숨은 패널까지 조회하면 앱 시작 때 같은 요청이
+            # 중복되고, 창을 닫을 때 보이지 않던 QThread가 남을 수 있다.
+            # 실제로 화면에 들어온 첫 순간까지 미뤄 한 번만 요청한다.
+            self._model_catalog_reload_pending = True
+            if self.isVisible():
+                self._model_catalog_reload_pending = False
+                QTimer.singleShot(0, self._reload_models)
+        else:
+            self._model_catalog_reload_pending = False
 
     def _save_active_provider_state(self) -> None:
         if not self._active_provider_name:
@@ -1415,17 +1661,9 @@ class AiChatPanel(QFrame):
 
     def _auto_check_cli(self) -> None:
         """켤 때 CLI 상태를 한 번 확인한다(설치는 하지 않는다)."""
-        if self._auto_check_thread is not None or self._connection_thread is not None:
+        if self._connection_thread is not None:
             return
-        worker = AiCliCheckWorker(tuple(CLI_SPECS.values()))
-        thread = QThread(self)
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
-        worker.checked.connect(self._auto_check_result)
-        worker.finished.connect(self._auto_check_finished)
-        self._auto_check_worker = worker
-        self._auto_check_thread = thread
-        thread.start()
+        self._cli_status_coordinator.request()
 
     def _auto_check_result(
         self, label: str, version: str, logged_in: object, detail: str
@@ -1450,16 +1688,6 @@ class AiChatPanel(QFrame):
         spec = self._connection_spec()
         if spec is not None and spec.label == label:
             self._set_cli_status(status_text, state, tooltip)
-
-    def _auto_check_finished(self) -> None:
-        if self._auto_check_thread is not None:
-            self._auto_check_thread.quit()
-            self._auto_check_thread.wait()
-            self._auto_check_thread.deleteLater()
-        if self._auto_check_worker is not None:
-            self._auto_check_worker.deleteLater()
-        self._auto_check_thread = None
-        self._auto_check_worker = None
 
     def _connect_ai(self) -> None:
         if self._connection_thread is not None:
@@ -1862,21 +2090,31 @@ class AiChatPanel(QFrame):
             return
         self._set_api_status("모델을 확인하는 중…")
         self.refresh_button.setEnabled(False)
-        try:
-            provider = provider_class(self.key_input.text())
-            provider.validate_api_key()
-            models = provider.fetch_models()
-        except LlmError as error:
-            self._validated_api_key = ""
-            self._refresh_api_settings_button()
-            self._set_api_status(str(error))
+        self._model_catalog_request_key = self._model_catalog.request(
+            provider_class, self.key_input.text().strip()
+        )
+
+    def _model_catalog_resolved(
+        self, request_key: str, models: object
+    ) -> None:
+        if request_key != self._model_catalog_request_key:
             return
-        finally:
-            self.refresh_button.setEnabled(True)
+        self._model_catalog_request_key = ""
+        self.refresh_button.setEnabled(True)
         self._validated_api_key = self.key_input.text().strip()
         self._refresh_api_settings_button()
-        self._fill_models(models)
-        self._set_api_status(f"모델 {len(models)}개를 확인했습니다.")
+        normalized = tuple(models) if isinstance(models, (list, tuple)) else ()
+        self._fill_models(normalized)
+        self._set_api_status(f"모델 {len(normalized)}개를 확인했습니다.")
+
+    def _model_catalog_failed(self, request_key: str, message: str) -> None:
+        if request_key != self._model_catalog_request_key:
+            return
+        self._model_catalog_request_key = ""
+        self.refresh_button.setEnabled(True)
+        self._validated_api_key = ""
+        self._refresh_api_settings_button()
+        self._set_api_status(message)
 
     def _open_key_page(self) -> None:
         provider_class = self._provider_class()
@@ -2079,12 +2317,11 @@ class AiChatPanel(QFrame):
         # 글꼴의 점 문자는 첫 페인트 때 잘리는 환경이 있어 직접 그린다.
         menu_button = HistoryMenuButton()
         menu_button.setObjectName("aiChatHistoryMenu")
-        menu_button.setFixedSize(18, 18)
+        menu_button.setFixedSize(24, 24)
         menu_button.setSizePolicy(
             QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
         )
         menu_button.setAccessibleName("채팅 메뉴")
-        menu_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         menu_button.setCursor(Qt.CursorShape.PointingHandCursor)
         menu_button.setToolTip("이름 바꾸기·삭제·고정")
         menu_button.clicked.connect(
@@ -3989,11 +4226,10 @@ class AiChatPanel(QFrame):
                 thread.quit()
                 thread.wait(3000)
         if self._connection_thread is not None:
+            if self._connection_worker is not None:
+                self._connection_worker.stop()
             self._connection_thread.quit()
-            self._connection_thread.wait(3000)
-        if self._auto_check_thread is not None:
-            self._auto_check_thread.quit()
-            self._auto_check_thread.wait(3000)
+            self._connection_thread.wait(5000)
         self._persist_current_chat()
         self._save_active_provider_state()
         for state in self._provider_chat_states.values():

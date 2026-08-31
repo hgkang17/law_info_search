@@ -14,7 +14,12 @@ import pytest
 
 from llm.base import LlmError, Progress
 from llm.gemini import GeminiChat, GeminiProvider
-from llm.gemini_rest import function_declarations
+from llm.gemini_rest import (
+    CONNECT_TIMEOUT,
+    MODEL_READ_TIMEOUT,
+    GeminiRestClient,
+    function_declarations,
+)
 
 
 def search_law(query: str, category: str = "law", search_scope: int = 1) -> str:
@@ -58,8 +63,73 @@ class FakeClient:
         self.closed = True
 
 
+class FakeModelClient:
+    """모델 목록 조회 횟수와 닫힘을 기록한다."""
+
+    def __init__(self, models: list[dict]) -> None:
+        self.models = models
+        self.calls = 0
+        self.closed = False
+
+    def list_models(self) -> list[dict]:
+        self.calls += 1
+        return self.models
+
+    def close(self) -> None:
+        self.closed = True
+
+
 def _chat(client: FakeClient, tools=(search_law,)) -> GeminiChat:
     return GeminiChat(client, "gemini-flash-latest", "지시문", tools)
+
+
+def test_validated_model_catalog_uses_one_request(monkeypatch) -> None:
+    """키 확인과 모델 갱신이 같은 원격 목록을 두 번 받아서는 안 된다."""
+    model_id = GeminiProvider.fallback_models[0].model_id
+    client = FakeModelClient(
+        [
+            {
+                "name": f"models/{model_id}",
+                "displayName": "사용 가능 모델",
+                "supportedGenerationMethods": ["generateContent"],
+                "inputTokenLimit": 1_000_000,
+            }
+        ]
+    )
+    provider = GeminiProvider("saved-key")
+    monkeypatch.setattr(provider, "_client", lambda: client)
+
+    models = provider.fetch_validated_models()
+
+    assert [model.model_id for model in models] == [model_id]
+    assert client.calls == 1
+    assert client.closed is True
+
+
+def test_model_catalog_uses_the_short_read_timeout(monkeypatch) -> None:
+    client = GeminiRestClient("test-key")
+    calls: list[tuple[str, str, dict]] = []
+
+    def fake_request(method: str, path: str, **kwargs) -> dict:
+        calls.append((method, path, kwargs))
+        return {"models": []}
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    try:
+        assert client.list_models() == []
+    finally:
+        client.close()
+
+    assert calls == [
+        (
+            "GET",
+            "/models",
+            {
+                "params": {"pageSize": 200},
+                "timeout": (CONNECT_TIMEOUT, MODEL_READ_TIMEOUT),
+            },
+        )
+    ]
 
 
 # ------------------------------------------------------------------ 함수 선언

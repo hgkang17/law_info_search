@@ -368,7 +368,7 @@ class AiLawSearchTab(QWidget):
             "3단비교", self.detail_view.viewport()
         )
         self.three_stage_button.setObjectName("threeStageArticleButton")
-        self.three_stage_button.setFixedSize(52, 18)
+        self.three_stage_button.setFixedSize(56, 24)
         self.three_stage_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.three_stage_button.setToolTip(
             "이 조문의 법률·시행령·시행규칙을 3단으로 비교합니다."

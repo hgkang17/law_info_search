@@ -223,5 +223,5 @@ def test_three_stage_button_is_embedded_above_keyword_article(tmp_path) -> None:
     cursor = QTextCursor(tab.detail_view.document())
     cursor.setPosition(tab._three_stage_position)
     assert cursor.blockFormat().topMargin() == 32.0
-    assert tab.three_stage_button.size().width() == 52
-    assert tab.three_stage_button.size().height() == 18
+    assert tab.three_stage_button.size().width() == 56
+    assert tab.three_stage_button.size().height() == 24

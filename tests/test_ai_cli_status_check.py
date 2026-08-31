@@ -28,12 +28,15 @@ class _Collector:
 
 
 def _run_worker(monkeypatch, version, login) -> list[tuple]:
-    monkeypatch.setattr(ai_chat_panel, "cli_version", lambda spec: version)
-    monkeypatch.setattr(ai_chat_panel, "cli_login_status", lambda spec: login)
+    monkeypatch.setattr(
+        ai_chat_panel, "cli_version", lambda spec, cancelled=None: version
+    )
+    monkeypatch.setattr(
+        ai_chat_panel, "cli_login_status", lambda spec, cancelled=None: login
+    )
     worker = AiCliCheckWorker((CLAUDE_CLI,))
     checked = _Collector()
-    object.__setattr__(worker, "checked", checked)
-    object.__setattr__(worker, "finished", _Collector())
+    worker.checked.connect(checked.emit)
     worker.run()
     return checked.results
 
@@ -50,15 +53,16 @@ def test_check_worker_reports_installed_cli(monkeypatch) -> None:
 def test_check_worker_reports_missing_cli(monkeypatch) -> None:
     """안 깔려 있으면 빈 버전으로 알리고 로그인 확인은 건너뛴다."""
 
-    def fail(spec):  # pragma: no cover - 불려서는 안 된다
+    def fail(spec, cancelled=None):  # pragma: no cover - 불려서는 안 된다
         raise AssertionError("버전이 없으면 로그인을 확인하지 않는다")
 
-    monkeypatch.setattr(ai_chat_panel, "cli_version", lambda spec: None)
+    monkeypatch.setattr(
+        ai_chat_panel, "cli_version", lambda spec, cancelled=None: None
+    )
     monkeypatch.setattr(ai_chat_panel, "cli_login_status", fail)
     worker = AiCliCheckWorker((CLAUDE_CLI,))
     checked = _Collector()
-    object.__setattr__(worker, "checked", checked)
-    object.__setattr__(worker, "finished", _Collector())
+    worker.checked.connect(checked.emit)
     worker.run()
 
     assert checked.results == [(CLAUDE_CLI.label, "", False, "")]

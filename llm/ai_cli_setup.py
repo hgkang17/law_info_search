@@ -9,10 +9,16 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from .desktop_mcp import clean_child_environment, cli_argv, no_window_creation_flags
+from .desktop_mcp import (
+    clean_child_environment,
+    cli_argv,
+    no_window_creation_flags,
+    stop_process_tree,
+)
 
 
 @dataclass(frozen=True)
@@ -45,20 +51,72 @@ class AiCliSetupError(RuntimeError):
     """AI CLI 확인 또는 설치 실패를 사용자 문구로 전달한다."""
 
 
+class AiCliCancelled(RuntimeError):
+    """창 종료나 사용자 취소로 CLI 작업을 중단했다."""
+
+
 def _run_cli(
-    command: str, *args: str, timeout: int
+    command: str,
+    *args: str,
+    timeout: int,
+    cancelled: Callable[[], bool] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        cli_argv(command) + list(args),
-        capture_output=True,
+    command_line = cli_argv(command) + list(args)
+    if cancelled is None:
+        return subprocess.run(
+            command_line,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=clean_child_environment(),
+            creationflags=no_window_creation_flags(),
+            timeout=timeout,
+            check=False,
+        )
+
+    process = subprocess.Popen(
+        command_line,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
         encoding="utf-8",
         errors="replace",
         env=clean_child_environment(),
         creationflags=no_window_creation_flags(),
-        timeout=timeout,
-        check=False,
     )
+    deadline = time.monotonic() + timeout
+    while True:
+        if cancelled():
+            stop_process_tree(process)
+            process.communicate()
+            raise AiCliCancelled()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            stop_process_tree(process)
+            process.communicate()
+            raise subprocess.TimeoutExpired(command_line, timeout)
+        try:
+            stdout, stderr = process.communicate(timeout=min(0.2, remaining))
+        except subprocess.TimeoutExpired:
+            continue
+        return subprocess.CompletedProcess(
+            command_line,
+            int(process.returncode or 0),
+            stdout,
+            stderr,
+        )
+
+
+def _run_cli_checked(
+    command: str,
+    *args: str,
+    timeout: int,
+    cancelled: Callable[[], bool] | None,
+) -> subprocess.CompletedProcess[str]:
+    if cancelled is None:
+        return _run_cli(command, *args, timeout=timeout)
+    return _run_cli(command, *args, timeout=timeout, cancelled=cancelled)
 
 
 def _result_text(result: subprocess.CompletedProcess[str]) -> str:
@@ -74,13 +132,19 @@ def _is_host_bundled_cli(spec: AiCliSpec, resolved: str) -> bool:
     )
 
 
-def cli_version(spec: AiCliSpec) -> str | None:
+def cli_version(
+    spec: AiCliSpec, cancelled: Callable[[], bool] | None = None
+) -> str | None:
     """PATH에서 실행 가능한 지정 CLI 버전을 돌려준다."""
     resolved = shutil.which(spec.command)
     if not resolved or _is_host_bundled_cli(spec, resolved):
         return None
     try:
-        result = _run_cli(spec.command, "--version", timeout=20)
+        result = _run_cli_checked(
+            spec.command, "--version", timeout=20, cancelled=cancelled
+        )
+    except AiCliCancelled:
+        raise
     except (OSError, subprocess.SubprocessError):
         return None
     if result.returncode != 0:
@@ -88,14 +152,19 @@ def cli_version(spec: AiCliSpec) -> str | None:
     return _result_text(result) or "설치됨"
 
 
-def cli_login_status(spec: AiCliSpec) -> tuple[bool | None, str]:
+def cli_login_status(
+    spec: AiCliSpec, cancelled: Callable[[], bool] | None = None
+) -> tuple[bool | None, str]:
     """CLI의 저장된 로그인 상태와 짧은 인증 방법을 돌려준다."""
     try:
-        result = _run_cli(
+        result = _run_cli_checked(
             spec.command,
             *spec.login_status_args,
             timeout=20,
+            cancelled=cancelled,
         )
+    except AiCliCancelled:
+        raise
     except (OSError, subprocess.SubprocessError) as error:
         return None, str(error)
 
@@ -153,29 +222,39 @@ def launch_cli_login(spec: AiCliSpec) -> None:
         ) from error
 
 
-def npm_available() -> bool:
+def npm_available(cancelled: Callable[[], bool] | None = None) -> bool:
     """npm이 PATH에서 실제로 실행되는지 확인한다."""
     if not shutil.which("npm"):
         return False
     try:
-        return _run_cli("npm", "--version", timeout=20).returncode == 0
+        return (
+            _run_cli_checked(
+                "npm", "--version", timeout=20, cancelled=cancelled
+            ).returncode
+            == 0
+        )
+    except AiCliCancelled:
+        raise
     except (OSError, subprocess.SubprocessError):
         return False
 
 
-def install_cli(spec: AiCliSpec) -> str:
+def install_cli(
+    spec: AiCliSpec, cancelled: Callable[[], bool] | None = None
+) -> str:
     """npm 전역 설치를 실행하고 설치된 CLI 버전을 확인한다."""
-    if not npm_available():
+    if not npm_available(cancelled):
         raise AiCliSetupError(
             "npm을 찾지 못했습니다. 먼저 Node.js를 설치한 뒤 다시 눌러 주세요."
         )
     try:
-        result = _run_cli(
+        result = _run_cli_checked(
             "npm",
             "install",
             "-g",
             spec.npm_package,
             timeout=600,
+            cancelled=cancelled,
         )
     except subprocess.TimeoutExpired as error:
         raise AiCliSetupError(
@@ -194,7 +273,7 @@ def install_cli(spec: AiCliSpec) -> str:
             + (f"\n{detail}" if detail else "")
         )
 
-    version = cli_version(spec)
+    version = cli_version(spec, cancelled)
     if version is None:
         raise AiCliSetupError(
             f"npm 설치는 끝났지만 {spec.command} 명령을 찾지 못했습니다. "
@@ -206,6 +285,7 @@ def install_cli(spec: AiCliSpec) -> str:
 def ensure_cli(
     spec: AiCliSpec,
     progress: Callable[[str], None] | None = None,
+    cancelled: Callable[[], bool] | None = None,
 ) -> tuple[str, bool]:
     """지정 CLI를 확인하고 없으면 npm으로 설치한다.
 
@@ -213,16 +293,18 @@ def ensure_cli(
     """
     if progress:
         progress(f"{spec.label} 설치 여부를 확인하는 중…")
-    version = cli_version(spec)
+    if cancelled is not None and cancelled():
+        raise AiCliCancelled()
+    version = cli_version(spec, cancelled)
     if version is not None:
         return version, False
 
-    if not npm_available():
+    if not npm_available(cancelled):
         raise AiCliSetupError(
             f"{spec.label}와 npm을 찾지 못했습니다. "
             "먼저 Node.js를 설치한 뒤 다시 눌러 주세요."
         )
     if progress:
         progress(f"{spec.label}가 없어 npm으로 설치하는 중…")
-    return install_cli(spec), True
+    return install_cli(spec, cancelled), True
 

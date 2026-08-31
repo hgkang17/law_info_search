@@ -12,6 +12,7 @@ from PySide6.QtGui import QColor, QDesktopServices, QFont, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QComboBox,
     QDialog,
     QFrame,
     QHBoxLayout,
@@ -49,13 +50,14 @@ from ui.assets import (
     SPIN_DOWN_ICON_PATH,
     SPIN_UP_ICON_PATH,
 )
-from ui.tabs.ai_chat_panel import AiChatPanel
+from ui.tabs.ai_chat_panel import AiChatPanel, shutdown_ai_background_services
 from ui.tabs.ai_search import AiLawSearchTab
 from ui.tabs.law_search import LawSearchTab
 from ui.tabs.resource_search import ResourceSearchTab
 from ui.tabs.viewed_laws import ViewedLawsTab
 from ui.theme import (
     apply_dark_title_bar,
+    apply_workbench_color_tokens,
     register_bundled_pretendard_fonts,
 )
 from ui.widgets import (
@@ -87,6 +89,8 @@ from workers.update_worker import UpdateCheckWorker, UpdateDownloadWorker
 
 
 class LawSearchWindow(QMainWindow):
+    COMPACT_NAVIGATION_WIDTH = 1100
+
     def __init__(self) -> None:
         super().__init__()
         register_bundled_pretendard_fonts()
@@ -114,7 +118,8 @@ class LawSearchWindow(QMainWindow):
         self.setWindowTitle("국가법령정보 통합검색")
         self.setWindowIcon(QIcon(str(LOGO_PATH)))
         self.resize(1440, 860)
-        self.setMinimumSize(1040, 680)
+        self.setMinimumSize(900, 640)
+        self._reading_chrome_expanded = False
         # 스타일시트를 창을 다 만든 뒤에 걸면 Qt가 완성된 위젯 나무 전체를
         # 2천 줄짜리 규칙과 다시 맞춰 본다(창 하나에 66ms). 먼저 걸어 두면
         # 위젯이 만들어질 때 제 몫만 맞춘다. 규칙을 읽는 비용 자체는
@@ -204,10 +209,54 @@ class LawSearchWindow(QMainWindow):
 
     def apply_reading_mode_chrome(self, expanded: bool) -> None:
         """크게 보기에서도 열린 본문 띠는 남기고 왼쪽 메뉴만 접는다."""
+        self._reading_chrome_expanded = expanded
         if hasattr(self, "header_card"):
             self.header_card.setVisible(True)
-        if hasattr(self, "navigation_card"):
-            self.navigation_card.setVisible(not expanded)
+        self._update_adaptive_navigation()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._update_adaptive_navigation()
+
+    def _update_adaptive_navigation(self) -> None:
+        """좁은 Windows 창에서는 왼쪽 메뉴를 헤더 선택기로 바꾼다."""
+        if not hasattr(self, "navigation_card") or not hasattr(
+            self, "compact_navigation"
+        ):
+            return
+        compact = self.width() < self.COMPACT_NAVIGATION_WIDTH
+        expanded = self._reading_chrome_expanded
+        self.navigation_card.setVisible(not compact and not expanded)
+        self.compact_navigation.setVisible(compact and not expanded)
+
+    def _compact_navigation_changed(self, index: int) -> None:
+        target = self.compact_navigation.itemData(index)
+        if target == "favorites":
+            self._activate_favorites_page()
+        elif target == "ai":
+            self._activate_ai_review_page()
+        elif target == "viewed":
+            self._activate_viewed_laws_page()
+        elif isinstance(target, int):
+            self.navigation.setCurrentRow(target)
+
+    def _sync_compact_navigation(self, *_args: object) -> None:
+        if not hasattr(self, "compact_navigation"):
+            return
+        if self.favorite_navigation_button.isChecked():
+            target: object = "favorites"
+        elif self.ai_review_button.isChecked():
+            target = "ai"
+        elif self.viewed_laws_button.isChecked():
+            target = "viewed"
+        else:
+            target = self.navigation.currentRow()
+        index = self.compact_navigation.findData(target)
+        if index < 0:
+            return
+        previous = self.compact_navigation.blockSignals(True)
+        self.compact_navigation.setCurrentIndex(index)
+        self.compact_navigation.blockSignals(previous)
 
     def _open_api_manual(self, *_args: object) -> None:
         """인증키 발급 안내를 기본 웹 브라우저로 연다."""
@@ -329,6 +378,30 @@ class LawSearchWindow(QMainWindow):
         self.open_documents_empty.setObjectName("openDocumentsEmpty")
         self.open_documents_layout.addWidget(self.open_documents_empty, 1)
         header_layout.addWidget(logo_label)
+
+        self.compact_navigation = QComboBox()
+        self.compact_navigation.setObjectName("compactNavigation")
+        self.compact_navigation.setAccessibleName("화면 선택")
+        self.compact_navigation.setToolTip(
+            "좁은 창에서 즐겨찾기·법령검색·AI·저장내역 화면을 전환합니다."
+        )
+        for label, target in (
+            ("즐겨찾기", "favorites"),
+            ("법령 검색", 1),
+            ("중앙부처 질의회신", 2),
+            ("법령 해석례", 3),
+            ("판례 검색", 4),
+            ("AI 에이전트", "ai"),
+            ("저장 내역", "viewed"),
+        ):
+            self.compact_navigation.addItem(label, target)
+        self.compact_navigation.setMinimumWidth(142)
+        self.compact_navigation.setMaximumWidth(184)
+        self.compact_navigation.activated.connect(
+            self._compact_navigation_changed
+        )
+        self.compact_navigation.hide()
+        header_layout.addWidget(self.compact_navigation)
         header_layout.addWidget(self.open_documents_widget, 1)
 
         self.oc_api_dialog = QDialog(self)
@@ -368,9 +441,9 @@ class LawSearchWindow(QMainWindow):
         self.save_api_checkbox.toggled.connect(self._api_save_toggled)
         self.api_manual_button = QPushButton("?")
         self.api_manual_button.setObjectName("ocApiManualButton")
-        self.api_manual_button.setFixedSize(22, 22)
+        self.api_manual_button.setFixedSize(28, 28)
         self.api_manual_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.api_manual_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.api_manual_button.setAccessibleName("법제처 API 인증키 발급 안내")
         self.api_manual_button.setToolTip("법제처 API 인증키 발급 방법 보기")
         self.api_manual_button.clicked.connect(self._open_api_manual)
 
@@ -553,7 +626,6 @@ class LawSearchWindow(QMainWindow):
         self.navigation.setVerticalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
-        self.navigation.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         # 두 메뉴 묶음 사이와 목록 위·아래에 같은 여백을 분배한다.
         self.navigation.setSpacing(4)
         self.navigation.addItems(
@@ -617,7 +689,6 @@ class LawSearchWindow(QMainWindow):
         self.about_button.setObjectName("aboutLinkButton")
         self.about_button.setFlat(True)
         self.about_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.about_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.about_button.setToolTip(
             "버전ㆍ자료 출처ㆍ사용한 오픈소스 라이선스를 확인합니다."
         )
@@ -627,7 +698,6 @@ class LawSearchWindow(QMainWindow):
         self.update_button.setObjectName("updateLinkButton")
         self.update_button.setFlat(True)
         self.update_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.update_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.update_button.setToolTip(
             f"현재 버전 {APP_VERSION} · GitHub Releases에서 최신 버전을 확인합니다."
         )
@@ -643,6 +713,9 @@ class LawSearchWindow(QMainWindow):
 
         self._bind_open_document_tracking()
         self._refresh_open_documents()
+        self.tabs.currentChanged.connect(self._sync_compact_navigation)
+        self._sync_compact_navigation()
+        self._update_adaptive_navigation()
 
     def _bind_open_document_tracking(self) -> None:
         """각 검색 화면의 본문 변화가 전역 본문 표시줄에 반영되게 한다."""
@@ -1275,6 +1348,7 @@ class LawSearchWindow(QMainWindow):
         self.viewed_laws_button.setChecked(False)
         self.ai_review_button.setChecked(False)
         self.tabs.setCurrentIndex(row)
+        self._sync_compact_navigation()
 
     def _activate_ai_review_page(self, *_args: object) -> None:
         self._reset_reading_modes_for_page_change()
@@ -1286,6 +1360,7 @@ class LawSearchWindow(QMainWindow):
         self.viewed_laws_button.setChecked(False)
         self.ai_review_button.setChecked(True)
         self.tabs.setCurrentIndex(6)
+        self._sync_compact_navigation()
 
     def closeEvent(self, event) -> None:
         # 답을 받는 도중 창을 닫으면 스레드가 남아 프로그램이 끝나지 않는다.
@@ -1302,6 +1377,7 @@ class LawSearchWindow(QMainWindow):
         self.prec_tab.shutdown()
         self.ai_related_tab.shutdown()
         self.ai_search_tab.shutdown()
+        shutdown_ai_background_services()
         super().closeEvent(event)
 
     def _activate_favorites_page(self, *_args: object) -> None:
@@ -1314,6 +1390,7 @@ class LawSearchWindow(QMainWindow):
         self.viewed_laws_button.setChecked(False)
         self.ai_review_button.setChecked(False)
         self.tabs.setCurrentIndex(0)
+        self._sync_compact_navigation()
 
     def _activate_viewed_laws_page(self, *_args: object) -> None:
         self._reset_reading_modes_for_page_change()
@@ -1325,6 +1402,7 @@ class LawSearchWindow(QMainWindow):
         self.viewed_laws_button.setChecked(True)
         self.ai_review_button.setChecked(False)
         self.tabs.setCurrentIndex(5)
+        self._sync_compact_navigation()
 
     def _search_favorite_in_resource_list(
         self, target: str, name: str
@@ -2001,13 +2079,13 @@ class LawSearchWindow(QMainWindow):
                    폴리시할 때 그 값을 위젯 최소 높이로 밀어 넣어
                    setFixedSize(18,18)를 무력화하고, 그 바람에 목록 한 줄이
                    48px까지 부풀었다. 여기서 같은 값으로 못박는다. */
-                min-width: 18px;
-                max-width: 18px;
-                min-height: 18px;
-                max-height: 18px;
+                min-width: 24px;
+                max-width: 24px;
+                min-height: 24px;
+                max-height: 24px;
                 background: transparent;
                 border: none;
-                border-radius: 9px;
+                border-radius: 12px;
                 padding: 0px;
                 color: #8c96a3;
             }
@@ -2714,13 +2792,13 @@ class LawSearchWindow(QMainWindow):
             QPushButton#referenceChipClose {
                 /* 전역 QPushButton의 min-height:38px를 덮어써야
                    칩 안에서 정상 크기로 놓인다. */
-                min-width: 18px;
-                max-width: 18px;
-                min-height: 18px;
-                max-height: 18px;
+                min-width: 24px;
+                max-width: 24px;
+                min-height: 24px;
+                max-height: 24px;
                 background: transparent;
                 border: none;
-                border-radius: 9px;
+                border-radius: 12px;
                 color: #94a3b5;
                 font-family: "Malgun Gothic";
                 font-size: 11pt;
@@ -2848,8 +2926,10 @@ class LawSearchWindow(QMainWindow):
                 background: transparent;
             }
             QPushButton#bannerDismissButton {
-                min-height: 20px;
-                max-height: 20px;
+                min-width: 24px;
+                max-width: 24px;
+                min-height: 24px;
+                max-height: 24px;
                 background: transparent;
                 color: #8a94a3;
                 border: 1px solid transparent;
@@ -3190,8 +3270,8 @@ class LawSearchWindow(QMainWindow):
                 border-color: #b9d3ea;
             }
             QPushButton#threeStageArticleButton {
-                min-height: 18px;
-                max-height: 18px;
+                min-height: 24px;
+                max-height: 24px;
                 background: #e8f1fb;
                 color: #1768aa;
                 border: 1px solid #9fc2df;
@@ -3296,12 +3376,12 @@ class LawSearchWindow(QMainWindow):
 
             /* 2026 legal-workbench visual system ------------------------- */
             QMainWindow, QWidget {
-                background: #f1f5f7;
-                color: #172b3a;
+                background: __WB_CANVAS__;
+                color: __WB_INK__;
                 font-family: "Malgun Gothic";
             }
             QFrame#headerCard {
-                background: #15324b;
+                background: __WB_NAVY__;
                 border: 1px solid #234963;
                 border-radius: 6px;
             }
@@ -3310,12 +3390,12 @@ class LawSearchWindow(QMainWindow):
                 background: transparent;
                 border: none;
                 padding: 0 2px;
-                color: #8fa6b7;
+                color: __WB_MUTED__;
                 font-size: 11px;
                 text-decoration: underline;
             }
             QPushButton#aboutLinkButton:hover, QPushButton#updateLinkButton:hover {
-                color: #d5e4f3;
+                color: __WB_NAVY__;
             }
             QFrame#apiCompact {
                 background: #1d4059;
@@ -3323,7 +3403,7 @@ class LawSearchWindow(QMainWindow):
                 border-radius: 5px;
             }
             QFrame#navigationCard {
-                background: #15324b;
+                background: __WB_NAVY__;
                 border: 1px solid #234963;
                 border-radius: 5px;
             }
@@ -3410,10 +3490,10 @@ class LawSearchWindow(QMainWindow):
                 border-bottom: 1px solid #b9cbd3;
             }
             QStackedWidget#mainPages,
-            QTabWidget::pane { background: #f1f5f7; }
+            QTabWidget::pane { background: __WB_CANVAS__; }
             QFrame#card {
-                background: #ffffff;
-                border: 1px solid #d5dfe5;
+                background: __WB_SURFACE__;
+                border: 1px solid __WB_BORDER__;
                 border-radius: 5px;
             }
             QLineEdit, QComboBox,
@@ -3421,20 +3501,23 @@ class LawSearchWindow(QMainWindow):
             QSpinBox#pdfZoomSpin {
                 border-color: #bfcdd6;
                 border-radius: 4px;
-                selection-background-color: #087e8b;
+                selection-background-color: __WB_ACCENT__;
             }
             QLineEdit:focus, QComboBox:focus,
             QDoubleSpinBox#fontSizeSpin:focus,
             QSpinBox#pdfZoomSpin:focus {
-                border: 2px solid #087e8b;
+                border: 2px solid __WB_ACCENT__;
             }
             QPushButton { border-radius: 4px; }
-            QPushButton:focus { border: 2px solid #4fb7bd; }
-            QPushButton#primaryButton {
-                background: #087e8b;
-                border: 1px solid #087e8b;
+            QPushButton:focus { border: 2px solid __WB_FOCUS__; }
+            QListWidget#mainNavigation:focus {
+                border: 2px solid __WB_FOCUS__;
             }
-            QPushButton#primaryButton:hover { background: #076b76; }
+            QPushButton#primaryButton {
+                background: __WB_ACCENT__;
+                border: 1px solid __WB_ACCENT__;
+            }
+            QPushButton#primaryButton:hover { background: __WB_ACCENT_HOVER__; }
             QPushButton#secondaryButton,
             QPushButton#resourceDetailButton {
                 background: #e5f2f3;
@@ -3482,12 +3565,12 @@ class LawSearchWindow(QMainWindow):
                 font-size: 9pt;
             }
             QPushButton#ocApiManualButton {
-                min-width: 22px;
-                max-width: 22px;
-                min-height: 22px;
-                max-height: 22px;
+                min-width: 28px;
+                max-width: 28px;
+                min-height: 28px;
+                max-height: 28px;
                 padding: 0;
-                border-radius: 11px;
+                border-radius: 14px;
                 border: 1px solid #aec4d7;
                 background: #eef3f7;
                 color: #17324b;
@@ -3566,7 +3649,8 @@ class LawSearchWindow(QMainWindow):
             QProgressBar::chunk { background: #087e8b; }
             """
         self.setStyleSheet(
-            style_sheet.replace("__CHECK_ICON__", CHECK_ICON_PATH.as_posix())
+            apply_workbench_color_tokens(style_sheet)
+            .replace("__CHECK_ICON__", CHECK_ICON_PATH.as_posix())
             .replace("__SPIN_UP_ICON__", SPIN_UP_ICON_PATH.as_posix())
             .replace("__SPIN_DOWN_ICON__", SPIN_DOWN_ICON_PATH.as_posix())
         )

@@ -69,7 +69,7 @@ def test_header_shows_api_settings_button_instead_of_key_box(qt_app) -> None:
         assert header.layout().indexOf(window.api_input) == -1
         assert window.api_input.parent() is window.oc_api_dialog
         assert window.api_manual_button.parent() is window.oc_api_dialog
-        assert window.api_manual_button.width() <= 24
+        assert window.api_manual_button.width() <= 30
         assert header.height() < 80
     finally:
         window.close()
@@ -109,7 +109,8 @@ def test_gemini_dialog_has_a_help_button_next_to_the_issue_button(qt_app, tmp_pa
         # 발급 바로 옆이라 키를 받으러 가기 전에 눈에 들어온다.
         assert panel.key_button.x() < button.x() < panel.refresh_button.x()
         # 전역 QPushButton 스타일에 눌려 세로로 늘어나면 안 된다.
-        assert button.height() <= 26
+        assert button.height() <= 30
+        assert button.accessibleName() == "Gemini API 키 발급 도움말"
     finally:
         panel.key_row_widget.close()
         panel.deleteLater()

@@ -360,7 +360,7 @@ def build_dismissible_banner(
 
     close_button = QPushButton("✕")
     close_button.setObjectName("bannerDismissButton")
-    close_button.setFixedSize(20, 20)
+    close_button.setFixedSize(24, 24)
     close_button.setToolTip("이 안내를 닫습니다. 다음 실행에도 숨겨집니다.")
     close_button.setAccessibleName("안내 닫기")
 
@@ -824,7 +824,9 @@ class DeferredWrapTextBrowser(QTextBrowser):
         finally:
             self.setUpdatesEnabled(True)
             self._restoring_wrap = False
-        QTimer.singleShot(0, self._restore_resize_scroll)
+        # 수신 객체를 함께 넘겨, 창을 닫은 뒤 남은 다음 틱 콜백이 파괴된
+        # QTextBrowser를 다시 만지지 않게 한다.
+        QTimer.singleShot(0, self, self._restore_resize_scroll)
         self.viewport().update()
 
     def _restore_resize_scroll(self) -> None:
@@ -2005,20 +2007,23 @@ class ReferenceHistoryChip(QFrame):
         )
         self.close_button = QPushButton("×")
         self.close_button.setObjectName("referenceChipClose")
-        self.close_button.setFixedSize(18, 18)
+        self.close_button.setFixedSize(24, 24)
         self.close_button.setFlat(True)
-        self.close_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.close_button.setAccessibleName(f"{text} 참조 제거")
+        self.close_button.setToolTip(f"{text} 참조 제거")
         self.close_button.setCursor(Qt.CursorShape.ArrowCursor)
         self.close_button.clicked.connect(
             lambda: self.close_requested.emit(self)
         )
         layout.addWidget(self.text_label)
         layout.addWidget(self.close_button)
-        self.setFixedHeight(24)
+        self.setFixedHeight(30)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
     def set_text(self, text: str) -> None:
         self.text_label.setText(text)
+        self.close_button.setAccessibleName(f"{text} 참조 제거")
+        self.close_button.setToolTip(f"{text} 참조 제거")
         self.updateGeometry()
 
     def text(self) -> str:

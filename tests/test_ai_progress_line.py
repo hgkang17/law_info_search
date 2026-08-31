@@ -28,6 +28,7 @@ from llm import (
     ModelInfo,
 )
 from llm.ai_cli_setup import CLAUDE_CLI
+from ui.tabs import ai_chat_panel
 from ui.tabs.ai_chat_panel import (
     AiChatPanel,
     PROVIDER_TAB_LABELS,
@@ -41,6 +42,16 @@ from ui.tabs.ai_chat_panel import (
 @pytest.fixture(scope="module")
 def qt_app():
     return QApplication.instance() or QApplication([])
+
+
+@pytest.fixture(autouse=True)
+def avoid_real_cli_status_processes(monkeypatch) -> None:
+    """화면 배치 테스트가 설치된 CLI를 실제로 실행하지 않게 한다."""
+    monkeypatch.setattr(
+        ai_chat_panel.CliStatusCoordinator,
+        "request",
+        lambda _self: None,
+    )
 
 
 @pytest.fixture
@@ -61,6 +72,45 @@ def panel(qt_app, tmp_path):
 def _stream(panel):
     """화면에 보이는 제공자의 답 상태. 답은 제공자마다 따로 돈다."""
     return panel._streams[panel._active_provider_name]
+
+
+def test_saved_gemini_catalog_waits_until_panel_is_visible(
+    qt_app, tmp_path, monkeypatch
+) -> None:
+    """숨은 AI 패널은 저장된 키만으로 네트워크 스레드를 시작하지 않는다."""
+    settings = QSettings(
+        str(tmp_path / "hidden-panel.ini"), QSettings.Format.IniFormat
+    )
+    settings.setValue("ai/provider", GeminiProvider.name)
+    settings.setValue(f"ai/key/{GeminiProvider.name}", "saved-key")
+    requests: list[tuple[object, str]] = []
+
+    monkeypatch.setattr(
+        ai_chat_panel.ModelCatalogCoordinator,
+        "request",
+        lambda _self, provider_class, api_key: (
+            requests.append((provider_class, api_key)) or "request-key"
+        ),
+    )
+    monkeypatch.setattr(
+        ai_chat_panel.CliStatusCoordinator,
+        "request",
+        lambda _self: None,
+    )
+
+    widget = AiChatPanel(settings=settings, standalone=True)
+    try:
+        assert requests == []
+        assert widget._model_catalog_reload_pending is True
+
+        widget._start_visible_background_checks()
+
+        assert requests == [(GeminiProvider, "saved-key")]
+        assert widget._model_catalog_reload_pending is False
+    finally:
+        widget.shutdown()
+        widget.close()
+        widget.deleteLater()
 
 
 def test_shimmer_moves_only_while_running(qt_app) -> None:
@@ -408,8 +458,9 @@ def test_provider_tabs_have_separate_saved_chat_lists(qt_app, tmp_path) -> None:
         assert menu_button is not None
         assert menu_button.text() == ""
         assert menu_button.accessibleName() == "채팅 메뉴"
-        assert menu_button.size().width() == 18
-        assert menu_button.size().height() == 18
+        assert menu_button.size().width() == 24
+        assert menu_button.size().height() == 24
+        assert menu_button.focusPolicy() != Qt.FocusPolicy.NoFocus
         widget.resize(380, 500)
         widget.show()
         qt_app.processEvents()

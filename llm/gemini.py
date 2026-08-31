@@ -397,6 +397,26 @@ class GeminiProvider(LlmProvider):
             if client is not None:
                 client.close()
 
+    def fetch_validated_models(self) -> tuple[ModelInfo, ...]:
+        """키 검증과 모델 목록 갱신을 같은 API 응답으로 끝낸다."""
+        client = self._client()
+        try:
+            available: set[str] = set()
+            for model in client.list_models():
+                info = self._model_info(model)
+                if info is not None:
+                    available.add(info[1].model_id)
+            selected = tuple(
+                model
+                for model in self.fallback_models
+                if model.model_id in available
+            )
+            return selected or self.fallback_models
+        except GeminiApiError as error:
+            raise LlmError(self._readable(error)) from error
+        finally:
+            client.close()
+
     def validate_api_key(self) -> None:
         """모델 목록 조회로 키를 인증한다. 생성 요청은 소비하지 않는다."""
         client = self._client()

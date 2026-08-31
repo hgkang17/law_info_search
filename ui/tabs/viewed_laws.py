@@ -200,7 +200,7 @@ class ViewedLawsTab(QWidget):
                 category_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 add_folder_button = QPushButton()
                 add_folder_button.setObjectName("favoriteAddFolderButton")
-                add_folder_button.setFixedSize(22, 22)
+                add_folder_button.setFixedSize(28, 28)
                 add_folder_button.setIcon(QIcon(str(FAVORITE_PLUS_ICON_PATH)))
                 add_folder_button.setIconSize(QSize(12, 12))
                 add_folder_button.setCursor(Qt.CursorShape.PointingHandCursor)

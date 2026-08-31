@@ -221,9 +221,9 @@ class ResourceSearchTab(QWidget):
 
     # 조문 제목 왼쪽 별표. 제N조 블록에만 큰 왼쪽 여백을 두면 ①·1. 항호가
     # 조보다 앞에 있는 것처럼 보이므로, 별 크기와 틈만큼만 자리를 낸다.
-    _ARTICLE_FAVORITE_SIZE = 16
+    _ARTICLE_FAVORITE_SIZE = 24
     _ARTICLE_FAVORITE_GAP = 2
-    _ARTICLE_FAVORITE_HEADING_MARGIN = 14.0
+    _ARTICLE_FAVORITE_HEADING_MARGIN = 22.0
 
     def __init__(
         self,
@@ -1634,9 +1634,10 @@ class ResourceSearchTab(QWidget):
         star = QPushButton("☆")
         star.setObjectName("documentTabFavorite")
         star.setFlat(True)
-        star.setFixedSize(14, 14)
+        star.setFixedSize(22, 22)
         star.setCursor(Qt.CursorShape.PointingHandCursor)
-        star.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        star.setAccessibleName("본문 탭 즐겨찾기")
+        star.setToolTip("이 본문을 즐겨찾기에 추가하거나 해제합니다.")
         star.clicked.connect(
             lambda _checked=False, tab_key=key: (
                 self._toggle_document_tab_favorite(tab_key)
@@ -1648,9 +1649,9 @@ class ResourceSearchTab(QWidget):
         close = QPushButton("×")
         close.setObjectName("documentTabClose")
         close.setFlat(True)
-        close.setFixedSize(14, 14)
+        close.setFixedSize(22, 22)
         close.setCursor(Qt.CursorShape.PointingHandCursor)
-        close.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        close.setAccessibleName("본문 탭 닫기")
         close.setToolTip("이 본문 탭을 닫습니다.")
         close.clicked.connect(
             lambda _checked=False, tab_key=key: (
@@ -2043,7 +2044,9 @@ class ResourceSearchTab(QWidget):
             favorite_button.setObjectName("articleFavoriteButton")
             favorite_button.setFixedSize(star_size, star_size)
             favorite_button.setCursor(Qt.CursorShape.PointingHandCursor)
-            favorite_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            favorite_button.setAccessibleName(
+                f"{article['label']} 조문 즐겨찾기"
+            )
             favorite_button.clicked.connect(
                 lambda _checked=False, item=dict(article): (
                     self._toggle_inline_article_favorite(item)
@@ -2055,7 +2058,7 @@ class ResourceSearchTab(QWidget):
             button = QPushButton("3단비교", viewport)
             button.setObjectName("threeStageArticleButton")
             # 글자 크기는 유지하고 버튼 안쪽 여백만 줄인다.
-            button.setFixedSize(52, 18)
+            button.setFixedSize(56, 24)
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.setToolTip(
                 f"{article['label']}의 법률·시행령·시행규칙을 3단으로 비교합니다."

@@ -40,6 +40,46 @@ def test_vscode_bundled_codex_is_not_global_install(monkeypatch) -> None:
     assert setup.cli_version(setup.CODEX_CLI) is None
 
 
+def test_cancelled_cli_check_stops_the_process_tree(monkeypatch) -> None:
+    """창을 닫으면 대기 중인 CLI와 그 자식 프로세스까지 끝낸다."""
+
+    class HangingProcess:
+        pid = 123
+        returncode = None
+
+        @staticmethod
+        def poll():
+            return None
+
+        @staticmethod
+        def communicate(timeout=None):
+            if timeout is not None:
+                raise subprocess.TimeoutExpired(["codex", "--version"], timeout)
+            return "", ""
+
+    process = HangingProcess()
+    stopped: list[object] = []
+    checks = 0
+
+    def cancelled() -> bool:
+        nonlocal checks
+        checks += 1
+        return checks > 1
+
+    monkeypatch.setattr(setup, "cli_argv", lambda command: [command])
+    monkeypatch.setattr(setup.subprocess, "Popen", lambda *_args, **_kwargs: process)
+    monkeypatch.setattr(
+        setup, "stop_process_tree", lambda running: stopped.append(running)
+    )
+
+    with pytest.raises(setup.AiCliCancelled):
+        setup._run_cli(
+            "codex", "--version", timeout=20, cancelled=cancelled
+        )
+
+    assert stopped == [process]
+
+
 def test_claude_login_status_reads_json(monkeypatch) -> None:
     monkeypatch.setattr(
         setup,
