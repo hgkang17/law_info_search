@@ -35,6 +35,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
+    QDoubleSpinBox,
     QFrame,
     QHBoxLayout,
     QHeaderView,
@@ -398,6 +399,58 @@ def build_count_badge(text: str = "0건") -> QLabel:
     badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
     badge.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
     return badge
+
+
+DETAIL_FONT_SIZE_MIN = 7.0
+DETAIL_FONT_SIZE_MAX = 18.0
+DETAIL_FONT_SIZE_STEP = 0.5
+DETAIL_FONT_LABEL_WIDTH = 24
+DETAIL_FONT_CONTROL_WIDTH = 80
+
+
+def clamp_detail_font_size(value: float) -> float:
+    """저장값을 공용 본문 글자 크기 범위 안으로 제한한다."""
+    return max(DETAIL_FONT_SIZE_MIN, min(DETAIL_FONT_SIZE_MAX, float(value)))
+
+
+def normalize_detail_font_size(value: float) -> float:
+    """본문 글자 크기를 공용 증감 단위에 맞춘 뒤 범위 안으로 제한한다."""
+    snapped = round(float(value) / DETAIL_FONT_SIZE_STEP) * DETAIL_FONT_SIZE_STEP
+    return clamp_detail_font_size(snapped)
+
+
+@dataclass(frozen=True, slots=True)
+class DetailHeaderControls:
+    """본문 머리글에서 함께 쓰는 제목과 글자 크기 조절 묶음."""
+
+    title: DoubleClickLabel
+    font_label: QLabel
+    font_spin: QDoubleSpinBox
+
+
+def build_detail_header_controls(font_size: float) -> DetailHeaderControls:
+    """검색 화면마다 같은 규격으로 쓰는 본문 머리글 조절부를 만든다."""
+    title = DoubleClickLabel("본문")
+    title.setObjectName("detailSectionTitle")
+    title.setToolTip("더블클릭하면 본문 크게 보기로 전환합니다.")
+
+    font_label = QLabel("글자")
+    font_label.setObjectName("fontSizeLabel")
+    font_label.setFixedWidth(DETAIL_FONT_LABEL_WIDTH)
+
+    font_spin = QDoubleSpinBox()
+    font_spin.setObjectName("fontSizeSpin")
+    font_spin.setToolTip(
+        "본문 글자 크기 · 위아래 버튼으로 0.5pt씩 조절"
+    )
+    font_spin.setRange(DETAIL_FONT_SIZE_MIN, DETAIL_FONT_SIZE_MAX)
+    font_spin.setDecimals(1)
+    font_spin.setSingleStep(DETAIL_FONT_SIZE_STEP)
+    font_spin.setSuffix("pt")
+    font_spin.setValue(font_size)
+    font_spin.setFixedWidth(DETAIL_FONT_CONTROL_WIDTH)
+
+    return DetailHeaderControls(title, font_label, font_spin)
 
 
 @dataclass(frozen=True, slots=True)

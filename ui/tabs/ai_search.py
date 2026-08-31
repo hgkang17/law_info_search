@@ -19,7 +19,6 @@ from ui.widgets import (
     CenteredCheckDelegate,
     DeferredWrapTextBrowser,
     DetailSearchBar,
-    DoubleClickLabel,
     FavoriteTitleDelegate,
     MemoMarkerBar,
     RecentSearchBar,
@@ -27,8 +26,11 @@ from ui.widgets import (
     SearchHighlightDelegate,
     StableHorizontalTableWidget,
     build_dismissible_banner,
+    build_detail_header_controls,
     build_restore_view_button,
     build_search_result_head,
+    clamp_detail_font_size,
+    normalize_detail_font_size,
     prompt_oc_api_key,
     replace_search_term_backgrounds,
     configure_adaptive_result_rows,
@@ -71,7 +73,7 @@ from utils.parsing import (
 )
 from PySide6.QtCore import QEvent, QRect, QTimer, QUrl, Qt
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QKeySequence, QShortcut, QTextCharFormat, QTextCursor
-from PySide6.QtWidgets import QAbstractItemView, QApplication, QComboBox, QDialog, QDoubleSpinBox, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton, QSizePolicy, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QApplication, QComboBox, QDialog, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton, QSizePolicy, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
 from html import escape
 import re
 from molit_cgm_expc_api import _find_text
@@ -128,7 +130,7 @@ class AiLawSearchTab(QWidget):
             )
         except (TypeError, ValueError):
             value = default
-        return max(7.0, min(18.0, value))
+        return clamp_detail_font_size(value)
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -287,24 +289,11 @@ class AiLawSearchTab(QWidget):
         detail_head = QHBoxLayout()
         detail_head.setContentsMargins(0, 0, 0, 0)
         detail_head.setSpacing(5)
-        detail_title = DoubleClickLabel("본문")
-        detail_title.setObjectName("detailSectionTitle")
-        detail_title.setToolTip("더블클릭하면 본문 크게 보기로 전환합니다.")
+        detail_controls = build_detail_header_controls(self.detail_font_size)
+        detail_title = detail_controls.title
         detail_title.doubleClicked.connect(self._toggle_reading_mode)
-        detail_font_label = QLabel("글자")
-        detail_font_label.setObjectName("fontSizeLabel")
-        detail_font_label.setFixedWidth(24)
-        self.detail_font_spin = QDoubleSpinBox()
-        self.detail_font_spin.setObjectName("fontSizeSpin")
-        self.detail_font_spin.setToolTip(
-            "본문 글자 크기 · 위아래 버튼으로 0.5pt씩 조절"
-        )
-        self.detail_font_spin.setRange(7.0, 18.0)
-        self.detail_font_spin.setDecimals(1)
-        self.detail_font_spin.setSingleStep(0.5)
-        self.detail_font_spin.setSuffix("pt")
-        self.detail_font_spin.setValue(self.detail_font_size)
-        self.detail_font_spin.setFixedWidth(80)
+        detail_font_label = detail_controls.font_label
+        self.detail_font_spin = detail_controls.font_spin
         self.detail_font_spin.valueChanged.connect(self._set_detail_font_size)
 
         palette_toolbar = build_color_palette_toolbar(
@@ -705,7 +694,7 @@ class AiLawSearchTab(QWidget):
         QTimer.singleShot(0, self.memo_marker_bar.refresh_after_layout_change)
 
     def _set_detail_font_size(self, size: float, *, persist: bool = True) -> None:
-        size = max(7.0, min(18.0, round(float(size) * 2) / 2))
+        size = normalize_detail_font_size(size)
         previous_size = self.detail_font_size
         if size != previous_size:
             html = self.detail_view.toHtml()

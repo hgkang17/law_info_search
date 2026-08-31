@@ -21,7 +21,6 @@ from ui.widgets import (
     CenteredCheckDelegate,
     DeferredWrapTextBrowser,
     DetailSearchBar,
-    DoubleClickLabel,
     FavoriteTitleDelegate,
     MemoMarkerBar,
     PairedCategoryBar,
@@ -32,8 +31,11 @@ from ui.widgets import (
     StableHorizontalTableWidget,
     TabStripScrollArea,
     batch_table_updates,
+    build_detail_header_controls,
     build_restore_view_button,
     build_search_result_head,
+    clamp_detail_font_size,
+    normalize_detail_font_size,
     prompt_oc_api_key,
     replace_search_term_backgrounds,
     configure_adaptive_result_rows,
@@ -104,7 +106,7 @@ from utils.three_stage_alignment import (
 )
 from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QTimer, QUrl, QUrlQuery, Qt
 from PySide6.QtGui import QBrush, QColor, QCursor, QDesktopServices, QFont, QKeySequence, QShortcut, QTextCharFormat, QTextCursor, QTextDocument, QTextFormat
-from PySide6.QtWidgets import QAbstractItemView, QApplication, QComboBox, QDialog, QDoubleSpinBox, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMenu, QMessageBox, QProgressBar, QPushButton, QSizePolicy, QSplitter, QStackedWidget, QTabBar, QTableWidget, QTableWidgetItem, QTextEdit, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QApplication, QComboBox, QDialog, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMenu, QMessageBox, QProgressBar, QPushButton, QSizePolicy, QSplitter, QStackedWidget, QTabBar, QTableWidget, QTableWidgetItem, QTextEdit, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 from datetime import datetime
 from html import escape, unescape
 from pathlib import Path
@@ -436,7 +438,7 @@ class ResourceSearchTab(QWidget):
             )
         except (TypeError, ValueError):
             value = default
-        return max(7, min(18, value))
+        return clamp_detail_font_size(value)
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -614,9 +616,8 @@ class ResourceSearchTab(QWidget):
         detail_head = QHBoxLayout()
         detail_head.setContentsMargins(0, 0, 0, 0)
         detail_head.setSpacing(5)
-        detail_title = DoubleClickLabel("본문")
-        detail_title.setObjectName("detailSectionTitle")
-        detail_title.setToolTip("더블클릭하면 본문 크게 보기로 전환합니다.")
+        detail_controls = build_detail_header_controls(self.detail_font_size)
+        detail_title = detail_controls.title
         self.detail_title_label = detail_title
         self.expand_detail_button = QPushButton("크게\n보기")
         self.expand_detail_button.setObjectName("readingModeButton")
@@ -645,21 +646,9 @@ class ResourceSearchTab(QWidget):
         self.color_reset_button = palette_toolbar.color_reset_button
         self.all_color_reset_button = palette_toolbar.all_color_reset_button
         self.memo_button = palette_toolbar.memo_button
-        detail_font_label = QLabel("글자")
-        detail_font_label.setObjectName("fontSizeLabel")
-        detail_font_label.setFixedWidth(24)
+        detail_font_label = detail_controls.font_label
         self.detail_font_label = detail_font_label
-        self.detail_font_spin = QDoubleSpinBox()
-        self.detail_font_spin.setObjectName("fontSizeSpin")
-        self.detail_font_spin.setToolTip(
-            "본문 글자 크기 · 위아래 버튼으로 0.5pt씩 조절"
-        )
-        self.detail_font_spin.setRange(7.0, 18.0)
-        self.detail_font_spin.setDecimals(1)
-        self.detail_font_spin.setSingleStep(0.5)
-        self.detail_font_spin.setSuffix("pt")
-        self.detail_font_spin.setValue(self.detail_font_size)
-        self.detail_font_spin.setFixedWidth(80)
+        self.detail_font_spin = detail_controls.font_spin
         self.restore_view_button = build_restore_view_button(self)
         detail_head.addWidget(self.restore_view_button)
         detail_head.addWidget(detail_title)
@@ -1153,7 +1142,7 @@ class ResourceSearchTab(QWidget):
         return scale_document_font_sizes(html, source_size, target_size)
 
     def _set_detail_font_size(self, size: float, *, persist: bool = True) -> None:
-        size = max(7.0, min(18.0, round(float(size) * 2) / 2))
+        size = normalize_detail_font_size(size)
         previous_size = self.detail_font_size
         if size != previous_size:
             html = self.detail_view.toHtml()
