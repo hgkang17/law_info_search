@@ -6496,7 +6496,14 @@ class ResourceSearchTab(QWidget):
                 payload, self.category_target
             )
 
-        rows.sort(key=lambda row: 0 if self._row_is_saved(row) else 1)
+        saved_keys = self.law_cache.saved_keys_for_rows(rows)
+        rows.sort(
+            key=lambda row: (
+                0
+                if self.law_cache.key_for_row(row) in saved_keys
+                else 1
+            )
+        )
         self.result_rows = rows
         self.result_filter_input.clear()
         self._sort_column = -1
@@ -6517,13 +6524,16 @@ class ResourceSearchTab(QWidget):
             self._replace_detail_content(text="검색 결과가 없습니다.")
 
     def _render_result_rows(self) -> None:
+        saved_keys = self.law_cache.saved_keys_for_rows(self.result_rows)
         self._updating_cache_checks = True
         try:
             with batch_table_updates(self.result_table):
                 self.result_table.setRowCount(len(self.result_rows))
                 for row_index, row in enumerate(self.result_rows):
                     self.result_table.setItem(
-                        row_index, 0, self._cache_item_for_row(row)
+                        row_index,
+                        0,
+                        self._cache_item_for_row(row, saved_keys=saved_keys),
                     )
                     values = (
                         str(row["label"]),
@@ -6820,14 +6830,21 @@ class ResourceSearchTab(QWidget):
         self._request_resource_detail(row, force_api=False)
 
     def _cache_item_for_row(
-        self, row: dict[str, object]
+        self,
+        row: dict[str, object],
+        *,
+        saved_keys: frozenset[str] | None = None,
     ) -> QTableWidgetItem:
         item = QTableWidgetItem()
         item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         # 저장 열은 체크 기능만 담당한다. 행 선택 배경이 빈 셀에 남아
         # 체크박스 오른쪽이 별도 버튼처럼 보이지 않도록 선택 대상에서 뺀다.
         flags = Qt.ItemFlag.ItemIsEnabled
-        cached = self._row_is_saved(row)
+        cached = (
+            self.law_cache.key_for_row(row) in saved_keys
+            if saved_keys is not None
+            else self._row_is_saved(row)
+        )
         flags |= Qt.ItemFlag.ItemIsUserCheckable
         if cached:
             item.setCheckState(Qt.CheckState.Checked)
@@ -6843,13 +6860,16 @@ class ResourceSearchTab(QWidget):
     def _refresh_cache_checkmarks(self) -> None:
         if not hasattr(self, "result_table"):
             return
+        saved_keys = self.law_cache.saved_keys_for_rows(self.result_rows)
         self._updating_cache_checks = True
         try:
             for row_index, row in enumerate(self.result_rows):
                 if row_index >= self.result_table.rowCount():
                     break
                 self.result_table.setItem(
-                    row_index, 0, self._cache_item_for_row(row)
+                    row_index,
+                    0,
+                    self._cache_item_for_row(row, saved_keys=saved_keys),
                 )
         finally:
             self._updating_cache_checks = False

@@ -134,6 +134,31 @@ def test_index_file_is_not_listed_as_a_record(
     assert len(cache.list_records()) == 1
 
 
+def test_saved_keys_for_rows_scans_saved_files_in_bulk(
+    cache: LawDocumentCache,
+) -> None:
+    saved_row = _row("000001", "농지법")
+    missing_row = _row("000002", "건축법")
+    _write(cache, "000001", "농지법")
+
+    saved_keys = cache.saved_keys_for_rows([saved_row, missing_row])
+
+    assert saved_keys == frozenset({cache.key_for_row(saved_row)})
+
+
+def test_saved_keys_for_rows_validates_existing_snapshots(
+    cache: LawDocumentCache,
+) -> None:
+    valid = {"target": "prec", "id": "1", "name": "정상 판례"}
+    broken = {"target": "prec", "id": "2", "name": "손상 판례"}
+    cache.save_snapshot(valid, html="<p>본문</p>", plain_text="본문")
+    cache.path_for_row(broken).write_text("손상된 JSON", encoding="utf-8")
+
+    saved_keys = cache.saved_keys_for_rows([valid, broken])
+
+    assert saved_keys == frozenset({cache.key_for_row(valid)})
+
+
 def test_favorite_entries_keep_the_saved_order(
     cache: LawDocumentCache,
 ) -> None:

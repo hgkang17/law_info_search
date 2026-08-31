@@ -149,6 +149,46 @@ class LawDocumentCache(QObject):
     def path_for_row(self, row: dict[str, object]) -> Path:
         return self.directory / f"{self._cache_key(row)}.json"
 
+    def key_for_row(self, row: dict[str, object]) -> str:
+        """Return the stable filename key used for one result row."""
+        return self._cache_key(row)
+
+    def saved_keys_for_rows(
+        self, rows: list[dict[str, object]]
+    ) -> frozenset[str]:
+        """Return saved row keys after a single directory scan.
+
+        Search result tables can contain hundreds or thousands of rows. Calling
+        ``has`` for every row turns that into the same number of filesystem
+        metadata queries. Scan the small saved-document directory once, then
+        validate only snapshot files that actually exist.
+        """
+        rows_by_key = {
+            self._cache_key(row): row
+            for row in rows
+        }
+        if not rows_by_key:
+            return frozenset()
+        try:
+            existing_keys = {
+                path.stem
+                for path in self.directory.glob("*.json")
+                if path.name != self.LIST_INDEX_NAME
+            }
+        except OSError as exc:
+            self.last_error = str(exc)
+            return frozenset()
+
+        saved: set[str] = set()
+        for key, row in rows_by_key.items():
+            if key not in existing_keys:
+                continue
+            if str(row.get("target") or "law") == "law":
+                saved.add(key)
+            elif self.load_snapshot(row) is not None:
+                saved.add(key)
+        return frozenset(saved)
+
     def has(self, row: dict[str, object]) -> bool:
         return self.path_for_row(row).is_file()
 
