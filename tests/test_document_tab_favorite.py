@@ -351,6 +351,52 @@ def test_inline_favorite_refresh_loads_saved_file_once(
     assert calls["count"] == 1
 
 
+def test_inline_article_formats_are_applied_as_batched_document_edits(
+    tmp_path,
+) -> None:
+    """대형 법령의 링크 서식이 조문마다 문서를 재배치하면 안 된다."""
+    tab = _tab(tmp_path)
+    payload = {
+        "법령": {
+            "기본정보": {
+                "법령명_한글": ROW["name"],
+                "법령ID": ROW["id"],
+            },
+            "조문": {
+                "조문단위": [
+                    {
+                        "조문번호": str(index),
+                        "조문내용": f"제{index}조 대통령령으로 정하는 사항",
+                    }
+                    for index in range(1, 13)
+                ]
+            },
+        }
+    }
+    tab.open_cached_law({"row": dict(ROW), "payload": payload})
+    updated_articles = []
+    for article in tab._current_three_stage_articles:
+        updated = dict(article)
+        updated["subordinate_links"] = [
+            {
+                "text": "대통령령 제1조",
+                "href": "lawref://open?name=시행령&jo=1",
+            }
+        ]
+        updated["comparison_available"] = True
+        updated_articles.append(updated)
+
+    changes = {"count": 0}
+    tab.detail_view.document().contentsChanged.connect(
+        lambda: changes.__setitem__("count", changes["count"] + 1)
+    )
+    tab._set_three_stage_articles(updated_articles)
+
+    # 링크 묶음, 조문 블록 묶음, 문서 오른쪽 여백까지 최대 세 번만 알린다.
+    assert changes["count"] <= 3
+    assert tab.detail_view.document().toHtml().count("lawref://") == 12
+
+
 def test_star_toggles_saved_document(tmp_path) -> None:
     tab = _tab(tmp_path)
     tab.law_cache.save_snapshot(ROW, html="<p>본문</p>", plain_text="본문")

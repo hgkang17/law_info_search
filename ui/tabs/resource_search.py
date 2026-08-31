@@ -2107,6 +2107,10 @@ class ResourceSearchTab(QWidget):
         except (RuntimeError, TypeError):
             connected = False
         heading_margin = self._ARTICLE_FAVORITE_HEADING_MARGIN
+        # setBlockFormat을 조문마다 확정하면 매번 전체 문서 레이아웃을
+        # 다시 계산한다. 한 편집 블록으로 묶어 마지막에 한 번만 배치한다.
+        format_cursor = QTextCursor(document)
+        format_cursor.beginEditBlock()
         try:
             for article in self._current_three_stage_articles:
                 position = self._three_stage_anchor_positions.get(
@@ -2114,9 +2118,8 @@ class ResourceSearchTab(QWidget):
                 )
                 if position is None:
                     continue
-                cursor = QTextCursor(document)
-                cursor.setPosition(position)
-                block_format = cursor.blockFormat()
+                format_cursor.setPosition(position)
+                block_format = format_cursor.blockFormat()
                 changed = False
                 if block_format.topMargin() < 14.0:
                     block_format.setTopMargin(14.0)
@@ -2127,8 +2130,9 @@ class ResourceSearchTab(QWidget):
                     block_format.setLeftMargin(heading_margin)
                     changed = True
                 if changed:
-                    cursor.setBlockFormat(block_format)
+                    format_cursor.setBlockFormat(block_format)
         finally:
+            format_cursor.endEditBlock()
             if connected:
                 document.contentsChanged.connect(
                     self._schedule_three_stage_button_positions
@@ -2359,6 +2363,10 @@ class ResourceSearchTab(QWidget):
         """조문 문장 속 대통령령·소관부처령 표현에 대응 조문 링크를 적용."""
         document = self.detail_view.document()
         plain_text = document.toPlainText()
+        # mergeCharFormat도 호출마다 문서를 재배치하므로 한 편집으로 묶는다.
+        # 링크별 범위는 같은 커서를 옮겨도 그대로 독립적으로 적용된다.
+        format_cursor = QTextCursor(document)
+        format_cursor.beginEditBlock()
         positioned_articles = [
             (self._three_stage_anchor_positions.get(str(article["anchor"])), article)
             for article in self._current_three_stage_articles
@@ -2369,87 +2377,91 @@ class ResourceSearchTab(QWidget):
             if position is not None
         ]
         positioned_articles.sort(key=lambda entry: int(entry[0]))
-        for article_index, (start_value, article) in enumerate(positioned_articles):
-            start = int(start_value)
-            end = (
-                int(positioned_articles[article_index + 1][0])
-                if article_index + 1 < len(positioned_articles)
-                else max(0, document.characterCount() - 1)
-            )
-            if end <= start:
-                continue
-            grouped_links: dict[str, list[dict[str, str]]] = {}
-            for link in article.get("subordinate_links", []):
-                if not isinstance(link, dict):
-                    continue
-                text = str(link.get("text") or "")
-                authority_match = re.match(r"(.+?)\s+제\d+조", text)
-                authority = (
-                    authority_match.group(1).strip()
-                    if authority_match is not None
-                    else ""
+        try:
+            for article_index, (start_value, article) in enumerate(
+                positioned_articles
+            ):
+                start = int(start_value)
+                end = (
+                    int(positioned_articles[article_index + 1][0])
+                    if article_index + 1 < len(positioned_articles)
+                    else max(0, document.characterCount() - 1)
                 )
-                if authority and link.get("href"):
-                    grouped_links.setdefault(authority, []).append(dict(link))
-            article_text = plain_text[start:end]
-            source_index = self._build_inline_source_index(article_text)
-            for authority, links in grouped_links.items():
-                search_term = authority
-                if search_term not in article_text and authority.endswith("부령"):
-                    search_term = "부령"
-                for match in re.finditer(re.escape(search_term), article_text):
-                    hang_code, ho_code = self._inline_law_source_context(
-                        match.start(), *source_index
-                    )
-                    matched_links = self._links_for_inline_source(
-                        links, hang_code, ho_code
-                    )
-                    specific_link = self._specific_ministerial_rule_link(
-                        article, authority, hang_code
-                    )
-                    if specific_link is not None:
-                        matched_links = [specific_link]
-                    href = self._inline_subordinate_href(matched_links)
-                    if not href:
+                if end <= start:
+                    continue
+                grouped_links: dict[str, list[dict[str, str]]] = {}
+                for link in article.get("subordinate_links", []):
+                    if not isinstance(link, dict):
                         continue
-                    # 하단 기록에 "국토계획법 제3조의2제2항 대통령령"처럼
-                    # 어느 조문이 위임한 것인지 남기려고 출처를 함께 싣는다.
-                    href = self._with_delegation_source(
-                        href,
-                        law_name=str(article.get("law_name") or ""),
-                        source_label=self._law_reference_label(
-                            str(article.get("jo") or ""), hang_code, ho_code
-                        ),
-                        authority=authority,
+                    text = str(link.get("text") or "")
+                    authority_match = re.match(r"(.+?)\s+제\d+조", text)
+                    authority = (
+                        authority_match.group(1).strip()
+                        if authority_match is not None
+                        else ""
                     )
-                    cursor = QTextCursor(document)
-                    cursor.setPosition(start + match.start())
-                    cursor.setPosition(
-                        start + match.end(), QTextCursor.MoveMode.KeepAnchor
-                    )
-                    character_format = QTextCharFormat()
-                    character_format.setAnchor(True)
-                    character_format.setAnchorHref(href)
-                    # 아래 「도시개발법」 같은 일반 조문 인용 링크와 같은
-                    # 색·밑줄로 맞춘다(law_reference_html_text가 만드는
-                    # <a style="color:#006dcc; text-decoration:underline;">
-                    # 와 동일).
-                    character_format.setForeground(QColor("#006dcc"))
-                    character_format.setFontUnderline(True)
-                    character_format.setFontWeight(int(QFont.Weight.DemiBold))
-                    target_labels = [
-                        str(link.get("text") or "").strip()
-                        for link in matched_links
-                        if str(link.get("text") or "").strip()
-                    ]
-                    if target_labels:
-                        character_format.setToolTip(
-                            "연결 조문: " + " / ".join(target_labels)
+                    if authority and link.get("href"):
+                        grouped_links.setdefault(authority, []).append(dict(link))
+                article_text = plain_text[start:end]
+                source_index = self._build_inline_source_index(article_text)
+                for authority, links in grouped_links.items():
+                    search_term = authority
+                    if search_term not in article_text and authority.endswith("부령"):
+                        search_term = "부령"
+                    for match in re.finditer(re.escape(search_term), article_text):
+                        hang_code, ho_code = self._inline_law_source_context(
+                            match.start(), *source_index
                         )
-                    character_format.setProperty(
-                        BASE_FOREGROUND_PROPERTY, "#006dcc"
-                    )
-                    cursor.mergeCharFormat(character_format)
+                        matched_links = self._links_for_inline_source(
+                            links, hang_code, ho_code
+                        )
+                        specific_link = self._specific_ministerial_rule_link(
+                            article, authority, hang_code
+                        )
+                        if specific_link is not None:
+                            matched_links = [specific_link]
+                        href = self._inline_subordinate_href(matched_links)
+                        if not href:
+                            continue
+                        # 하단 기록에 "국토계획법 제3조의2제2항 대통령령"처럼
+                        # 어느 조문이 위임했는지 남기려고 출처를 함께 싣는다.
+                        href = self._with_delegation_source(
+                            href,
+                            law_name=str(article.get("law_name") or ""),
+                            source_label=self._law_reference_label(
+                                str(article.get("jo") or ""), hang_code, ho_code
+                            ),
+                            authority=authority,
+                        )
+                        format_cursor.setPosition(start + match.start())
+                        format_cursor.setPosition(
+                            start + match.end(), QTextCursor.MoveMode.KeepAnchor
+                        )
+                        character_format = QTextCharFormat()
+                        character_format.setAnchor(True)
+                        character_format.setAnchorHref(href)
+                        # 아래 「도시개발법」 같은 일반 조문 인용 링크와 같은
+                        # 색·밑줄로 맞춘다(law_reference_html_text가 만드는
+                        # <a style="color:#006dcc; text-decoration:underline;">
+                        # 와 동일).
+                        character_format.setForeground(QColor("#006dcc"))
+                        character_format.setFontUnderline(True)
+                        character_format.setFontWeight(int(QFont.Weight.DemiBold))
+                        target_labels = [
+                            str(link.get("text") or "").strip()
+                            for link in matched_links
+                            if str(link.get("text") or "").strip()
+                        ]
+                        if target_labels:
+                            character_format.setToolTip(
+                                "연결 조문: " + " / ".join(target_labels)
+                            )
+                        character_format.setProperty(
+                            BASE_FOREGROUND_PROPERTY, "#006dcc"
+                        )
+                        format_cursor.mergeCharFormat(character_format)
+        finally:
+            format_cursor.endEditBlock()
 
     def _schedule_three_stage_button_positions(
         self, _value: object = None
