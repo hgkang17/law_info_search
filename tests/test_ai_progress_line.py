@@ -544,6 +544,40 @@ def test_short_chat_does_not_keep_long_chat_scroll_space(qt_app, tmp_path) -> No
         widget.deleteLater()
 
 
+def test_transcript_scroll_ends_at_last_bubble(qt_app, tmp_path) -> None:
+    settings = QSettings(
+        str(tmp_path / "transcript-bottom.ini"), QSettings.Format.IniFormat
+    )
+    widget = AiChatPanel(settings=settings, standalone=True)
+    try:
+        widget.resize(900, 650)
+        widget.show()
+        widget._messages = [
+            ["user", "긴 답변을 정리해 줘"],
+            ["ai", "\n".join(f"답변 {index}" for index in range(180))],
+        ]
+        widget._render_saved_messages()
+        qt_app.processEvents()
+        qt_app.processEvents()
+
+        bar = widget.transcript_scroll.verticalScrollBar()
+        bar.setValue(bar.maximum())
+        last_bubble = widget.transcript_layout.itemAt(
+            widget.transcript_layout.count() - 1
+        ).widget()
+        assert last_bubble is not None
+        last_bottom = last_bubble.mapTo(
+            widget.transcript_scroll.viewport(), last_bubble.rect().bottomLeft()
+        ).y()
+        trailing_space = widget.transcript_scroll.viewport().height() - last_bottom
+
+        assert bar.maximum() > 0
+        assert trailing_space <= 24
+    finally:
+        widget.shutdown()
+        widget.deleteLater()
+
+
 def test_sending_from_embedded_history_starts_new_chat(qt_app, tmp_path) -> None:
     settings = QSettings(
         str(tmp_path / "embedded-new-chat.ini"), QSettings.Format.IniFormat
@@ -595,6 +629,47 @@ def test_clearing_outer_chat_immediately_clears_embedded_history(
         assert embedded.chat_history_list.count() == 0
         assert embedded._messages == []
         assert embedded._active_chat_ids[embedded._active_provider_name] == ""
+    finally:
+        outer.shutdown()
+        embedded.shutdown()
+        outer.deleteLater()
+        embedded.deleteLater()
+
+
+def test_continuing_embedded_chat_updates_open_outer_chat(qt_app, tmp_path) -> None:
+    settings_path = str(tmp_path / "shared-chat-change.ini")
+    outer_settings = QSettings(settings_path, QSettings.Format.IniFormat)
+    embedded_settings = QSettings(
+        settings_path, QSettings.Format.IniFormat
+    )
+    outer = AiChatPanel(settings=outer_settings, standalone=True)
+    embedded = AiChatPanel(settings=embedded_settings, standalone=False)
+    try:
+        outer.chatHistoryChanged.connect(embedded.apply_external_history_change)
+        embedded.chatHistoryChanged.connect(outer.apply_external_history_change)
+        outer._messages = [["user", "최초 질문"], ["ai", "최초 답변"]]
+        outer._persist_current_chat()
+        chat_id = outer._active_chat_ids[outer._active_provider_name]
+
+        embedded._refresh_chat_history()
+        item = embedded.chat_history_list.item(0)
+        embedded._history_item_clicked(item)
+        assert embedded._active_chat_ids[embedded._active_provider_name] == chat_id
+
+        embedded._messages.extend(
+            [["user", "본문에서 추가 질문"], ["ai", "본문에서 추가 답변"]]
+        )
+        embedded._persist_current_chat()
+        qt_app.processEvents()
+
+        assert outer._active_chat_ids[outer._active_provider_name] == chat_id
+        assert outer._messages[-2:] == [
+            ["user", "본문에서 추가 질문"],
+            ["ai", "본문에서 추가 답변"],
+        ]
+        saved = outer._find_chat(chat_id)
+        assert saved is not None
+        assert saved["messages"][-2:] == outer._messages[-2:]
     finally:
         outer.shutdown()
         embedded.shutdown()

@@ -533,6 +533,8 @@ class AiLawSearchTab(QWidget):
         for peer in peers:
             if peer is None or peer is panel:
                 continue
+            panel.chatHistoryChanged.connect(peer.apply_external_history_change)
+            peer.chatHistoryChanged.connect(panel.apply_external_history_change)
             panel.chatHistoryCleared.connect(peer.apply_external_history_clear)
             peer.chatHistoryCleared.connect(panel.apply_external_history_clear)
         return panel

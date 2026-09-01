@@ -857,6 +857,7 @@ class AiChatPanel(QFrame):
     """
 
     chatHistoryCleared = Signal(str)
+    chatHistoryChanged = Signal(str, str)
 
     closeRequested = Signal()
 
@@ -1336,7 +1337,10 @@ class AiChatPanel(QFrame):
         self.transcript_hint.setObjectName("aiChatHint")
         self.transcript_hint.setWordWrap(True)
         self.transcript_layout.addWidget(self.transcript_hint)
-        self.transcript_layout.addStretch(1)
+        # 늘어나는 spacer를 두면 긴 답변을 짧은 답변으로 바꾼 뒤에도
+        # 이전 여유 높이가 스크롤 범위에 남을 수 있다. 내용은 위에 붙이고
+        # QScrollArea가 짧은 대화일 때만 viewport 높이를 채우게 한다.
+        self.transcript_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.transcript_scroll.setWidget(self.transcript_content)
         # 답이 길어지면 무엇을 물었는지 위로 밀려 사라진다. 대화창 위에
         # 겹쳐 뜨는 띠지로 지금 답하고 있는 질문을 계속 보여 준다.
@@ -2125,6 +2129,11 @@ class AiChatPanel(QFrame):
     def _history_settings_key(self, provider_name: str = "") -> str:
         return f"ai/chat_history/{provider_name or self._active_provider_name}"
 
+    def _emit_history_changed(self, provider_name: str, chat_id: str) -> None:
+        """저장 내용을 디스크에 반영한 뒤 다른 채팅 패널에 알린다."""
+        self.settings.sync()
+        self.chatHistoryChanged.emit(provider_name, chat_id)
+
     def _provider_history(
         self, provider_name: str = "", *, reload: bool = False
     ) -> list[dict[str, object]]:
@@ -2228,6 +2237,7 @@ class AiChatPanel(QFrame):
         )
         if name == self._active_provider_name:
             self._refresh_chat_history()
+        self._emit_history_changed(name, chat_id)
 
     def _refresh_chat_history(self) -> None:
         self.chat_history_list.clear()
@@ -2352,11 +2362,13 @@ class AiChatPanel(QFrame):
             None,
         )
 
-    def _save_provider_history(self) -> None:
+    def _save_provider_history(self, chat_id: str = "") -> None:
         self.settings.setValue(
             self._history_settings_key(),
             json.dumps(self._provider_history(), ensure_ascii=False),
         )
+        if chat_id:
+            self._emit_history_changed(self._active_provider_name, chat_id)
 
     def _open_chat_menu(self, chat_id: str, anchor: QWidget) -> None:
         """⋯를 누르면 이 채팅에 할 수 있는 일을 보여 준다."""
@@ -2397,7 +2409,7 @@ class AiChatPanel(QFrame):
             record["custom_title"] = name
         else:
             record.pop("custom_title", None)
-        self._save_provider_history()
+        self._save_provider_history(chat_id)
         self._refresh_chat_history()
 
     def _toggle_chat_pin(self, chat_id: str) -> None:
@@ -2408,7 +2420,7 @@ class AiChatPanel(QFrame):
             record.pop("pinned", None)
         else:
             record["pinned"] = True
-        self._save_provider_history()
+        self._save_provider_history(chat_id)
         self._refresh_chat_history()
 
     def _delete_chat(self, chat_id: str) -> None:
@@ -2424,6 +2436,7 @@ class AiChatPanel(QFrame):
             self._history_settings_key(),
             json.dumps(history, ensure_ascii=False),
         )
+        self._emit_history_changed(self._active_provider_name, chat_id)
         # 지금 보고 있던 대화를 지웠으면 화면도 같이 비운다. 안 그러면
         # 목록에 없는 대화가 계속 떠 있고, 다음 질문에 되살아난다.
         if self._active_chat_ids.get(self._active_provider_name, "") == chat_id:
@@ -2451,6 +2464,7 @@ class AiChatPanel(QFrame):
             return
         self._provider_history()[:] = []
         self.settings.setValue(self._history_settings_key(), "[]")
+        self.settings.sync()
         self.chatHistoryCleared.emit(self._active_provider_name)
         self._start_empty_conversation()
         self._refresh_chat_history()
@@ -2468,6 +2482,79 @@ class AiChatPanel(QFrame):
         self._start_empty_conversation()
         self._refresh_chat_history()
         self._set_status("다른 AI 화면에서 채팅 목록을 비웠습니다.")
+
+    def apply_external_history_change(
+        self, provider_name: str, chat_id: str
+    ) -> None:
+        """다른 AI 화면에서 저장한 채팅과 현재 화면을 즉시 맞춘다."""
+        name = str(provider_name or "")
+        changed_id = str(chat_id or "")
+        if not name or not changed_id:
+            return
+        # 패널마다 QSettings 객체가 달라도 방금 쓴 값을 읽을 수 있게 한다.
+        self.settings.sync()
+        history = self._provider_history(name, reload=True)
+        record = next(
+            (
+                item
+                for item in history
+                if str(item.get("id") or "") == changed_id
+            ),
+            None,
+        )
+        if name == self._active_provider_name:
+            self._refresh_chat_history()
+
+        # 목록만 공유하는 다른 채팅은 현재 대화를 바꾸지 않는다.
+        if self._active_chat_ids.get(name, "") != changed_id:
+            return
+        if record is None:
+            self._active_chat_ids[name] = ""
+            self._provider_chat_states.pop(name, None)
+            if name == self._active_provider_name:
+                self._start_empty_conversation()
+                self._set_status("다른 AI 화면에서 이 채팅을 삭제했습니다.")
+            return
+
+        raw_messages = record.get("messages", [])
+        if not isinstance(raw_messages, list):
+            raw_messages = []
+        messages = [
+            self._copy_stored_message(message)
+            for message in raw_messages
+            if isinstance(message, (list, tuple)) and len(message) >= 2
+        ]
+        state = self._provider_chat_states.get(name)
+        if state is not None:
+            state["messages"] = messages
+            state["context"] = str(record.get("context") or "")
+            state["context_label"] = str(record.get("context_label") or "")
+            state["session"] = None
+
+        if name != self._active_provider_name or name in self._streams:
+            return
+        context = str(record.get("context") or "")
+        context_label = str(record.get("context_label") or "")
+        if (
+            messages == self._messages
+            and context == self._context
+            and context_label == self._context_label
+        ):
+            self._sync_history_selection()
+            return
+        self._close_session()
+        self._messages = messages
+        self._context = context
+        self._context_label = context_label
+        model = str(record.get("model") or "")
+        model_index = self.model_combo.findData(model)
+        if model_index >= 0:
+            self.model_combo.setCurrentIndex(model_index)
+        self._render_saved_messages()
+        self._save_active_provider_state()
+        self._sync_history_selection()
+        self._session = None
+        self._set_status("다른 AI 화면에서 이어진 대화를 반영했습니다.")
 
     def _start_empty_conversation(self) -> None:
         """저장은 하지 않고 화면의 대화만 빈 채로 되돌린다."""
@@ -2559,7 +2646,7 @@ class AiChatPanel(QFrame):
 
     def _clear_transcript_widgets(self) -> None:
         self._latest_user_bubble = None
-        while self.transcript_layout.count() > 2:
+        while self.transcript_layout.count() > 1:
             item = self.transcript_layout.takeAt(1)
             widget = item.widget()
             if widget is not None:
@@ -3311,10 +3398,7 @@ class AiChatPanel(QFrame):
         )
 
     def _insert_bubble(self, widget: QWidget) -> None:
-        # 맨 아래의 늘어나는 여백(addStretch) 바로 앞에 끼워 넣는다.
-        self.transcript_layout.insertWidget(
-            self.transcript_layout.count() - 1, widget
-        )
+        self.transcript_layout.addWidget(widget)
 
     def _make_user_bubble(self, text: str) -> QWidget:
         row = QWidget()

@@ -576,8 +576,14 @@ class LawSearchWindow(QMainWindow):
         self.ai_review_tab.reference_handler = self.resource_tab.open_reference_link
         self.ai_review_tab.document_cache = self.law_cache
         # 독립 AI 화면과 본문 안 AI 패널은 같은 저장 채팅을 쓴다. 한쪽에서
-        # 전체 비우기를 하면 다른 쪽의 메모리 목록과 열린 대화도 즉시 비운다.
+        # 이어 쓰거나 지우면 다른 쪽의 목록과 열린 대화도 즉시 맞춘다.
         embedded_chat = self.resource_tab.ai_chat_panel
+        self.ai_review_tab.chatHistoryChanged.connect(
+            embedded_chat.apply_external_history_change
+        )
+        embedded_chat.chatHistoryChanged.connect(
+            self.ai_review_tab.apply_external_history_change
+        )
         self.ai_review_tab.chatHistoryCleared.connect(
             embedded_chat.apply_external_history_clear
         )
