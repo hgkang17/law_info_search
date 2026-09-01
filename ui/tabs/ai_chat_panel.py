@@ -101,7 +101,7 @@ from utils.annex_notation import annex_related_law_name
 from utils.constants import FONT_FAMILY
 from utils.formatting import law_reference_html_text
 from utils.parsing import normalize_article_jo
-from utils.patterns import LAW_UNIT_REFERENCE_PATTERN
+from utils.patterns import KOREAN_ITEM_MARKERS, LAW_UNIT_REFERENCE_PATTERN
 
 
 class ChatInput(QPlainTextEdit):
@@ -3108,7 +3108,7 @@ class AiChatPanel(QFrame):
 
     _SPACED_ARTICLE_UNITS = re.compile(
         r"(제\d+조(?:의\d+)?)"
-        r"((?:\s+제\d+항(?:의\d+)?)?(?:\s+제\d+호(?:의\d+)?)?(?:\s+[가-하]목)?)"
+        rf"((?:\s+제\d+항(?:의\d+)?)?(?:\s+제\d+호(?:의\d+)?)?(?:\s+[{KOREAN_ITEM_MARKERS}]목)?)"
     )
 
     @staticmethod

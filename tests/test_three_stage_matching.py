@@ -357,3 +357,74 @@ def test_three_stage_comparison_restores_inline_korean_item_breaks() -> None:
     assert "다.&nbsp;" in html
     assert "경우가." not in html
     assert "폐차장나." not in html
+
+
+def test_article_28_rule_aligns_to_neo_and_links_molit_authority() -> None:
+    """시행규칙 제2조의2는 시행령 제22조제7항제3호너목 옆에 붙는다."""
+    _app = QApplication.instance() or QApplication([])
+    tab = ResourceSearchTab.__new__(ResourceSearchTab)
+    parent_law_name = "국토의 계획 및 이용에 관한 법률"
+    decree_name = f"{parent_law_name} 시행령"
+    rule_name = f"{parent_law_name} 시행규칙"
+    payload = {
+        "LawService": {
+            "기본정보": {"법령명": parent_law_name},
+            "위임조문삼단비교": {
+                "법률조문": {
+                    "법령명": parent_law_name,
+                    "조번호": "0028",
+                    "조가지번호": "00",
+                    "조제목": "제28조(주민과 지방의회의 의견 청취)",
+                    "조내용": (
+                        "⑥ 대통령령으로 정하는 사항에 대하여 지방의회의 "
+                        "의견을 들어야 한다."
+                    ),
+                    "시행령조문": {
+                        "법령명": decree_name,
+                        "조번호": "0022",
+                        "조가지번호": "00",
+                        "조제목": "제22조(주민 및 지방의회의 의견청취)",
+                        "조내용": (
+                            "⑦ 법 제28조제6항에서 정하는 사항은 다음 각 호의 "
+                            "사항을 말한다.\n"
+                            "3. 다음 각 목의 어느 하나에 해당하는 기반시설\n"
+                            "파. 하수도(하수종말처리시설에 한한다)"
+                            "하. 폐기물처리 및 재활용시설"
+                            "거. 수질오염방지시설"
+                            "너. 그 밖에 국토교통부령으로 정하는 시설"
+                        ),
+                    },
+                    "시행규칙조문": {
+                        "법령명": rule_name,
+                        "조번호": "0002",
+                        "조가지번호": "02",
+                        "조제목": "제2조의2(주민과 지방의회의 의견 청취)",
+                        "조내용": (
+                            "영 제22조제7항제3호너목에서 "
+                            "“국토교통부령으로 정하는 시설”이란 "
+                            "제2조제1호 및 제2호의 시설을 말한다."
+                        ),
+                    },
+                }
+            },
+        }
+    }
+
+    html = tab._build_three_stage_comparison_html(
+        payload,
+        law_id="009469",
+        law_name=parent_law_name,
+        jo="002800",
+        label="제28조(주민과 지방의회의 의견 청취)",
+    )
+
+    for marker in ("파", "하", "거", "너"):
+        assert f"{marker}.&nbsp;" in html
+    rule_row = next(
+        row
+        for row in re.findall(r"<tr>(.*?)</tr>", html, re.DOTALL)
+        if "제2조의2" in row
+    )
+    assert "너.&nbsp;" in rule_row
+    assert "3.&nbsp;" not in rule_row
+    assert ">국토교통부령</a>으로 정하는 시설" in rule_row

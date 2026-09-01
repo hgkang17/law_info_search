@@ -13,6 +13,11 @@ from storage.cache import LawDocumentCache
 from storage.recent import RecentSearchManager
 from ui.tabs.resource_search import ResourceSearchTab
 from utils.parsing import insert_admin_clause_breaks
+from utils.patterns import (
+    KOREAN_ITEM_MARKERS,
+    LAW_ITEM_PATTERN,
+    LAW_UNIT_REFERENCE_PATTERN,
+)
 from utils.three_stage_alignment import (
     block_index_for_unit,
     hang_groups_from_blocks,
@@ -362,6 +367,34 @@ def test_item_markers_resume_from_line_leading_marker() -> None:
         "아. 복합용도구역의 지정에 관한 계획과 복합용도계획",
         "자. 도시ㆍ군계획시설입체복합구역의 지정에 관한 계획",
     ]
+
+
+def test_late_item_markers_resume_through_neo() -> None:
+    """제22조제7항제3호의 파.ㆍ하.ㆍ거.ㆍ너.도 각각 복원한다."""
+    source = (
+        "파. 하수도(하수종말처리시설에 한한다)"
+        "하. 폐기물처리 및 재활용시설"
+        "거. 수질오염방지시설"
+        "너. 그 밖에 국토교통부령으로 정하는 시설"
+    )
+
+    assert insert_admin_clause_breaks(source).splitlines() == [
+        "파. 하수도(하수종말처리시설에 한한다)",
+        "하. 폐기물처리 및 재활용시설",
+        "거. 수질오염방지시설",
+        "너. 그 밖에 국토교통부령으로 정하는 시설",
+    ]
+
+
+def test_all_requested_item_markers_are_supported_through_heo() -> None:
+    expected = "가나다라마바사아자차카타파하거너더러머버서어저처커터퍼허"
+
+    assert KOREAN_ITEM_MARKERS == expected
+    for marker in expected:
+        assert LAW_ITEM_PATTERN.fullmatch(f"{marker}. 내용")
+        reference = LAW_UNIT_REFERENCE_PATTERN.fullmatch(f"{marker}목")
+        assert reference is not None
+        assert reference.group("mok") == marker
 
 
 def test_two_markers_are_not_enough_evidence() -> None:

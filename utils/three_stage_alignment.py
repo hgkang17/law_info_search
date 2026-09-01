@@ -4,11 +4,11 @@ import re
 from html import unescape
 
 from utils.parsing import law_unit_code
-from utils.patterns import CIRCLED_NUMBER_MARKERS
+from utils.patterns import CIRCLED_NUMBER_MARKERS, KOREAN_ITEM_MARKERS
 
 
 _LAW_BLOCK_START_PATTERN = re.compile(r'<div class="legal-indent level-[012]"')
-_MOK_MARKER_PATTERN = re.compile(r"^([가나다라마바사아자차카타파하])\.$")
+_MOK_MARKER_PATTERN = re.compile(rf"^([{KOREAN_ITEM_MARKERS}])\.$")
 _BULLET_MARKER_PATTERN = re.compile(
     r'<span class="bullet-marker"[^>]*>(.*?)&nbsp;</span>', re.DOTALL
 )

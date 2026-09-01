@@ -15,6 +15,7 @@ from molit_cgm_expc_api import AgencyConfig
 from .patterns import (
     CIRCLED_HANGUL_ITEM_MARKERS,
     CIRCLED_NUMBER_MARKERS,
+    KOREAN_ITEM_MARKERS,
     LAW_HEADING_PATTERN,
     LAW_PARAGRAPH_PATTERN,
     ADMIN_RULE_INLINE_KOREAN_ITEM_PATTERN,
@@ -601,7 +602,7 @@ def insert_admin_clause_breaks(text: str) -> str:
     # 항목이므로 제목 아래로 내린다.
     text = re.sub(
         r"(?m)^(\d+(?:-\d+)+\.\s+[^\n]*?)"
-        r"(\((?:\d+|[가나다라마바사아자차카타파하])\))"
+        rf"(\((?:\d+|[{KOREAN_ITEM_MARKERS}])\))"
         r"(?!\s+(?:부터|까지|내지|에서|에|의|항|호|목|및|또는)(?=\s|$))"
         r"(?=\s+\S)",
         r"\1\n\2",
@@ -609,7 +610,7 @@ def insert_admin_clause_breaks(text: str) -> str:
     )
     text = re.sub(
         r"(?<!\n)(?<!^)(?<![0-9A-Za-z가-힣])"
-        r"(\((?:\d+|[가나다라마바사아자차카타파하])\))"
+        rf"(\((?:\d+|[{KOREAN_ITEM_MARKERS}])\))"
         r"(?!\s+(?:부터|까지|내지|에서|에|의|항|호|목|및|또는)(?=\s|$))"
         r"(?=\s+\S)",
         r"\n\1",
@@ -618,7 +619,7 @@ def insert_admin_clause_breaks(text: str) -> str:
     # API의 ``(3) 에 해당``, ``(4) 의 규정``처럼 참조번호와 조사
     # 사이에 낀 공백은 목록 구분이 아니므로 정상 표기로 붙인다.
     text = re.sub(
-        r"(\((?:\d+|[가나다라마바사아자차카타파하])\))\s+"
+        rf"(\((?:\d+|[{KOREAN_ITEM_MARKERS}])\))\s+"
         r"(에서|에|의|부터|까지)(?=\s|\()",
         r"\1\2",
         text,
@@ -685,13 +686,13 @@ def insert_admin_clause_breaks(text: str) -> str:
     # ``폐차장나. 도시공원``처럼 앞 문장ㆍ항목과 붙어 오는 응답도 있다.
     # 단어 끝의 평범한 ``가.``를 무조건 자르면 오탐이 많으므로, 한 줄
     # 안에서 가.→나.→다.가 순서대로 모두 확인되는 목록만 복원한다.
-    korean_item_order = "가나다라마바사아자차카타파하"
+    korean_item_order = KOREAN_ITEM_MARKERS
     # ``바. 삭제 사. 도시혁신구역...``처럼 표지 앞에 공백이 하나라도
     # 있으면 앞 단계가 그 자리에서 줄을 가른다. 그러면 남은 줄이
     # ``사.``로 시작해 가.부터 세는 연쇄에 걸리지 않아 뒤따르는 아.ㆍ자.가
     # 앞 문장에 붙은 채 남는다. 줄 첫머리 표지를 연쇄의 시작점으로 삼는다.
     leading_item_pattern = re.compile(
-        r"^([가나다라마바사아자차카타파하])\.[ \t]"
+        rf"^([{KOREAN_ITEM_MARKERS}])\.[ \t]"
     )
     repaired_lines: list[str] = []
     for line in text.splitlines():
@@ -700,7 +701,7 @@ def insert_admin_clause_breaks(text: str) -> str:
         # ``다.``는 뒤가 닫는 괄호이므로 목 표식 후보에서 제외한다.
         candidates = list(
             re.finditer(
-                r"[가나다라마바사아자차카타파하]\.[ \t]+(?=[^\s)])",
+                rf"[{KOREAN_ITEM_MARKERS}]\.[ \t]+(?=[^\s)])",
                 line,
             )
         )

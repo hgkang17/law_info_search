@@ -95,6 +95,7 @@ from utils.parsing import (
 )
 from utils.patterns import (
     CIRCLED_NUMBER_MARKERS,
+    KOREAN_ITEM_MARKERS,
     LAW_UNIT_REFERENCE_PATTERN,
 )
 from utils.three_stage_alignment import (
@@ -2893,7 +2894,7 @@ class ResourceSearchTab(QWidget):
         r"제\s*(\d+)\s*조(?:의\s*(\d+))?"
         r"(?:\s*제\s*(\d+)\s*항(?:의\s*(\d+))?)?"
         r"(?:\s*제\s*(\d+)\s*호(?:의\s*(\d+))?)?"
-        r"(?:\s*([가나다라마바사아자차카타파하])\s*목)?"
+        rf"(?:\s*([{KOREAN_ITEM_MARKERS}])\s*목)?"
     )
 
     @classmethod
@@ -2953,7 +2954,7 @@ class ResourceSearchTab(QWidget):
             # ``법 제2조제2호다목``처럼 목까지 지목하는 위임이 있다.
             # ``[가-하]``로 쓰면 ``제1호 각 목 외의 부분``의 ``각``까지
             # 목 표지로 잡히므로 실제 표지 글자만 나열한다.
-            r"(?:\s*([가나다라마바사아자차카타파하])\s*목)?"
+            rf"(?:\s*([{KOREAN_ITEM_MARKERS}])\s*목)?"
         )
         for match in pattern.finditer(content):
             try:

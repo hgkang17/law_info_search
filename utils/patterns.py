@@ -11,6 +11,11 @@ import re
 
 CIRCLED_NUMBER_MARKERS = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳"
 
+# 법령 목 번호의 한글 순서. ``[가-하]``는 유니코드 범위 안의 ``각`` 같은
+# 일반 음절까지 잡으므로 실제 법령 표지만 명시한다. 현재 화면과 3단비교는
+# 가목부터 허목까지 지원한다.
+KOREAN_ITEM_MARKERS = "가나다라마바사아자차카타파하거너더러머버서어저처커터퍼허"
+
 # 수립지침 세항 표지. ①(항)과 달리 ㉮㉯는 목(가·나)에 해당하는 동그라미 한글이다.
 CIRCLED_HANGUL_ITEM_MARKERS = "㉠㉡㉢㉣㉤㉥㉦㉧㉨㉩㉪㉫㉬㉭㉮㉯㉰㉱㉲㉳㉴㉵㉶㉷㉸㉹㉺㉻"
 
@@ -39,13 +44,13 @@ CIRCLED_HANGUL_ITEM_PATTERN = re.compile(
 LAW_SUBPARAGRAPH_PATTERN = re.compile(r"^(\d+(?:의\d+)*\.)\s*(.*)$")
 
 
-LAW_ITEM_PATTERN = re.compile(r"^([가나다라마바사아자차카타파하]\.)\s*(.*)$")
+LAW_ITEM_PATTERN = re.compile(rf"^([{KOREAN_ITEM_MARKERS}]\.)\s*(.*)$")
 
 
 # 수립지침 원문에서 한 줄에 이어진 독립 목 표지. 앞뒤가 공백으로
 # 구분된 완전한 토큰만 허용하므로 ``계획한다.``의 ``다.``는 잡지 않는다.
 ADMIN_RULE_INLINE_KOREAN_ITEM_PATTERN = re.compile(
-    r"[ \t]+([가나다라마바사아자차카타파하]\.)[ \t]+(?=\S)"
+    rf"[ \t]+([{KOREAN_ITEM_MARKERS}]\.)[ \t]+(?=\S)"
 )
 
 
@@ -55,13 +60,13 @@ ADMIN_RULE_INLINE_KOREAN_ITEM_PATTERN = re.compile(
 # 문장의 꼬리로 본다. 뒤에 실제 내용이 있는 ``다. 임의수립주체...``는
 # 줄 끝 조건에 걸리지 않아 그대로 목으로 남는다.
 ADMIN_RULE_SENTENCE_TAIL_ITEM_PATTERN = re.compile(
-    r"^[가나다라마바사아자차카타파하]\."
+    rf"^[{KOREAN_ITEM_MARKERS}]\."
     r"\s*[)\]}」』”’\"']+\s*$"
 )
 
 
 LAW_SUBITEM_PATTERN = re.compile(
-    r"^(\(\d+\)|\d+\)|[가나다라마바사아자차카타파하]\))\s*(.*)$"
+    rf"^(\(\d+\)|\d+\)|[{KOREAN_ITEM_MARKERS}]\))\s*(.*)$"
 )
 
 
@@ -123,13 +128,13 @@ _HEADING_RANGE_TAIL_PATTERN = re.compile(r"\s*(?:부터|까지)")
 
 
 _MARKER_ONLY_LINE_PATTERN = re.compile(
-    rf"^(?:\d+(?:-\d+)+\.|\(\d{{1,2}}\)|\([가-하]\)"
+    rf"^(?:\d+(?:-\d+)+\.|\(\d{{1,2}}\)|\([{KOREAN_ITEM_MARKERS}]\)"
     rf"|[{CIRCLED_NUMBER_MARKERS}]|\d{{1,2}}\.)\s*$"
 )
 
 
 ADMIN_RULE_PAREN_REFERENCE_LINE_PATTERN = re.compile(
-    r"^\((?:\d+|[가나다라마바사아자차카타파하])\)"
+    rf"^\((?:\d+|[{KOREAN_ITEM_MARKERS}])\)"
     # API에 따라 ``(1)에서``와 ``(1) 에서``가 모두 내려온다.
     # 번호 뒤가 조사인 경우에만 참조로 판단하므로 일반 ``(1) 내용``
     # 목록과는 구별된다.
@@ -145,7 +150,7 @@ ADMIN_RULE_PAREN_REFERENCE_LINE_PATTERN = re.compile(
 # API에서 다음 줄로 떨어진 내부 참조. 일반 목록과 구분하기 위해 항 번호
 # 뒤에 참조 위치를 뜻하는 명사가 오는 경우만 대상으로 삼는다.
 ADMIN_RULE_CLAUSE_SUBREFERENCE_LINE_PATTERN = re.compile(
-    r"^\((?:\d+|[가나다라마바사아자차카타파하])\)\s*"
+    rf"^\((?:\d+|[{KOREAN_ITEM_MARKERS}])\)\s*"
     r"(?:본문|단서|전단|후단)(?=\s|에|의|을|를|은|는|이|가|$)"
 )
 
@@ -155,7 +160,7 @@ ADMIN_RULE_CLAUSE_SUBREFERENCE_LINE_PATTERN = re.compile(
 # 조항을 인용해 앞 항목을 설명하는 문장이다.
 ADMIN_RULE_NUMBERED_CLAUSE_REFERENCE_PATTERN = re.compile(
     r"^\d+(?:-\d+)+\.\s*"
-    r"\((?:\d+|[가나다라마바사아자차카타파하])\)\s*"
+    rf"\((?:\d+|[{KOREAN_ITEM_MARKERS}])\)\s*"
     r"(?:에|의|에서|부터|까지)(?=\s|$)"
 )
 
@@ -178,7 +183,7 @@ ADMIN_RULE_NUMBERED_ITEM_PATTERN = re.compile(r"^(\d{1,2}\.)\s+(.*)$")
 
 
 ADMIN_RULE_PAREN_ITEM_PATTERN = re.compile(
-    r"^(\((?:\d+|[가나다라마바사아자차카타파하])\))\s*(.*)$"
+    rf"^(\((?:\d+|[{KOREAN_ITEM_MARKERS}])\))\s*(.*)$"
 )
 
 
@@ -220,7 +225,7 @@ _BARE_CLAUSE_REFERENCE_PATTERN = re.compile(
 LAW_REFERENCE_PATTERN = re.compile(
     r"「(?P<law>[^」\n]{1,80}?(?:시행규칙|시행령|법률|법|규칙|조례|규정))」"
     r"(?P<law_detail>\s*(?P<law_article>제\d+조(?:의\d+)?)"
-    r"(?:제\d+항(?:의\d+)?)?(?:제\d+호(?:의\d+)?)?(?:[가-하]목)?)?"
+    rf"(?:제\d+항(?:의\d+)?)?(?:제\d+호(?:의\d+)?)?(?:[{KOREAN_ITEM_MARKERS}]목)?)?"
     # 시행령·시행규칙 본문의 "법 제62조제1항", "영 제55조제3항", "같은 법 제11조"처럼
     # 괄호 없이 상·하위 법령을 가리키는 인용. 앞 글자가 한글이면(예: 건축"법")
     # 법령명의 일부이므로 제외한다.
@@ -230,19 +235,19 @@ LAW_REFERENCE_PATTERN = re.compile(
     # 조문을 가리키는 인용으로 잘못 읽힌다.
     r"(?P<sibling_unit>대통령령|[가-힣]{2,20}부령|총리령|부령|법률|법|시행령|영|시행규칙|규칙)\s*"
     r"(?P<sibling_article>제\d+조(?:의\d+)?"
-    r"(?:제\d+항(?:의\d+)?)?(?:제\d+호(?:의\d+)?)?(?:[가-하]목)?)"
+    rf"(?:제\d+항(?:의\d+)?)?(?:제\d+호(?:의\d+)?)?(?:[{KOREAN_ITEM_MARKERS}]목)?)"
     r"|(?P<current_article>(?:제\d+조(?:의\d+)?"
-    r"(?:제\d+항(?:의\d+)?)?(?:제\d+호(?:의\d+)?)?(?:[가-하]목)?"
-    r"|제\d+항(?:의\d+)?(?:제\d+호(?:의\d+)?)?(?:[가-하]목)?))"
+    rf"(?:제\d+항(?:의\d+)?)?(?:제\d+호(?:의\d+)?)?(?:[{KOREAN_ITEM_MARKERS}]목)?"
+    rf"|제\d+항(?:의\d+)?(?:제\d+호(?:의\d+)?)?(?:[{KOREAN_ITEM_MARKERS}]목)?))"
 )
 
 
 LAW_UNIT_REFERENCE_PATTERN = re.compile(
-    r"(?=제\d+(?:조|항|호)|[가-하]목)"
+    rf"(?=제\d+(?:조|항|호)|[{KOREAN_ITEM_MARKERS}]목)"
     r"(?:제(?P<jo>\d+)조(?:의(?P<jo_branch>\d+))?)?"
     r"(?:제(?P<hang>\d+)항(?:의(?P<hang_branch>\d+))?)?"
     r"(?:제(?P<ho>\d+)호(?:의(?P<ho_branch>\d+))?)?"
-    r"(?:(?P<mok>[가-하])목)?"
+    rf"(?:(?P<mok>[{KOREAN_ITEM_MARKERS}])목)?"
 )
 
 
