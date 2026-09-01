@@ -11,7 +11,12 @@ import pytest
 from PySide6.QtCore import QPoint
 from PySide6.QtWidgets import QApplication
 
-from models.law import AI_RELATED_AGENCY, AI_SEARCH_AGENCY
+import molit_cgm_expc_api as api_module
+from models.law import (
+    AI_RELATED_AGENCY,
+    AI_SEARCH_AGENCY,
+    RESOURCE_ALL_TARGET,
+)
 from ui.main_window import LawSearchWindow
 import workers.search_worker as search_worker_module
 from workers.search_worker import ResourceApiWorker
@@ -276,6 +281,89 @@ def test_integrated_search_keeps_keyword_article_rows(window) -> None:
     assert rows[2]["jo_code"] == "000200"
     assert rows[0]["effective"] == "2024.07.01"
     assert not any(row["id"] == "007777" for row in rows)
+
+
+def test_agency_scope_search_keeps_duplicate_target_responses(monkeypatch) -> None:
+    calls = []
+
+    def fake_search_list(oc, **kwargs):
+        calls.append((oc, kwargs))
+        return ET.Element("결과", {"scope": str(kwargs["search"])})
+
+    monkeypatch.setattr(api_module, "search_list", fake_search_list)
+
+    roots, errors = api_module.search_agency_scopes(
+        "test-key",
+        ((AI_RELATED_AGENCY, 0), (AI_RELATED_AGENCY, 1)),
+        query="공간재구조화",
+    )
+
+    assert errors == []
+    assert [root.get("scope") for _agency, root in roots] == ["0", "1"]
+    assert {call[1]["search"] for call in calls} == {0, 1}
+    assert all(call[1]["target"] == "aiRltLs" for call in calls)
+
+
+def test_integrated_search_requests_both_related_article_scopes(
+    qt_app, monkeypatch
+) -> None:
+    resource_calls = []
+    keyword_calls = []
+
+    def fake_resource(oc, target, query, **kwargs):
+        resource_calls.append((oc, target, query, kwargs))
+        return {}
+
+    law_root, _law = _keyword_root(
+        "법령", "법령명", "도시개발법", "법령ID", "001", "소관부처명",
+        "국토교통부",
+    )
+    admin_root, _admin = _keyword_root(
+        "행정규칙", "행정규칙명", "공간재구조화계획 수립 등에 관한 지침",
+        "행정규칙ID", "46796", "발령기관명", "국토교통부",
+    )
+
+    def fake_keyword(oc, requests, **kwargs):
+        keyword_calls.append((oc, tuple(requests), kwargs))
+        return [
+            (AI_RELATED_AGENCY, law_root),
+            (AI_RELATED_AGENCY, admin_root),
+        ], []
+
+    monkeypatch.setattr(search_worker_module, "search_resource", fake_resource)
+    monkeypatch.setattr(
+        search_worker_module, "search_agency_scopes", fake_keyword
+    )
+    succeeded = []
+    worker = ResourceApiWorker(
+        "resource_search",
+        oc="test-key",
+        target=RESOURCE_ALL_TARGET,
+        query="공간재구조화",
+    )
+    worker.succeeded.connect(
+        lambda operation, result: succeeded.append((operation, result))
+    )
+
+    worker.run()
+
+    assert keyword_calls == [
+        (
+            "test-key",
+            (
+                (AI_RELATED_AGENCY, 0),
+                (AI_RELATED_AGENCY, 1),
+                (AI_SEARCH_AGENCY, 1),
+            ),
+            {"query": "공간재구조화", "display": 100},
+        )
+    ]
+    assert len(resource_calls) > 1
+    payload = succeeded[0][1]
+    assert [agency for agency, _root in payload["keyword_roots"]] == [
+        AI_RELATED_AGENCY,
+        AI_RELATED_AGENCY,
+    ]
 
 
 def test_integrated_keyword_admin_rule_resolves_serial_before_detail(

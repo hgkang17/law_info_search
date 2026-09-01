@@ -17,6 +17,7 @@ from molit_cgm_expc_api import (
     get_law_article,
     get_resource_detail,
     get_three_stage_comparison,
+    search_agency_scopes,
     search_agencies,
     search_resource,
 )
@@ -331,11 +332,14 @@ class ResourceApiWorker(QThread):
                     # 그대로 내보낸다.
                     keyword_roots: list[object] = []
                     try:
-                        roots, agency_errors = search_agencies(
+                        roots, agency_errors = search_agency_scopes(
                             self.oc,
-                            (AI_RELATED_AGENCY, AI_SEARCH_AGENCY),
+                            (
+                                (AI_RELATED_AGENCY, 0),
+                                (AI_RELATED_AGENCY, 1),
+                                (AI_SEARCH_AGENCY, 1),
+                            ),
                             query=self.query,
-                            search=1,
                             display=100,
                         )
                         keyword_roots = roots

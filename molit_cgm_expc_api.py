@@ -288,6 +288,66 @@ def search_agencies(
     )
 
 
+def search_agency_scopes(
+    oc: str,
+    requests: Iterable[tuple[AgencyConfig, int]],
+    *,
+    query: Optional[str] = None,
+    display: int = 100,
+    page: int = 1,
+) -> tuple[
+    list[tuple[AgencyConfig, ET.Element]],
+    list[tuple[AgencyConfig, str]],
+]:
+    """같은 기관의 여러 검색 범위를 병렬 조회한다.
+
+    ``search_agencies``는 기관 target을 결과 키로 사용하므로 같은 기관을
+    ``search=0``과 ``search=1``로 동시에 조회하면 한쪽이 덮인다. 통합검색의
+    연관법령처럼 동일 target의 여러 범위를 모두 보존해야 할 때 사용한다.
+    """
+    request_list = tuple(requests)
+    if not request_list:
+        return [], []
+
+    roots: dict[int, ET.Element] = {}
+    errors: dict[int, str] = {}
+
+    def fetch(agency: AgencyConfig, search: int) -> ET.Element:
+        return search_list(
+            oc,
+            query=query,
+            search=search,
+            display=display,
+            page=page,
+            target=agency.target,
+        )
+
+    with ThreadPoolExecutor(max_workers=min(12, len(request_list))) as executor:
+        futures = {
+            executor.submit(fetch, agency, search): (index, agency)
+            for index, (agency, search) in enumerate(request_list)
+        }
+        for future in as_completed(futures):
+            index, _agency = futures[future]
+            try:
+                roots[index] = future.result()
+            except Exception as exc:
+                errors[index] = str(exc)
+
+    return (
+        [
+            (agency, roots[index])
+            for index, (agency, _search) in enumerate(request_list)
+            if index in roots
+        ],
+        [
+            (agency, errors[index])
+            for index, (agency, _search) in enumerate(request_list)
+            if index in errors
+        ],
+    )
+
+
 def search_resource(
     oc: str,
     target: str,

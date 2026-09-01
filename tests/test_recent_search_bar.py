@@ -57,3 +57,22 @@ def test_ten_recent_searches_fit_on_one_row(tmp_path) -> None:
     assert bar.height() <= 32
 
     bar.close()
+
+
+def test_single_recent_search_uses_compact_chip_width(tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    settings = QSettings(
+        str(tmp_path / "recent.ini"), QSettings.Format.IniFormat
+    )
+    settings.setValue("recent_searches", ["공간재구조화"])
+    manager = RecentSearchManager(settings)
+    bar = RecentSearchBar(QLineEdit(), manager)
+    bar.setFixedWidth(900)
+    bar.show()
+    app.processEvents()
+
+    button = bar._query_buttons[0][0]
+    assert button.width() <= RecentSearchBar.QUERY_BUTTON_MAX_WIDTH
+    assert button.width() < bar.width() // 2
+
+    bar.close()

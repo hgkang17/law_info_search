@@ -1383,6 +1383,8 @@ class DetailSearchBar(QWidget):
 class RecentSearchBar(QWidget):
     """최근 검색어를 한 줄에 최대 10개까지 표시하고 다시 입력하거나 초기화함."""
 
+    QUERY_BUTTON_MAX_WIDTH = 104
+
     def __init__(
         self,
         query_input: QLineEdit,
@@ -1449,6 +1451,7 @@ class RecentSearchBar(QWidget):
             button = QPushButton(" ".join(query.split()))
             button.setObjectName("recentSearchButton")
             button.setMinimumWidth(0)
+            button.setMaximumWidth(self.QUERY_BUTTON_MAX_WIDTH)
             button.setSizePolicy(
                 QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed
             )
@@ -1458,6 +1461,9 @@ class RecentSearchBar(QWidget):
             )
             self.items_layout.addWidget(button, 1)
             self._query_buttons.append((button, query))
+        # 검색어가 적을 때 칩이 남은 한 줄 전체를 늘려 쓰지 않게 한다.
+        # 폭이 부족하면 앞의 stretch factor에 따라 모든 칩이 함께 줄어든다.
+        self.items_layout.addStretch(1)
         self._schedule_query_eliding()
 
     def _schedule_query_eliding(self, delay: int = 0) -> None:
