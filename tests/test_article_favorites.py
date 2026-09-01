@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -237,6 +238,85 @@ def test_article_favorite_can_be_moved_into_its_own_folder(
     )
     assert folder.childCount() == 1
     assert folder.child(0).data(0, tab.FAVORITE_KIND_ROLE) == "article"
+    tab.close()
+
+
+def test_moving_favorite_into_folder_keeps_other_folders_collapsed(
+    tmp_path,
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    cache = LawDocumentCache(tmp_path / "saved")
+    rows = [
+        {**ROW, "id": f"00929{index}", "name": f"시험 법령 {index}"}
+        for index in range(1, 4)
+    ]
+    for row in rows:
+        assert cache.save(row, {"법령": {"조문": []}})
+        assert cache.set_favorite(row, True)
+
+    folders = ViewedLawsTab._default_favorite_folders()
+    law_root = next(folder for folder in folders if folder["category"] == "law")
+    law_root["children"] = [
+        {
+            "id": "folder-a",
+            "name": "검토 폴더",
+            "category": "law",
+            "children": [],
+        },
+        {
+            "id": "folder-b",
+            "name": "보관 폴더",
+            "category": "law",
+            "children": [],
+        },
+    ]
+    settings = QSettings(
+        str(tmp_path / "collapsed-folders.ini"), QSettings.Format.IniFormat
+    )
+    settings.setValue(
+        ViewedLawsTab.FAVORITE_FOLDER_SETTINGS_KEY,
+        json.dumps(folders, ensure_ascii=False),
+    )
+    assert cache.set_favorite_layout(
+        [
+            (cache.path_for_row(rows[0]), "folder-a", 0),
+            (cache.path_for_row(rows[1]), "folder-b", 0),
+            (cache.path_for_row(rows[2]), "", 0),
+        ]
+    )
+
+    tab = ViewedLawsTab(cache, favorites_only=True, settings=settings)
+    tab.show()
+    app.processEvents()
+    tree = tab.favorite_trees["law"]
+
+    def folder_items() -> dict[str, object]:
+        return {
+            str(item.data(0, tab.FAVORITE_FOLDER_ID_ROLE)): item
+            for index in range(tree.topLevelItemCount())
+            if (item := tree.topLevelItem(index)).data(
+                0, tab.FAVORITE_KIND_ROLE
+            )
+            == "folder"
+        }
+
+    before = folder_items()
+    before["folder-a"].setExpanded(False)
+    before["folder-b"].setExpanded(False)
+    loose_item = next(
+        tree.topLevelItem(index)
+        for index in range(tree.topLevelItemCount())
+        if tree.topLevelItem(index).data(0, tab.FAVORITE_KIND_ROLE) == "record"
+    )
+    tree.takeTopLevelItem(tree.indexOfTopLevelItem(loose_item))
+    before["folder-a"].addChild(loose_item)
+    tab._persist_favorite_tree("저장")
+    app.processEvents()
+
+    after = folder_items()
+    assert after["folder-a"].childCount() == 2
+    assert after["folder-a"].isExpanded() is False
+    assert after["folder-b"].isExpanded() is False
     tab.close()
 
 

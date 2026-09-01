@@ -702,6 +702,30 @@ class ViewedLawsTab(QWidget):
         if not self.favorite_trees:
             return
         query_active = bool(self.search_input.text().strip())
+        # 드래그 저장이나 다른 화면의 별표 변경으로 목록을 다시 그려도
+        # 사용자가 접어 둔 폴더까지 전부 열리지 않게 현재 상태를 먼저 잡는다.
+        expanded_folder_ids: dict[str, set[str]] = {}
+        tree_had_items: dict[str, bool] = {}
+        for category, tree in self.favorite_trees.items():
+            tree_had_items[category] = tree.topLevelItemCount() > 0
+            expanded: set[str] = set()
+
+            def remember_expanded(item: QTreeWidgetItem) -> None:
+                if (
+                    item.data(0, self.FAVORITE_KIND_ROLE) == "folder"
+                    and item.isExpanded()
+                ):
+                    folder_id = str(
+                        item.data(0, self.FAVORITE_FOLDER_ID_ROLE) or ""
+                    )
+                    if folder_id:
+                        expanded.add(folder_id)
+                for child_index in range(item.childCount()):
+                    remember_expanded(item.child(child_index))
+
+            for item_index in range(tree.topLevelItemCount()):
+                remember_expanded(tree.topLevelItem(item_index))
+            expanded_folder_ids[category] = expanded
         self._populating_favorite_tree = True
         for tree in self.favorite_trees.values():
             tree.blockSignals(True)
@@ -858,7 +882,12 @@ class ViewedLawsTab(QWidget):
                     category_counts["article"] += 1
             for category, label in self.FAVORITE_CATEGORIES:
                 tree = self.favorite_trees[category]
-                tree.expandAll()
+                if query_active or not tree_had_items[category]:
+                    tree.expandAll()
+                else:
+                    expanded = expanded_folder_ids[category]
+                    for folder_id, item in folder_items[category].items():
+                        item.setExpanded(folder_id in expanded)
                 tree.setDragEnabled(not query_active)
                 tree.setAcceptDrops(not query_active)
                 self.favorite_category_titles[category].setText(
