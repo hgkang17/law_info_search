@@ -243,6 +243,22 @@ def test_saved_keyword_detail_opens_in_reading_mode(qt_app, tmp_path) -> None:
         qt_app.processEvents()
 
 
+def test_related_admin_rule_extracts_only_requested_article() -> None:
+    payload = {
+        "AdmRulService": {
+            "조문내용": (
+                "제1조(목적) 첫 조문"
+                "제2조(일반원칙) 선택 조문"
+                "제3조(적용) 다음 조문"
+            )
+        }
+    }
+
+    assert AiLawSearchTab._extract_related_admin_article(
+        payload, "2", "0"
+    ) == "제2조(일반원칙) 선택 조문"
+
+
 def test_keyword_ai_agent_uses_current_detail(
     qt_app, tmp_path, monkeypatch
 ) -> None:

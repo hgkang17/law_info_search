@@ -83,6 +83,7 @@ from utils.formatting import (
     law_short_name,
 )
 from utils.parsing import (
+    extract_admin_rule_article,
     extract_law_article,
     insert_admin_clause_breaks,
     json_list,
@@ -7090,6 +7091,9 @@ class ResourceSearchTab(QWidget):
                         "short_name": "",
                         "keyword_provision": provision,
                         "keyword_jo": keyword_jo,
+                        # 행정규칙 키워드 결과는 전문이 아니라 조문 단위로
+                        # 저장하므로 같은 규칙의 다른 조문과 캐시를 나눈다.
+                        "jo_code": keyword_jo if is_admin else "",
                         # 키워드 API의 행정규칙ID는 admrul 본문 API가
                         # 요구하는 행정규칙일련번호가 아니다. 본문 조회 전에
                         # 목록에서 일련번호를 해소해야 한다.
@@ -7984,25 +7988,37 @@ class ResourceSearchTab(QWidget):
         if not isinstance(info, dict):
             info = {}
         title = json_text(info.get("행정규칙명")) or str(self.pending_row["name"])
+        is_keyword_article = bool(
+            self.pending_row.get("resolve_admrul_id")
+            and self.pending_row.get("keyword_jo")
+        )
+        identifier_label = (
+            "행정규칙ID" if is_keyword_article else "행정규칙일련번호"
+        )
         metadata = [
-            ("행정규칙일련번호", str(self.pending_row["id"])),
+            (identifier_label, str(self.pending_row["id"])),
             ("발령일자", self._display_date(json_text(info.get("발령일자")))),
             ("발령번호", json_text(info.get("발령번호"))),
             ("시행일자", self._display_date(json_text(info.get("시행일자")))),
             ("소관부처", json_text(info.get("소관부처명"))),
             ("행정규칙종류", json_text(info.get("행정규칙종류"))),
         ]
-        sections = [
-            (
-                "조문",
-                normalize_admin_rule_text(
-                    json_text(service.get("조문내용"))
-                ),
+        raw_body = json_text(service.get("조문내용"))
+        if is_keyword_article:
+            jo_code = str(self.pending_row.get("keyword_jo") or "")
+            body = extract_admin_rule_article(
+                raw_body,
+                str(int(jo_code[:4])),
+                str(int(jo_code[4:])),
             )
-        ]
-        appendix = json_text(service.get("부칙"))
-        if appendix:
-            sections.append(("부칙", normalize_admin_rule_text(appendix)))
+            if not body:
+                raise ValueError("행정규칙 본문에서 해당 조문을 찾지 못했습니다.")
+            sections = [("조문", body)]
+        else:
+            sections = [("조문", normalize_admin_rule_text(raw_body))]
+            appendix = json_text(service.get("부칙"))
+            if appendix:
+                sections.append(("부칙", normalize_admin_rule_text(appendix)))
         return title, metadata, sections
 
     def _parse_ordin_detail(self, data: dict) -> tuple[str, list, list]:

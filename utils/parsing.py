@@ -492,6 +492,31 @@ def normalize_admin_rule_text(
     return insert_law_style_article_breaks(normalized)
 
 
+def extract_admin_rule_article(
+    text: str, article_number: str, article_branch: str = ""
+) -> str:
+    """행정규칙 전문에서 지정한 제N조(의M)만 돌려준다."""
+    normalized = normalize_admin_rule_text(str(text or ""))
+    if not normalized:
+        return ""
+    try:
+        target = (int(article_number or 0), int(article_branch or 0))
+    except (TypeError, ValueError):
+        return ""
+    selected: list[str] = []
+    collecting = False
+    for line in normalized.splitlines():
+        match = re.match(r"^제\s*(\d+)조(?:의\s*(\d+))?", line.strip())
+        if match:
+            current = (int(match.group(1)), int(match.group(2) or 0))
+            if collecting and current != target:
+                break
+            collecting = current == target
+        if collecting:
+            selected.append(line)
+    return "\n".join(selected).strip()
+
+
 def insert_admin_clause_breaks(text: str) -> str:
     """훈령·예규·지침처럼 원문에 줄바꿈이 거의 없는 행정규칙 조문을 위해,
     '1-1-1.' 식 조항번호·'(1)' 식 하위번호·■·○·'제N편/장/절' 앞의

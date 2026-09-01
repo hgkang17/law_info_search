@@ -239,10 +239,13 @@ def test_integrated_search_keeps_keyword_article_rows(window) -> None:
     ET.SubElement(repeated, "조문가지번호").text = "0"
     ET.SubElement(repeated, "조문제목").text = "용도지역안에서의 건폐율"
 
-    direct, _ = _keyword_root(
+    direct, admin = _keyword_root(
         "행정규칙", "행정규칙명", "개발제한구역 관리지침",
         "행정규칙ID", "009999", "발령기관명", "국토교통부",
     )
+    ET.SubElement(admin, "조문번호").text = "2"
+    ET.SubElement(admin, "조문가지번호").text = "0"
+    ET.SubElement(admin, "조문제목").text = "관리의 원칙"
     # 별표ㆍ서식은 본문을 열 일련번호가 없어 통합 목록에서 뺀다.
     annex = ET.SubElement(direct, "법령별표서식", {"id": "3"})
     ET.SubElement(annex, "법령명").text = "제외 대상 별표"
@@ -269,6 +272,8 @@ def test_integrated_search_keeps_keyword_article_rows(window) -> None:
     assert [row["target"] for row in rows] == ["law", "law", "admrul"]
     assert not rows[0]["resolve_admrul_id"]
     assert rows[2]["resolve_admrul_id"]
+    assert rows[2]["keyword_jo"] == "000200"
+    assert rows[2]["jo_code"] == "000200"
     assert rows[0]["effective"] == "2024.07.01"
     assert not any(row["id"] == "007777" for row in rows)
 
@@ -342,6 +347,60 @@ def test_integrated_keyword_admin_rule_resolves_serial_before_detail(
     assert detail_calls == [("test-key", "admrul", "900003", "ID")]
     assert succeeded == [("resource_detail", payload)]
     assert failed == []
+
+
+def test_integrated_keyword_admin_rule_shows_only_selected_article(window) -> None:
+    direct, admin = _keyword_root(
+        "행정규칙", "행정규칙명", "공간재구조화계획 수립 등에 관한 지침",
+        "행정규칙ID", "46796", "발령기관명", "국토교통부",
+    )
+    ET.SubElement(admin, "조문번호").text = "2"
+    ET.SubElement(admin, "조문가지번호").text = "0"
+    ET.SubElement(admin, "조문제목").text = "공간재구조화계획 수립의 일반원칙"
+    rows, _total = window.resource_tab._parse_keyword_rows(
+        [(AI_RELATED_AGENCY, direct)], []
+    )
+    row = rows[0]
+    window.resource_tab.pending_row = row
+    payload = {
+        "AdmRulService": {
+            "행정규칙기본정보": {
+                "행정규칙명": "공간재구조화계획 수립 등에 관한 지침"
+            },
+            "조문내용": (
+                "제1조(목적) 첫 조문 내용"
+                "제2조(공간재구조화계획 수립의 일반원칙) 선택한 조문 내용"
+                "제3조(계획의 내용) 다음 조문 내용"
+            ),
+            "부칙": "부칙 내용",
+        }
+    }
+
+    _title, metadata, sections = window.resource_tab._parse_admrul_detail(
+        payload
+    )
+
+    assert ("행정규칙ID", "46796") in metadata
+    assert sections == [
+        (
+            "조문",
+            "제2조(공간재구조화계획 수립의 일반원칙) 선택한 조문 내용",
+        )
+    ]
+
+
+def test_integrated_admin_rule_articles_use_distinct_snapshot_keys(window) -> None:
+    first = {
+        "target": "admrul",
+        "id": "46796",
+        "name": "공간재구조화계획 수립 등에 관한 지침",
+        "jo_code": "000200",
+    }
+    second = {**first, "jo_code": "000300"}
+
+    assert window.resource_tab.law_cache.key_for_row(first) != (
+        window.resource_tab.law_cache.key_for_row(second)
+    )
 
 
 def test_integrated_search_keeps_keyword_hits_already_found_by_list_search(

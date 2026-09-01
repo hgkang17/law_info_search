@@ -63,6 +63,7 @@ from utils.formatting import (
 )
 from utils.parsing import (
     deserialize_agency_search_payload,
+    extract_admin_rule_article,
     json_list,
     json_text,
     law_unit_code,
@@ -1763,37 +1764,15 @@ class AiLawSearchTab(QWidget):
             message = json_text(payload.get("Law"))
             raise ValueError(message or "행정규칙 본문을 찾지 못했습니다.")
         raw_body = service.get("조문내용")
-        body_lines: list[str] = []
-        if isinstance(raw_body, list):
-            for value in raw_body:
-                body_lines.extend(json_text(value).splitlines())
-        else:
-            body_lines = json_text(raw_body).splitlines()
-        if not body_lines:
+        body = json_text(raw_body)
+        if not body:
             raise ValueError("행정규칙 조문내용이 없습니다.")
-        target_number = int(article_number or 0)
-        target_branch = int(article_branch or 0)
-        selected: list[str] = []
-        collecting = False
-        for line in body_lines:
-            match = re.match(r"^제\s*(\d+)조(?:의\s*(\d+))?", line.strip())
-            if match:
-                number = int(match.group(1))
-                branch = int(match.group(2) or 0)
-                if collecting and (number, branch) != (
-                    target_number,
-                    target_branch,
-                ):
-                    break
-                collecting = (number, branch) == (
-                    target_number,
-                    target_branch,
-                )
-            if collecting:
-                selected.append(line)
+        selected = extract_admin_rule_article(
+            body, article_number, article_branch
+        )
         if not selected:
             raise ValueError("행정규칙 본문에서 해당 조문을 찾지 못했습니다.")
-        return "\n".join(selected).strip()
+        return selected
 
     def _show_related_article_result(self, result: object) -> None:
         if not isinstance(result, dict):
