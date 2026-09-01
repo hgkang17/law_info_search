@@ -47,6 +47,73 @@ def named_law_reference_row(oc: str, law_name: str) -> dict[str, object]:
         return {**row, "from_history": True}
 
 
+def administrative_rule_detail_id(
+    oc: str,
+    name: str,
+    *,
+    rule_id: str = "",
+    issue_date: str = "",
+    issue_number: str = "",
+) -> str:
+    """연관검색의 행정규칙 ID를 본문용 일련번호로 바꾼다.
+
+    aiRltLs/aiSearch 응답의 ``행정규칙ID``는 admrul 본문 API가 받는
+    ``행정규칙일련번호``와 서로 다르다. 행정규칙 목록에서 같은 규칙을
+    다시 찾되, 개정 이력이나 동명 규칙이 섞이면 원래 결과의 IDㆍ발령일ㆍ
+    발령번호로 후보를 좁힌다.
+    """
+    name = str(name or "").strip()
+    if not name:
+        raise ValueError("행정규칙명이 없습니다.")
+    payload = search_resource(oc, "admrul", name, display=100)
+    root = payload.get("AdmRulSearch", {})
+    candidates = (
+        [item for item in json_list(root.get("admrul")) if isinstance(item, dict)]
+        if isinstance(root, dict)
+        else []
+    )
+    expected_name = re.sub(r"\s+", "", name)
+    candidates = [
+        item
+        for item in candidates
+        if re.sub(r"\s+", "", json_text(item.get("행정규칙명")))
+        == expected_name
+    ]
+    if not candidates:
+        raise ValueError("같은 이름의 행정규칙을 찾지 못했습니다.")
+
+    def narrow(field: str, expected: str, normalize) -> None:
+        nonlocal candidates
+        wanted = normalize(expected)
+        if not wanted:
+            return
+        matched = [
+            item
+            for item in candidates
+            if normalize(json_text(item.get(field))) == wanted
+        ]
+        if matched:
+            candidates = matched
+
+    def compact(value: str) -> str:
+        return re.sub(r"\s+", "", str(value or ""))
+
+    def digits(value: str) -> str:
+        return re.sub(r"\D", "", str(value or ""))
+
+    def issue_key(value: str) -> str:
+        return re.sub(r"[\s제호]", "", str(value or "")).casefold()
+
+    narrow("행정규칙ID", rule_id, compact)
+    narrow("발령일자", issue_date, digits)
+    narrow("발령번호", issue_number, issue_key)
+
+    item_id = json_text(candidates[0].get("행정규칙일련번호"))
+    if not item_id:
+        raise ValueError("행정규칙 본문 조회 ID가 없습니다.")
+    return item_id
+
+
 def load_law_reference_payload(
     oc: str,
     row: dict[str, object],
@@ -167,35 +234,13 @@ class RelatedArticleWorker(QThread):
             is_admin = str(self.row.get("kind") or "").startswith("행정규칙")
             if is_admin:
                 name = str(self.row.get("name") or "")
-                search_payload = search_resource(
-                    self.oc, "admrul", name, display=100
+                item_id = administrative_rule_detail_id(
+                    self.oc,
+                    name,
+                    rule_id=str(self.row.get("source_id") or ""),
+                    issue_date=str(self.row.get("publication_date") or ""),
+                    issue_number=str(self.row.get("publication_number") or ""),
                 )
-                root = search_payload.get("AdmRulSearch", {})
-                candidates = (
-                    json_list(root.get("admrul"))
-                    if isinstance(root, dict)
-                    else []
-                )
-                expected = re.sub(r"\s+", "", name)
-                matched = next(
-                    (
-                        candidate
-                        for candidate in candidates
-                        if isinstance(candidate, dict)
-                        and re.sub(
-                            r"\s+",
-                            "",
-                            json_text(candidate.get("행정규칙명")),
-                        )
-                        == expected
-                    ),
-                    None,
-                )
-                if not isinstance(matched, dict):
-                    raise ValueError("같은 이름의 행정규칙을 찾지 못했습니다.")
-                item_id = json_text(matched.get("행정규칙일련번호"))
-                if not item_id:
-                    raise ValueError("행정규칙 본문 조회 ID가 없습니다.")
                 payload = get_resource_detail(
                     self.oc, "admrul", item_id, id_param="ID"
                 )
@@ -237,6 +282,9 @@ class ResourceApiWorker(QThread):
         detail_target: str = "",
         id_param: str = "ID",
         law_name: str = "",
+        resolve_admrul_id: bool = False,
+        issue_date: str = "",
+        issue_number: str = "",
         jo: str = "",
         hang: str = "",
         ho: str = "",
@@ -253,6 +301,9 @@ class ResourceApiWorker(QThread):
         self.detail_target = detail_target
         self.id_param = id_param
         self.law_name = law_name
+        self.resolve_admrul_id = resolve_admrul_id
+        self.issue_date = issue_date
+        self.issue_number = issue_number
         self.jo = jo
         self.hang = hang
         self.ho = ho
@@ -311,10 +362,19 @@ class ResourceApiWorker(QThread):
                 "resource_detail",
                 "document_reference_detail",
             ):
+                item_id = self.item_id
+                if self.resolve_admrul_id:
+                    item_id = administrative_rule_detail_id(
+                        self.oc,
+                        self.law_name,
+                        rule_id=self.item_id,
+                        issue_date=self.issue_date,
+                        issue_number=self.issue_number,
+                    )
                 result = get_resource_detail(
                     self.oc,
                     self.detail_target,
-                    self.item_id,
+                    item_id,
                     id_param=self.id_param,
                 )
             elif self.operation == "law_reference_detail":

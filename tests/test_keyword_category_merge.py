@@ -13,6 +13,8 @@ from PySide6.QtWidgets import QApplication
 
 from models.law import AI_RELATED_AGENCY, AI_SEARCH_AGENCY
 from ui.main_window import LawSearchWindow
+import workers.search_worker as search_worker_module
+from workers.search_worker import ResourceApiWorker
 
 
 @pytest.fixture(scope="module")
@@ -265,8 +267,81 @@ def test_integrated_search_keeps_keyword_article_rows(window) -> None:
     ]
     # 본문 조회는 기존 법령ㆍ행정규칙 경로를 그대로 탄다.
     assert [row["target"] for row in rows] == ["law", "law", "admrul"]
+    assert not rows[0]["resolve_admrul_id"]
+    assert rows[2]["resolve_admrul_id"]
     assert rows[0]["effective"] == "2024.07.01"
     assert not any(row["id"] == "007777" for row in rows)
+
+
+def test_integrated_keyword_admin_rule_resolves_serial_before_detail(
+    qt_app, monkeypatch
+) -> None:
+    name = "공간재구조화계획 수립 등에 관한 지침"
+    search_calls = []
+    detail_calls = []
+
+    def fake_search(oc, target, query, **kwargs):
+        search_calls.append((oc, target, query, kwargs))
+        return {
+            "AdmRulSearch": {
+                "admrul": [
+                    {
+                        "행정규칙명": name,
+                        "행정규칙ID": "11111",
+                        "행정규칙일련번호": "900001",
+                    },
+                    {
+                        "행정규칙명": name,
+                        "행정규칙ID": "46796",
+                        "행정규칙일련번호": "900002",
+                        "발령일자": "20230101",
+                        "발령번호": "2023-1",
+                    },
+                    {
+                        "행정규칙명": name,
+                        "행정규칙ID": "46796",
+                        "행정규칙일련번호": "900003",
+                        "발령일자": "20240731",
+                        "발령번호": "제2024-410호",
+                    },
+                ]
+            }
+        }
+
+    payload = {"AdmRulService": {"조문내용": "제2조(일반원칙) 내용"}}
+
+    def fake_detail(oc, target, item_id, *, id_param="ID"):
+        detail_calls.append((oc, target, item_id, id_param))
+        return payload
+
+    monkeypatch.setattr(search_worker_module, "search_resource", fake_search)
+    monkeypatch.setattr(search_worker_module, "get_resource_detail", fake_detail)
+    succeeded = []
+    failed = []
+    worker = ResourceApiWorker(
+        "resource_detail",
+        oc="test-key",
+        target="admrul",
+        item_id="46796",
+        detail_target="admrul",
+        law_name=name,
+        resolve_admrul_id=True,
+        issue_date="2024.07.31",
+        issue_number="2024-410",
+    )
+    worker.succeeded.connect(
+        lambda operation, result: succeeded.append((operation, result))
+    )
+    worker.failed.connect(lambda operation, error: failed.append((operation, error)))
+
+    worker.run()
+
+    assert search_calls == [
+        ("test-key", "admrul", name, {"display": 100})
+    ]
+    assert detail_calls == [("test-key", "admrul", "900003", "ID")]
+    assert succeeded == [("resource_detail", payload)]
+    assert failed == []
 
 
 def test_integrated_search_keeps_keyword_hits_already_found_by_list_search(

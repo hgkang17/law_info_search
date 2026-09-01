@@ -7090,6 +7090,10 @@ class ResourceSearchTab(QWidget):
                         "short_name": "",
                         "keyword_provision": provision,
                         "keyword_jo": keyword_jo,
+                        # 키워드 API의 행정규칙ID는 admrul 본문 API가
+                        # 요구하는 행정규칙일련번호가 아니다. 본문 조회 전에
+                        # 목록에서 일련번호를 해소해야 한다.
+                        "resolve_admrul_id": is_admin,
                         "raw": {},
                     }
                 )
@@ -7237,6 +7241,10 @@ class ResourceSearchTab(QWidget):
                 item_id=item_id,
                 detail_target=str(config["detail_target"]),
                 id_param=str(config["id_param"]),
+                law_name=str(row.get("name") or ""),
+                resolve_admrul_id=bool(row.get("resolve_admrul_id")),
+                issue_date=str(row.get("date") or ""),
+                issue_number=str(row.get("number") or ""),
                 parent=self,
             ),
             (
