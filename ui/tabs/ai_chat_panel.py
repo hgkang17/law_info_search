@@ -123,6 +123,35 @@ class ChatInput(QPlainTextEdit):
         super().keyPressEvent(event)
 
 
+class WidthAwareWrapLabel(QLabel):
+    """현재 배치 폭으로 줄바꿈 높이를 알려 주는 대화용 라벨.
+
+    QLabel의 기본 sizeHint는 긴 리치텍스트를 좁은 임시 폭으로 재어 둘 수
+    있다. 넓은 독립 AI 화면에서는 실제 글보다 그 높이가 훨씬 커져 마지막
+    인용문 아래에 빈 스크롤 공간으로 남으므로, 실제 폭의 heightForWidth를
+    사용한다.
+    """
+
+    def sizeHint(self) -> QSize:
+        hint = super().sizeHint()
+        if not self.wordWrap():
+            return hint
+        width = self.width()
+        if width <= 0:
+            return hint
+        height = self.heightForWidth(width)
+        if height >= 0:
+            hint.setHeight(height)
+            hint.setWidth(min(hint.width(), width))
+        return hint
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 (Qt 규약)
+        old_width = event.oldSize().width()
+        super().resizeEvent(event)
+        if old_width >= 0 and old_width != event.size().width():
+            self.updateGeometry()
+
+
 class ShimmerLabel(QLabel):
     """글자 위로 밝은 띠가 흘러 지나가는 라벨.
 
@@ -3421,7 +3450,7 @@ class AiChatPanel(QFrame):
         )
         bubble_layout = QVBoxLayout(bubble)
         bubble_layout.setContentsMargins(14, 9, 14, 9)
-        label = QLabel(self._to_html(text) or "&nbsp;")
+        label = WidthAwareWrapLabel(self._to_html(text) or "&nbsp;")
         label.setObjectName("aiChatUserText")
         label.setWordWrap(True)
         label.setMinimumWidth(0)
@@ -3480,7 +3509,7 @@ class AiChatPanel(QFrame):
         # 어떤 도구로 무엇을 찾았는지 지나간 것까지 쌓아 둔다. 진행줄은
         # 덮어쓰기라 마지막 하나만 남는데, 답의 근거를 되짚으려면 무엇을
         # 거쳐 왔는지가 남아 있어야 한다.
-        tool_log = QLabel()
+        tool_log = WidthAwareWrapLabel()
         tool_log.setObjectName("aiChatToolLog")
         tool_log.setFont(QFont(FONT_FAMILY, 8))
         tool_log.setWordWrap(True)
@@ -3492,7 +3521,9 @@ class AiChatPanel(QFrame):
         tool_log.setVisible(False)
         column_layout.addWidget(tool_log)
 
-        label = QLabel(self._to_html(text) if text else self._placeholder_html())
+        label = WidthAwareWrapLabel(
+            self._to_html(text) if text else self._placeholder_html()
+        )
         label.setWordWrap(True)
         label.setMinimumWidth(0)
         label.setTextFormat(Qt.TextFormat.RichText)
@@ -3524,7 +3555,7 @@ class AiChatPanel(QFrame):
         return column, label, status, tool_log
 
     def _make_error_bubble(self, text: str) -> QWidget:
-        label = QLabel(escape(text))
+        label = WidthAwareWrapLabel(escape(text))
         label.setObjectName("aiChatErrorText")
         label.setWordWrap(True)
         label.setFont(QFont(FONT_FAMILY, 9))
@@ -4157,7 +4188,7 @@ class AiChatPanel(QFrame):
         layout = column.layout()
         if layout is None:
             return
-        label = QLabel(html)
+        label = WidthAwareWrapLabel(html)
         label.setObjectName("aiChatCitationCheck")
         # 복사 줄에 바로 붙지 않게 한 줄만큼만 띄운다.
         label.setContentsMargins(0, 6, 0, 0)

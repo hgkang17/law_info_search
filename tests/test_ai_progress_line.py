@@ -578,6 +578,66 @@ def test_transcript_scroll_ends_at_last_bubble(qt_app, tmp_path) -> None:
         widget.deleteLater()
 
 
+def test_finished_answer_does_not_expand_below_citations(qt_app, tmp_path) -> None:
+    settings = QSettings(
+        str(tmp_path / "citation-bottom.ini"), QSettings.Format.IniFormat
+    )
+    widget = AiChatPanel(settings=settings, standalone=True)
+    try:
+        widget.resize(1100, 800)
+        widget.show()
+        widget._append_user("이 규정을 검토해 줘")
+        widget._begin_answer()
+        section = (
+            "## 검토 경로\n\n"
+            "관리지역의 세분 여부와 적용 기준을 확인하고 관련 법령과 "
+            "지침의 관계를 함께 검토합니다.\n\n"
+            "| 구분 | 허용 여부 |\n"
+            "|---|---|\n"
+            "| 계획관리지역 | 원칙적으로 가능 |\n"
+            "| 생산관리지역 | 요건을 확인하여 포함 |\n"
+            "| 보전관리지역 | 면적 상한 안에서 포함 |\n\n"
+            "- 기반시설과 환경 기준을 함께 확인합니다.\n"
+            "- 세부적인 면적 요건도 별도로 검토합니다."
+        )
+        answer = (
+            "\n\n---\n\n".join(section for _index in range(6))
+            + "\n\n"
+            "[국토계획법 제51조](law:009294:51), "
+            "[국토계획법 제37조](law:009294:37), "
+            "[국토계획법 제44조](law:009294:44)를 확인했습니다."
+        )
+        _stream_more(widget, qt_app, answer)
+        widget._answer_finished(widget._active_provider_name)
+        for _ in range(10):
+            qt_app.processEvents()
+
+        citation = widget.transcript_content.findChild(
+            QLabel, "aiChatCitationCheck"
+        )
+        assert citation is not None
+        answer_column = citation.parentWidget()
+        assert answer_column is not None
+        blank_inside_answer = answer_column.height() - (
+            citation.y() + citation.height()
+        )
+        bar = widget.transcript_scroll.verticalScrollBar()
+        bar.setValue(bar.maximum())
+        citation_bottom = citation.mapTo(
+            widget.transcript_scroll.viewport(), citation.rect().bottomLeft()
+        ).y()
+        trailing_space = (
+            widget.transcript_scroll.viewport().height() - citation_bottom
+        )
+
+        assert blank_inside_answer <= 12
+        assert bar.maximum() > 0
+        assert trailing_space <= 24
+    finally:
+        widget.shutdown()
+        widget.deleteLater()
+
+
 def test_sending_from_embedded_history_starts_new_chat(qt_app, tmp_path) -> None:
     settings = QSettings(
         str(tmp_path / "embedded-new-chat.ini"), QSettings.Format.IniFormat
