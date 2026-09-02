@@ -900,3 +900,44 @@ def test_admin_rule_popup_uses_body_parser_not_br_join(tmp_path) -> None:
     assert "개정문" not in html
     assert "별표내용" not in html
     assert "{'" not in html
+
+
+def test_admin_rule_popup_reads_nested_article_payload(tmp_path) -> None:
+    """법령식 행정규칙의 ``조문 → 조문내용`` 배열도 전문으로 표시한다."""
+    _app = QApplication.instance() or QApplication([])
+    settings = QSettings(str(tmp_path / "nested.ini"), QSettings.Format.IniFormat)
+    tab = ResourceSearchTab(
+        lambda: "test-oc",
+        RecentSearchManager(settings),
+        LawDocumentCache(tmp_path / "nested-saved"),
+    )
+    name = "훈령ㆍ예규 등의 발령 및 관리에 관한 규정"
+    payload = {
+        "AdmRulService": {
+            "행정규칙기본정보": {"행정규칙명": name},
+            "조문": {
+                "조문번호": ["0001", "0002"],
+                "조문내용": [
+                    "제1조(목적) 첫 조문 내용",
+                    "제2조(기본원칙) 둘째 조문 내용",
+                ],
+            },
+            "부칙": {
+                "부칙내용": ["부칙 <제431호>", "발령한 날부터 시행한다."]
+            },
+        }
+    }
+    row = {
+        "target": "admrul",
+        "label": "행정규칙",
+        "id": "2200000078285",
+        "name": name,
+        "raw": {},
+    }
+
+    title, html = tab._document_reference_html(row, payload=payload)
+
+    assert title == name
+    assert "제1조" in html and "첫 조문 내용" in html
+    assert "제2조" in html and "둘째 조문 내용" in html
+    assert "부칙" in html and "발령한 날부터 시행한다." in html

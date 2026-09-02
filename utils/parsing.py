@@ -139,7 +139,15 @@ def admin_rule_text(value: object) -> str:
         parts = [admin_rule_text(item) for item in value]
         return "\n".join(part for part in parts if part)
     if isinstance(value, dict):
-        return admin_rule_text(value.get("content", ""))
+        # 행정규칙에 따라 본문이 문자열로 바로 오기도 하고
+        # ``조문: {조문내용: [...]}``, ``부칙: {부칙내용: [...]}``처럼
+        # 한 단계 더 감싸져 오기도 한다.
+        parts = [
+            admin_rule_text(value.get(key))
+            for key in ("content", "조문내용", "부칙내용")
+            if value.get(key) is not None
+        ]
+        return "\n".join(part for part in parts if part)
     text = str(value or "")
     for _ in range(2):
         decoded = unescape(text)
@@ -1214,8 +1222,9 @@ def _admrul_document_plain(service: dict) -> str:
         effective = json_text(info.get("시행일자"))
         if title:
             parts.append(title + (f" (시행 {effective})" if effective else ""))
+    body_source = service.get("조문내용") or service.get("조문")
     body = admin_rule_plain_text(
-        normalize_admin_rule_text(admin_rule_text(service.get("조문내용")))
+        normalize_admin_rule_text(admin_rule_text(body_source))
     )
     if body:
         parts.append(body)

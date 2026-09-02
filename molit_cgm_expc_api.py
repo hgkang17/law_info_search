@@ -421,14 +421,25 @@ def attach_admin_rule_images(payload: dict) -> dict:
     service = payload.get("AdmRulService")
     if not isinstance(service, dict):
         return payload
+
+    def text_values(value: object):
+        if isinstance(value, str):
+            yield value
+        elif isinstance(value, list):
+            for item in value:
+                yield from text_values(item)
+        elif isinstance(value, dict):
+            for item in value.values():
+                yield from text_values(item)
+
     image_ids: list[str] = []
-    for field in ("조문내용", "부칙"):
-        value = service.get(field)
-        if not isinstance(value, str):
-            continue
-        for image_id in _ADMIN_RULE_IMAGE_PATTERN.findall(html.unescape(value)):
-            if image_id not in image_ids:
-                image_ids.append(image_id)
+    for field in ("조문내용", "조문", "부칙"):
+        for value in text_values(service.get(field)):
+            for image_id in _ADMIN_RULE_IMAGE_PATTERN.findall(
+                html.unescape(value)
+            ):
+                if image_id not in image_ids:
+                    image_ids.append(image_id)
     if not image_ids:
         return payload
 

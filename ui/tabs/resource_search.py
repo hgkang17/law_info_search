@@ -4794,10 +4794,12 @@ class ResourceSearchTab(QWidget):
             embedded_images = self._admin_rule_images(
                 record if record is not None else payload
             )
+            has_body = False
             for label, value in sections:
                 value = str(value or "")
                 if not value:
                     continue
+                has_body = True
                 html_parts.append(
                     '<div class="popup-section-title">'
                     f"{escape(str(label))}</div>"
@@ -4820,6 +4822,8 @@ class ResourceSearchTab(QWidget):
                     )
                     + "</div>"
                 )
+            if not has_body:
+                raise ValueError("문서 응답에서 표시할 본문을 찾지 못했습니다.")
             return title, "".join(html_parts)
         finally:
             self.pending_row = original_pending_row
@@ -5331,6 +5335,9 @@ class ResourceSearchTab(QWidget):
             or record.get("key") != key
             or not isinstance(record.get("title"), str)
             or not isinstance(record.get("html"), str)
+            # 중첩 조문을 읽지 못하던 버전이 제목 헤더만 저장한 캐시는
+            # API에서 다시 받아야 한다.
+            or '<div class="content">' not in record.get("html", "")
         ):
             return None
         try:
@@ -8096,7 +8103,8 @@ class ResourceSearchTab(QWidget):
             ("소관부처", json_text(info.get("소관부처명"))),
             ("행정규칙종류", json_text(info.get("행정규칙종류"))),
         ]
-        raw_body = admin_rule_text(service.get("조문내용"))
+        body_source = service.get("조문내용") or service.get("조문")
+        raw_body = admin_rule_text(body_source)
         if is_keyword_article:
             jo_code = str(self.pending_row.get("keyword_jo") or "")
             body = extract_admin_rule_article(

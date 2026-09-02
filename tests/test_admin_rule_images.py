@@ -31,6 +31,15 @@ def test_admin_rule_image_tags_keep_their_document_positions() -> None:
     ]
 
 
+def test_admin_rule_text_reads_structured_articles_and_appendix() -> None:
+    assert admin_rule_text(
+        {"조문내용": ["제1조(목적) 첫 조문", "제2조(적용) 둘째 조문"]}
+    ) == "제1조(목적) 첫 조문\n제2조(적용) 둘째 조문"
+    assert admin_rule_text(
+        {"부칙내용": ["부칙 제1호", "이 규정은 발령한 날부터 시행한다."]}
+    ) == "부칙 제1호\n이 규정은 발령한 날부터 시행한다."
+
+
 def test_admin_rule_images_render_and_missing_image_has_official_link() -> None:
     _app = QApplication.instance() or QApplication([])
     value = "\n".join(
@@ -70,10 +79,12 @@ def test_attach_admin_rule_images_downloads_each_id_once(monkeypatch) -> None:
     monkeypatch.setattr(api, "_request", fake_request)
     payload = {
         "AdmRulService": {
-            "조문내용": (
-                '표<img id="10"></img><img id="10"></img>'
-                '<img id="20"></img>'
-            )
+            "조문": {
+                "조문내용": [
+                    '표<img id="10"></img><img id="10"></img>',
+                    '<img id="20"></img>',
+                ]
+            }
         }
     }
 

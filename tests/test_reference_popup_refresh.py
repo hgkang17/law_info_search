@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from types import SimpleNamespace
 
@@ -13,6 +14,7 @@ from storage.cache import LawDocumentCache
 from storage.recent import RecentSearchManager
 from ui.dialogs import LawReferencePopup
 from ui.main_window import LawSearchWindow
+import ui.tabs.resource_search as resource_search_module
 from ui.tabs.resource_search import ResourceSearchTab
 
 
@@ -226,6 +228,36 @@ def test_law_reference_admin_fallback_keeps_document_refresh_request() -> None:
         (f"{name}::::", name, "<p>행정규칙 본문</p>")
     ]
     assert status_messages == [f"{name} 행정규칙 본문 조회 완료"]
+
+
+def test_blank_reference_cache_is_ignored(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        resource_search_module, "LAW_REFERENCE_CACHE_DIR", tmp_path
+    )
+    key = "훈령ㆍ예규 등의 발령 및 관리에 관한 규정::::"
+    path = ResourceSearchTab._reference_cache_path(key)
+    path.write_text(
+        json.dumps(
+            {
+                "schema": resource_search_module.LAW_REFERENCE_CACHE_SCHEMA,
+                "kind": "law_reference",
+                "key": key,
+                "title": "훈령ㆍ예규 등의 발령 및 관리에 관한 규정",
+                "html": '<div class="detail-header">제목만 있는 캐시</div>',
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    tab = SimpleNamespace(
+        _reference_popup_states={},
+        _reference_cache_path=ResourceSearchTab._reference_cache_path,
+    )
+
+    cached = ResourceSearchTab._load_reference_cache(tab, key)
+
+    assert cached is None
+    assert tab._reference_popup_states == {}
 
 
 def test_saved_reference_opens_popup_without_leaving_saved_history() -> None:
