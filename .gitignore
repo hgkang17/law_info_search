@@ -2,9 +2,6 @@
 \# law 캐시/
 markdown/
 
-# test_open_api_guide.py 로 뽑아본 API 응답 원본(개인 테스트 산출물)
-가이드_조회결과/
-
 # 빌드 산출물·백업
 _build/
 build/
