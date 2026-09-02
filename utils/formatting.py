@@ -52,7 +52,11 @@ DETAIL_DOCUMENT_STYLE = (
     "body { font-family:'Malgun Gothic'; font-weight:400; color:#172033; "
     "line-height:1.75; }"
     "h1 { font-family:'Malgun Gothic'; font-size:21px; font-weight:700; "
-    "color:#173b63; margin:0 0 14px 0; }"
+    "color:#173b63; margin:0 0 6px 0; }"
+    # 법제처 본문처럼 제목 아래에 시행일ㆍ공포번호ㆍ제개정구분을 한 줄로 둔다.
+    ".doc-subtitle { font-family:'Malgun Gothic'; font-size:13px; "
+    "font-weight:400; color:#3d4c60; margin:0 0 14px 0; }"
+    ".doc-short-name { font-size:14px; font-weight:400; color:#3d4c60; }"
     ".meta { background:#f3f7fb; border:1px solid #cfdcea; "
     "border-radius:8px; padding:14px 18px; margin-bottom:20px; }"
     ".meta table { width:100%; border-collapse:collapse; table-layout:fixed; }"
@@ -764,17 +768,49 @@ def body_to_html(
     return "".join(parts)
 
 
+def law_headline_text(short_name: str, subtitle: str) -> str:
+    """제목 옆 약칭과 아래 시행일 줄을 한 줄 평문으로 합친다(고정 머리글용)."""
+    parts = []
+    if short_name:
+        parts.append(f"( 약칭: {short_name} )")
+    if subtitle:
+        parts.append(str(subtitle))
+    return "  ".join(parts)
+
+
 def detail_document_header(
     title: str,
     metadata: list,
     terms: tuple[str, ...] = (),
+    *,
+    short_name: str = "",
+    subtitle: str = "",
 ) -> tuple[list[str], list[str]]:
-    """공통 본문 제목과 기본정보를 최대 3개 항목씩 가로 배치."""
+    """공통 본문 제목과 기본정보를 최대 3개 항목씩 가로 배치.
+
+    ``short_name``ㆍ``subtitle``은 법제처 본문 머리글과 같은 표기를 위한 것이다.
+    제목 옆에 ``( 약칭: 국토계획법 )``을, 그 아래에
+    ``[시행 2026. 7. 1.] [법률 제21447호, 2026. 3. 5., 타법개정]``을 둔다.
+    """
+    heading = highlight_html_text(str(title), terms)
+    if short_name:
+        heading += (
+            ' <span class="doc-short-name">'
+            f"( 약칭: {highlight_html_text(str(short_name), terms)} )</span>"
+        )
     html_parts = [
         DETAIL_DOCUMENT_STYLE,
-        f"<h1>{highlight_html_text(str(title), terms)}</h1>",
+        f"<h1>{heading}</h1>",
     ]
     plain_parts = [str(title)]
+    if short_name:
+        plain_parts.append(f"( 약칭: {short_name} )")
+    if subtitle:
+        html_parts.append(
+            '<div class="doc-subtitle">'
+            f"{highlight_html_text(str(subtitle), terms)}</div>"
+        )
+        plain_parts.append(str(subtitle))
     visible_metadata = [
         (str(label), str(value or ""))
         for label, value in metadata

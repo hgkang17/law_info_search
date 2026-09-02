@@ -2833,6 +2833,17 @@ class LawSearchWindow(QMainWindow):
                 font-size: 16px;
                 font-weight: 700;
             }
+            /* 본문을 굴려도 남는 붙박이 제목 줄(법령명ㆍ약칭ㆍ시행일). */
+            QLabel#pinnedDocumentHeadline {
+                background: #f3f7fb;
+                border: 1px solid #cfdcea;
+                border-radius: 6px;
+                color: #173b63;
+                font-family: "Pretendard", "Malgun Gothic";
+                font-size: 13px;
+                font-weight: 700;
+                padding: 6px 10px;
+            }
             QLabel#countBadge {
                 background: #e8f1fb;
                 color: #1768aa;

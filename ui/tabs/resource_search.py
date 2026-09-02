@@ -81,6 +81,7 @@ from utils.law_download import download_law_file
 from utils.formatting import (
     body_to_html,
     detail_document_header,
+    law_headline_text,
     full_law_url,
     highlight_html_text,
     law_base_name,
@@ -698,6 +699,17 @@ class ResourceSearchTab(QWidget):
         detail_layout.addLayout(detail_head)
         self.document_tab_strip.hide()
 
+        # 본문을 아래로 굴려도 어느 법령의 어느 시행일자를 보고 있는지 계속
+        # 보이도록, 제목 줄만 본문 위에 붙박이 라벨로 따로 둔다. 본문은
+        # QTextDocument라 CSS의 position:sticky 를 쓸 수 없다.
+        self.pinned_headline = QLabel("")
+        self.pinned_headline.setObjectName("pinnedDocumentHeadline")
+        self.pinned_headline.setWordWrap(True)
+        self.pinned_headline.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self.pinned_headline.hide()
+
         self.detail_view = DeferredWrapTextBrowser()
         self.detail_view.setAccessibleName("본문")
         detail_font = QFont(DETAIL_FONT_FAMILY)
@@ -795,6 +807,7 @@ class ResourceSearchTab(QWidget):
         detail_body_layout.setContentsMargins(0, 0, 0, 0)
         detail_body_layout.setSpacing(8)
         detail_body_layout.addWidget(self.detail_search)
+        detail_body_layout.addWidget(self.pinned_headline)
         detail_view_row = QWidget()
         detail_view_row.setObjectName("detailViewRow")
         detail_view_row_layout = QHBoxLayout(detail_view_row)
@@ -3524,6 +3537,44 @@ class ResourceSearchTab(QWidget):
             inner = inner[: -len(closing)]
         return head, inner
 
+    @staticmethod
+    def _merge_law_blocks_for_display(
+        blocks: list[dict[str, str]],
+        anchor_units: list[tuple[str, str, str]],
+    ) -> list[dict[str, str]]:
+        """호ㆍ목을 근거로 삼은 하위법령이 없는 항은 호까지 한 칸에 묶는다.
+
+        3단비교 표는 한 블록이 한 행이라, 법률 항과 그에 딸린 호가 각각
+        다른 행이 된다. 옆 칸 시행령이 길면 그 높이만큼 항과 1호 사이가
+        벌어진다(국계법 제144조에서 시행령 제134조 전체가 ① 행에 붙는 경우).
+        그 항 안의 호를 짚은 하위법령 조문이 하나도 없으면 나눌 이유가
+        없으므로 합쳐서 간격을 없앤다. 호를 짚은 조문이 하나라도 있으면
+        지금처럼 호마다 나눠 그 자리에 정확히 붙인다.
+        """
+        merged: list[dict[str, str]] = []
+        for group in hang_groups_from_blocks(blocks):
+            if len(group) <= 1:
+                merged.extend(group)
+                continue
+            keeps_detail = any(
+                (ho or mok)
+                and block_index_for_unit_or_none(group, hang, ho, mok) is not None
+                for hang, ho, mok in anchor_units
+            )
+            if keeps_detail:
+                merged.extend(group)
+                continue
+            head = group[0]
+            merged.append(
+                {
+                    "hang": head.get("hang", ""),
+                    "ho": head.get("ho", ""),
+                    "mok": head.get("mok", ""),
+                    "html": "".join(block["html"] for block in group),
+                }
+            )
+        return merged
+
     def _comparison_node_fragments(
         self,
         node: dict,
@@ -3901,15 +3952,53 @@ class ResourceSearchTab(QWidget):
         decree_header = column_law_name(decree_nodes, "시행령")
         rule_header = column_law_name(rule_nodes, "시행규칙")
 
-        fragments_by_row: list[list[dict]] = [[] for _ in blocks]
-        for node in decree_nodes:
-            node_law_name = json_text(node.get("법령명")) or "시행령"
-            last_row_index = 0
-            for fragment in self._comparison_node_fragments(
+        # 조각을 먼저 만들어 두고 어떤 항ㆍ호를 근거로 삼는지 확인한다.
+        # 호를 짚은 하위법령이 없으면 그 항은 호까지 한 칸에 묶어, 옆 칸이
+        # 길 때 항과 1호 사이가 벌어지지 않게 한다.
+        decree_fragment_lists = [
+            (
                 node,
-                fallback_law_name="시행령",
-                show_law_name=node_law_name != decree_header,
-            ):
+                self._comparison_node_fragments(
+                    node,
+                    fallback_law_name="시행령",
+                    show_law_name=(json_text(node.get("법령명")) or "시행령")
+                    != decree_header,
+                ),
+            )
+            for node in decree_nodes
+        ]
+        remaining_rules: list[dict] = []
+        for node in rule_nodes:
+            node_law_name = json_text(node.get("법령명")) or "시행규칙"
+            remaining_rules.extend(
+                self._comparison_node_fragments(
+                    node,
+                    fallback_law_name="시행규칙",
+                    show_law_name=node_law_name != rule_header,
+                )
+            )
+        anchor_units = [
+            primary_source_unit(
+                self._law_source_units_referenced_by_decree(
+                    self._fragment_plain_text(fragment), base_code
+                )
+            )
+            for _node, fragments in decree_fragment_lists
+            for fragment in fragments
+        ] + [
+            primary_source_unit(
+                self._law_source_units_referenced_by_decree(
+                    self._fragment_plain_text(fragment), base_code
+                )
+            )
+            for fragment in remaining_rules
+        ]
+        blocks = self._merge_law_blocks_for_display(blocks, anchor_units)
+
+        fragments_by_row: list[list[dict]] = [[] for _ in blocks]
+        for _node, node_fragments in decree_fragment_lists:
+            last_row_index = 0
+            for fragment in node_fragments:
                 hang, ho, mok = primary_source_unit(
                     self._law_source_units_referenced_by_decree(
                         self._fragment_plain_text(fragment), base_code
@@ -3985,16 +4074,6 @@ class ResourceSearchTab(QWidget):
             return pairs, leftover
 
         row_pairs: list[list[tuple[str, str]]] = [[] for _ in blocks]
-        remaining_rules: list[dict] = []
-        for node in rule_nodes:
-            node_law_name = json_text(node.get("법령명")) or "시행규칙"
-            remaining_rules.extend(
-                self._comparison_node_fragments(
-                    node,
-                    fallback_law_name="시행규칙",
-                    show_law_name=node_law_name != rule_header,
-                )
-            )
         for index, fragments in enumerate(fragments_by_row):
             pairs, remaining_rules = pairs_for_fragments(
                 fragments, remaining_rules
@@ -7597,12 +7676,17 @@ class ResourceSearchTab(QWidget):
             title, metadata, sections = self._parse_ordin_detail(payload)
         else:
             raise ValueError("이 유형은 본문 조회를 지원하지 않습니다.")
+        short_name, subtitle = (
+            self._law_document_headline(payload) if target == "law" else ("", "")
+        )
         self._open_document_tab(self.pending_row, defer_restore=True)
         self._set_detail_document(
             title,
             metadata,
             sections,
             build_toc=True,
+            short_name=short_name,
+            subtitle=subtitle,
             administrative_rule=target == "admrul",
             embedded_images=(
                 self._admin_rule_images(payload)
@@ -7956,12 +8040,15 @@ class ResourceSearchTab(QWidget):
             "source_row": dict(source_row),
             "favorite_unit": dict(unit),
         }
+        short_name, subtitle = self._law_document_headline(payload)
         self._open_document_tab(tab_row, defer_restore=True)
         self._set_detail_document(
             title,
             metadata,
             [("조문내용", article_text)],
             build_toc=True,
+            short_name=short_name,
+            subtitle=subtitle,
         )
         self.status_label.setText(
             f"{tab_row['name']} 저장 본문 열기 완료 · API 호출 없음"
@@ -8173,9 +8260,86 @@ class ResourceSearchTab(QWidget):
         """
         return ()
 
-    def _detail_header(self, title: str, metadata: list) -> tuple[list[str], list[str]]:
+    def _set_pinned_headline(
+        self, title: str, short_name: str, subtitle: str
+    ) -> None:
+        """본문 위에 붙박이로 남는 제목 줄. 법령이 아니면 감춘다."""
+        headline = law_headline_text(short_name, subtitle)
+        if not headline:
+            self.pinned_headline.clear()
+            self.pinned_headline.hide()
+            return
+        text = f"{title}  {headline}".strip()
+        self.pinned_headline.setText(text)
+        self.pinned_headline.setToolTip(text)
+        self.pinned_headline.show()
+
+    @classmethod
+    def _law_document_headline(cls, payload: object) -> tuple[str, str]:
+        """법령 응답에서 약칭과 법제처식 시행일 줄을 만든다.
+
+        국가법령정보센터 본문 머리글과 같은 표기를 쓴다.
+        ``[시행 2026. 7. 1.] [법률 제21447호, 2026. 3. 5., 타법개정]``
+        값이 없는 법령은 만들 수 있는 부분만 넣고, 하나도 없으면 빈 줄을 준다.
+        """
+        if not isinstance(payload, dict):
+            return "", ""
+        law = payload.get("법령")
+        if not isinstance(law, dict):
+            return "", ""
+        info = law.get("기본정보")
+        if not isinstance(info, dict):
+            return "", ""
+
+        short_name = json_text(info.get("법령명약칭"))
+        effective = cls._headline_date(json_text(info.get("시행일자")))
+        # 법종구분은 ``{"content": "법률", …}``처럼 감싸서 오기도 한다.
+        kind = info.get("법종구분")
+        kind_text = json_text(
+            kind.get("content") if isinstance(kind, dict) else kind
+        )
+        number = json_text(info.get("공포번호")).lstrip("0")
+        promulgated = cls._headline_date(json_text(info.get("공포일자")))
+        revision = json_text(info.get("제개정구분"))
+
+        parts: list[str] = []
+        if effective:
+            parts.append(f"[시행 {effective}]")
+        inner = ", ".join(
+            item
+            for item in (
+                f"{kind_text} 제{number}호" if kind_text and number else "",
+                promulgated,
+                revision,
+            )
+            if item
+        )
+        if inner:
+            parts.append(f"[{inner}]")
+        return short_name, " ".join(parts)
+
+    @staticmethod
+    def _headline_date(value: str) -> str:
+        """``20260701`` 을 법제처 표기인 ``2026. 7. 1.`` 로."""
+        digits = re.sub(r"\D", "", value or "")
+        if len(digits) < 8:
+            return ""
+        return f"{int(digits[:4])}. {int(digits[4:6])}. {int(digits[6:8])}."
+
+    def _detail_header(
+        self,
+        title: str,
+        metadata: list,
+        *,
+        short_name: str = "",
+        subtitle: str = "",
+    ) -> tuple[list[str], list[str]]:
         return detail_document_header(
-            title, metadata, self.detail_highlight_terms
+            title,
+            metadata,
+            self.detail_highlight_terms,
+            short_name=short_name,
+            subtitle=subtitle,
         )
 
     def _popup_detail_header(self, title: str, metadata: list) -> list[str]:
@@ -8238,8 +8402,13 @@ class ResourceSearchTab(QWidget):
         build_toc: bool = False,
         administrative_rule: bool = False,
         embedded_images: dict[str, str] | None = None,
+        short_name: str = "",
+        subtitle: str = "",
     ) -> None:
-        html_parts, plain_parts = self._detail_header(title, metadata)
+        html_parts, plain_parts = self._detail_header(
+            title, metadata, short_name=short_name, subtitle=subtitle
+        )
+        self._set_pinned_headline(title, short_name, subtitle)
         toc_entries: list[tuple[int, str, str]] = []
         is_law_document = (
             build_toc
