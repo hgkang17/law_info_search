@@ -273,6 +273,9 @@ def law_reference_html_text(
     # 조문 인용은 현재 법령이 아니라 그 법령의 조문이다.
     adjacent_law = ""
     adjacent_end = -1
+    # ``제2조제1호 및 제2호``에서 뒤의 호가 이어받을 조 번호.
+    adjacent_jo = ""
+    adjacent_jo_branch = ""
     # 본문이 (이하 "법"이라 한다)로 선언한 약칭 → 실제 법령명.
     declared_aliases: dict[str, str] = dict(law_aliases or {})
     for match in LAW_REFERENCE_PATTERN.finditer(value):
@@ -335,10 +338,24 @@ def law_reference_html_text(
         # 조 번호 없이 적힌 `제1항`, `제2항제3호` 등은 현재 보고 있는
         # 같은 조문 내부를 가리킨다. 같은 화면을 다시 팝업으로 여는 링크는
         # 탐색에 도움이 되지 않으므로 일반 본문으로 둔다.
+        # 다만 `제2조제1호 및 제2호`처럼 바로 앞에서 조를 밝힌 열거가
+        # 이어지는 경우는 그 조의 다른 호를 가리키므로 조를 이어받아 건다.
+        carried_jo = ""
+        carried_jo_branch = ""
         if unit_match and not unit_match.group("jo"):
-            parts.append(highlight_html_text(reference, terms))
-            last = match.end()
-            continue
+            if (
+                adjacent_jo
+                and _is_enumeration_gap(value[adjacent_end : match.start()])
+            ):
+                carried_jo = adjacent_jo
+                carried_jo_branch = adjacent_jo_branch
+            else:
+                parts.append(highlight_html_text(reference, terms))
+                last = match.end()
+                continue
+        if unit_match and unit_match.group("jo"):
+            adjacent_jo = str(unit_match.group("jo") or "")
+            adjacent_jo_branch = str(unit_match.group("jo_branch") or "")
         if use_api_links:
             parameters = [f"name={quote(law_name, safe='')}"]
             # 법령ID는 지금 보고 있는 법령을 가리킬 때만 재사용한다.
@@ -360,6 +377,10 @@ def law_reference_html_text(
                     "mok",
                 ):
                     unit_value = str(unit_match.group(key) or "")
+                    if not unit_value and key == "jo":
+                        unit_value = carried_jo
+                    if not unit_value and key == "jo_branch":
+                        unit_value = carried_jo_branch
                     if unit_value:
                         parameters.append(f"{key}={quote(unit_value, safe='')}")
             url = f"lawref://open?{'&'.join(parameters)}"

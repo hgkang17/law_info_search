@@ -1373,6 +1373,8 @@ def resolve_law_reference_row(payload: object, law_name: str) -> dict[str, objec
         "short_name": json_text(matched.get("법령약칭명")),
         "mst": json_text(matched.get("법령일련번호")),
         "revision": json_text(matched.get("제개정구분명")),
+        # 폐지ㆍ연혁 법령을 현행처럼 읽지 않도록 화면에서 표시할 근거.
+        "history_code": json_text(matched.get("현행연혁코드")),
         "raw": matched,
     }
 
@@ -1577,10 +1579,52 @@ def _collect_article_children(node: object, output: list[str]) -> None:
         node.get("항내용") or node.get("호내용") or node.get("목내용")
     )
     if content:
-        output.append(content)
+        output.append(normalize_amendment_note_dates(content))
     for key in ("호", "목"):
         for child in json_list(node.get(key)):
             _collect_article_children(child, output)
+
+
+# 개정 표기 안의 날짜. 법제처는 ``2009. 2. 6.``로 쓰는데 API는 ``2009.2.6``
+# 으로 준다. 본문 아무 데나 고치면 ``제3조제1항`` 같은 인용이나 금액ㆍ면적의
+# 소수점까지 건드리므로, <개정 …> [전문개정 …] 같은 표기 안에서만 바꾼다.
+_AMENDMENT_NOTE_PATTERN = re.compile(r"<[^<>]*>|\[[^\[\]]*\]")
+_AMENDMENT_NOTE_KEYWORDS = ("개정", "신설", "폐지", "삭제", "이동", "제정")
+_AMENDMENT_DATE_PATTERN = re.compile(
+    r"(?<!\d)(\d{4})\s*\.\s*(\d{1,2})\s*\.\s*(\d{1,2})\s*\.?(?!\d)"
+)
+
+
+def normalize_amendment_note_dates(text: str) -> str:
+    """개정 표기 안의 날짜를 법제처 표기(``2009. 2. 6.``)로 맞춘다."""
+    if not text:
+        return text
+
+    def fix_note(match: re.Match[str]) -> str:
+        note = match.group(0)
+        if not any(word in note for word in _AMENDMENT_NOTE_KEYWORDS):
+            return note
+        fixed = _AMENDMENT_DATE_PATTERN.sub(
+            lambda date: f"{date.group(1)}. {int(date.group(2))}. "
+            f"{int(date.group(3))}.",
+            note,
+        )
+        # ``2012.12.18법률 제11579호``처럼 날짜에 글자가 바로 붙어 오는
+        # 표기가 있다. 마침표를 붙인 뒤에는 한 칸 띄어야 읽힌다.
+        return re.sub(r"(\d{1,2}\.)(?=[가-힣])", r"\1 ", fixed)
+
+    return _AMENDMENT_NOTE_PATTERN.sub(fix_note, text)
+
+
+def law_article_note(unit: object) -> str:
+    """조문단위의 ``조문참고자료``(``[전문개정 2009. 2. 6.]``)를 한 줄로.
+
+    법제처 본문은 조문 끝에 이 표기를 따로 한 줄로 둔다. 본문 필드와 달리
+    별도 항목으로 오기 때문에 읽지 않으면 화면에서 통째로 빠진다.
+    """
+    if not isinstance(unit, dict):
+        return ""
+    return normalize_amendment_note_dates(json_text(unit.get("조문참고자료")))
 
 
 def law_article_text(units: object) -> str:
@@ -1598,9 +1642,13 @@ def law_article_text(units: object) -> str:
             continue
         content = json_text(unit.get("조문내용"))
         if content:
-            parts.append(content)
+            parts.append(normalize_amendment_note_dates(content))
         for paragraph in json_list(unit.get("항")):
             _collect_article_children(paragraph, parts)
+        # 법제처 본문처럼 ``[전문개정 …]``은 조문 끝에 따로 한 줄로 둔다.
+        note = law_article_note(unit)
+        if note:
+            parts.append(note)
     return "\n".join(parts)
 
 

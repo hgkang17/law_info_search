@@ -95,6 +95,8 @@ from utils.parsing import (
     insert_admin_clause_breaks,
     json_list,
     json_text,
+    law_article_note,
+    normalize_amendment_note_dates,
     law_unit_code,
     normalize_admin_rule_text,
     row_search_text,
@@ -544,6 +546,18 @@ class ResourceSearchTab(QWidget):
 
         self.result_table = StableHorizontalTableWidget(0, 7)
         self.result_table.setAccessibleName("검색 결과 표")
+        # 결과가 0건이면 빈 표만 남아 검색이 된 것인지 알기 어렵다. 아래
+        # 상태줄 안내는 그대로 두고, 표 한가운데에도 같은 뜻을 띄운다.
+        self.result_empty_label = QLabel(
+            "검색 결과가 없습니다.", self.result_table.viewport()
+        )
+        self.result_empty_label.setObjectName("resultEmptyNotice")
+        self.result_empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.result_empty_label.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents
+        )
+        self.result_empty_label.hide()
+        self.result_table.viewport().installEventFilter(self)
         self.result_table.setHorizontalHeader(
             ResultHeaderView(Qt.Orientation.Horizontal, self.result_table)
         )
@@ -1203,6 +1217,9 @@ class ResourceSearchTab(QWidget):
             "document": None,
             # 탭의 별표(즐겨찾기)를 켜고 끄려면 어떤 문서인지 알아야 한다.
             "row": None,
+            # 본문 위 붙박이 제목 줄. 탭마다 달라서 함께 저장해 두지 않으면
+            # 시행령 탭에서 앞서 보던 법률 머리글이 그대로 남는다.
+            "headline": "",
         }
 
     def _set_active_text_document(self, document: QTextDocument) -> None:
@@ -1457,6 +1474,9 @@ class ResourceSearchTab(QWidget):
 
     def _restore_document_state(self, key: str) -> None:
         state = self._document_states.get(key, self._empty_document_state())
+        # 탭마다 머리글이 다르므로 본문보다 먼저 바꿔 둔다. 저장된 값이
+        # 없으면(법령이 아닌 문서) 감춰서 앞 탭 머리글이 남지 않게 한다.
+        self._show_pinned_headline(str(state.get("headline") or ""))
         self._restoring_document = True
         # 탭을 바꿀 때마다 detail_view 하나에 새 문서 HTML을 다시
         # 불러오는데, 최종 폭이 자리 잡기 전에 한 번 그려졌다가 폭이
@@ -2591,9 +2611,34 @@ class ResourceSearchTab(QWidget):
         self.detail_search.set_base_selections([])
         self.toc_tree.clearSelection()
 
+    def _update_result_placeholder(self) -> None:
+        """결과가 없을 때 표 한가운데에 안내를 띄운다. 아래 상태줄은 그대로 둔다."""
+        label = getattr(self, "result_empty_label", None)
+        if label is None:
+            return
+        if self.result_table.rowCount():
+            label.hide()
+            return
+        viewport = self.result_table.viewport()
+        label.resize(viewport.size())
+        label.move(0, 0)
+        label.raise_()
+        label.show()
+
     def eventFilter(self, watched, event) -> bool:
         if (
-            watched is self.detail_view.viewport()
+            watched is self.result_table.viewport()
+            and event.type() == QEvent.Type.Resize
+        ):
+            self._update_result_placeholder()
+            return False
+        # 결과 표 필터는 __init__ 앞부분에서 걸리므로, 아직 만들어지지 않은
+        # 본문 뷰를 참조하지 않도록 확인하고 넘어간다.
+        detail_view = getattr(self, "detail_view", None)
+        if detail_view is None:
+            return super().eventFilter(watched, event)
+        if (
+            watched is detail_view.viewport()
             and event.type() == QEvent.Type.MouseMove
         ):
             position = event.position()
@@ -5990,6 +6035,7 @@ class ResourceSearchTab(QWidget):
         self.result_table.setRowCount(0)
         self.result_rows.clear()
         self.result_count.setText("0건")
+        self._update_result_placeholder()
         self._prepare_preview_for_outer_search()
         self.current_detail_text = ""
         self.copy_button.setEnabled(False)
@@ -6226,6 +6272,7 @@ class ResourceSearchTab(QWidget):
         finally:
             self.pending_row = original_pending_row
 
+        metadata = self._with_repeal_notice(metadata, source_row)
         html_parts = self._popup_detail_header(title, metadata)
         has_body = False
         for label, value in sections:
@@ -6708,6 +6755,7 @@ class ResourceSearchTab(QWidget):
                         self.result_table.setItem(row_index, column, item)
         finally:
             self._updating_cache_checks = False
+        self._update_result_placeholder()
 
     @staticmethod
     def _law_level_priority(related: str) -> int:
@@ -8150,9 +8198,13 @@ class ResourceSearchTab(QWidget):
                 continue
             content = json_text(unit.get("조문내용"))
             if content:
-                body_parts.append(content)
+                body_parts.append(normalize_amendment_note_dates(content))
             for paragraph in json_list(unit.get("항")):
                 self._append_law_children(paragraph, body_parts)
+            # 법제처 본문처럼 ``[전문개정 …]``은 조문 끝 별도 줄에 둔다.
+            note = law_article_note(unit)
+            if note:
+                body_parts.append(note)
         return title, metadata, [("조문", "\n".join(body_parts))]
 
     def _append_law_children(self, node: object, output: list[str]) -> None:
@@ -8162,7 +8214,7 @@ class ResourceSearchTab(QWidget):
             node.get("항내용") or node.get("호내용") or node.get("목내용")
         )
         if content:
-            output.append(content)
+            output.append(normalize_amendment_note_dates(content))
         for key in ("호", "목"):
             for child in json_list(node.get(key)):
                 self._append_law_children(child, output)
@@ -8260,16 +8312,49 @@ class ResourceSearchTab(QWidget):
         """
         return ()
 
+    @staticmethod
+    def _with_repeal_notice(metadata: list, row: object) -> list:
+        """폐지ㆍ연혁 법령이면 기본정보 맨 앞에 그 사실을 적는다.
+
+        인용을 따라 열린 팝업은 제목과 조문만 보여서, 이미 폐지된 법을
+        현행처럼 읽을 수 있다. 목록 검색의 ``현행연혁코드``가 ``연혁``이거나
+        현행에서 못 찾아 연혁에서 찾은 행(``from_history``)이면 표시한다.
+        """
+        if not isinstance(row, dict):
+            return metadata
+        raw = row.get("raw")
+        raw = raw if isinstance(raw, dict) else {}
+        history_code = json_text(row.get("history_code")) or json_text(
+            raw.get("현행연혁코드")
+        )
+        revision = json_text(row.get("revision")) or json_text(
+            raw.get("제개정구분명")
+        )
+        if revision in ("폐지", "타법폐지"):
+            notice = f"{revision} — 현재 효력이 없습니다"
+        elif history_code == "연혁" or row.get("from_history"):
+            notice = "연혁 법령 — 현행이 아닙니다"
+        else:
+            return metadata
+        return [("현행여부", notice), *metadata]
+
     def _set_pinned_headline(
         self, title: str, short_name: str, subtitle: str
     ) -> None:
         """본문 위에 붙박이로 남는 제목 줄. 법령이 아니면 감춘다."""
         headline = law_headline_text(short_name, subtitle)
-        if not headline:
+        text = f"{title}  {headline}".strip() if headline else ""
+        self._show_pinned_headline(text)
+        state = self._document_states.get(self._active_document_key)
+        if isinstance(state, dict):
+            state["headline"] = text
+
+    def _show_pinned_headline(self, text: str) -> None:
+        """저장해 둔 붙박이 제목 줄을 그대로 화면에 반영한다."""
+        if not text:
             self.pinned_headline.clear()
             self.pinned_headline.hide()
             return
-        text = f"{title}  {headline}".strip()
         self.pinned_headline.setText(text)
         self.pinned_headline.setToolTip(text)
         self.pinned_headline.show()

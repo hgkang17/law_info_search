@@ -2833,6 +2833,14 @@ class LawSearchWindow(QMainWindow):
                 font-size: 16px;
                 font-weight: 700;
             }
+            /* 결과가 0건일 때 표 한가운데에 뜨는 안내. */
+            QLabel#resultEmptyNotice {
+                background: transparent;
+                color: #6b7a8d;
+                font-family: "Pretendard", "Malgun Gothic";
+                font-size: 13px;
+                font-weight: 400;
+            }
             /* 본문을 굴려도 남는 붙박이 제목 줄(법령명ㆍ약칭ㆍ시행일). */
             QLabel#pinnedDocumentHeadline {
                 background: #f3f7fb;
@@ -2841,7 +2849,7 @@ class LawSearchWindow(QMainWindow):
                 color: #173b63;
                 font-family: "Pretendard", "Malgun Gothic";
                 font-size: 13px;
-                font-weight: 700;
+                font-weight: 400;
                 padding: 6px 10px;
             }
             QLabel#countBadge {

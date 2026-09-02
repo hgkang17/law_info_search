@@ -1,6 +1,7 @@
 """법령 본문 머리글(약칭ㆍ시행일)과 3단비교 항ㆍ호 행 병합 검증."""
 
 import os
+import re
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -12,7 +13,12 @@ from utils.formatting import (
     detail_document_header,
     law_headline_text,
 )
-from utils.parsing import insert_admin_clause_breaks
+from utils.formatting import law_reference_html_text
+from utils.parsing import (
+    insert_admin_clause_breaks,
+    law_article_text,
+    normalize_amendment_note_dates,
+)
 from utils.three_stage_alignment import law_content_blocks
 
 # body_to_html은 표지 폭을 QFontMetrics로 재므로 앱 인스턴스가 있어야 한다.
@@ -122,3 +128,78 @@ def test_rows_keep_split_when_a_subordinate_cites_a_ho() -> None:
     # ① 묶음(3블록)은 그대로, ② 묶음(3블록)만 하나로 합쳐진다.
     assert len(merged) == 4
     assert [block["ho"] for block in merged[:3]] == ["", "000100", "000200"]
+
+
+def test_amendment_note_dates_use_law_go_kr_format() -> None:
+    assert normalize_amendment_note_dates(
+        "이 법에서 사용하는 용어의 뜻은 다음과 같다. <개정 2011.4.14, 2024.2.6>"
+    ) == "이 법에서 사용하는 용어의 뜻은 다음과 같다. <개정 2011. 4. 14., 2024. 2. 6.>"
+    assert normalize_amendment_note_dates("[전문개정 2009.2.6][제목개정 2015.12.29]") == (
+        "[전문개정 2009. 2. 6.][제목개정 2015. 12. 29.]"
+    )
+    # 날짜에 글자가 바로 붙어 오면 한 칸 띄운다.
+    assert "2012. 12. 18. 법률" in normalize_amendment_note_dates(
+        "[2012.12.18법률 제11579호에 의하여 개정함]"
+    )
+
+
+def test_amendment_note_dates_leave_body_numbers_alone() -> None:
+    """개정 표기가 아닌 본문 숫자ㆍ조문 인용은 건드리지 않는다."""
+    body = "제3조제1항에 따라 100.5제곱미터 이상인 경우 제44조의3제2항을 적용한다."
+    assert normalize_amendment_note_dates(body) == body
+    assert normalize_amendment_note_dates("기준은 1.5.2에 따른다.") == "기준은 1.5.2에 따른다."
+
+
+def test_article_note_is_appended_as_its_own_line() -> None:
+    units = [
+        {
+            "조문내용": "제1조(목적) 이 법은 …을 목적으로 한다.",
+            "조문참고자료": "[전문개정 2009.2.6]",
+        }
+    ]
+    lines = law_article_text(units).splitlines()
+    assert lines[0].startswith("제1조(목적)")
+    assert lines[-1] == "[전문개정 2009. 2. 6.]"
+
+
+def test_enumerated_ho_reference_links_to_the_same_article() -> None:
+    """``제2조제1호 및 제2호``의 뒤 호도 앞 조를 이어받아 링크가 된다."""
+    html = law_reference_html_text(
+        "제2조제1호 및 제2호의 시설을 말한다.",
+        (),
+        use_api_links=True,
+        current_law_name="국토의 계획 및 이용에 관한 법률 시행규칙",
+    )
+    linked = re.findall(r">([^<>]+)</a>", html)
+    assert linked == ["제2조제1호", "제2호"]
+    assert "jo=2&ho=2" in html.replace("&amp;", "&")
+
+
+def test_standalone_ho_reference_stays_plain() -> None:
+    """앞에 조 인용이 없는 단독 호는 예전처럼 평문으로 둔다."""
+    html = law_reference_html_text(
+        "제2호에 해당하는 자는 신고한다.",
+        (),
+        use_api_links=True,
+        current_law_name="건축법",
+    )
+    assert "<a href=" not in html
+
+
+def test_repeal_notice_added_only_for_history_rows() -> None:
+    base = [("법령ID", "000808")]
+    assert ResourceSearchTab._with_repeal_notice(base, {"history_code": "연혁"})[0] == (
+        "현행여부",
+        "연혁 법령 — 현행이 아닙니다",
+    )
+    assert ResourceSearchTab._with_repeal_notice(base, {"revision": "폐지"})[0] == (
+        "현행여부",
+        "폐지 — 현재 효력이 없습니다",
+    )
+    assert ResourceSearchTab._with_repeal_notice(base, {"from_history": True})[0][0] == (
+        "현행여부"
+    )
+    # 현행 법령에는 붙이지 않는다.
+    assert ResourceSearchTab._with_repeal_notice(
+        base, {"history_code": "현행", "revision": "일부개정"}
+    ) == base

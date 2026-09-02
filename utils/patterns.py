@@ -238,7 +238,11 @@ LAW_REFERENCE_PATTERN = re.compile(
     rf"(?:제\d+항(?:의\d+)?)?(?:제\d+호(?:의\d+)?)?(?:[{KOREAN_ITEM_MARKERS}]목)?)"
     r"|(?P<current_article>(?:제\d+조(?:의\d+)?"
     rf"(?:제\d+항(?:의\d+)?)?(?:제\d+호(?:의\d+)?)?(?:[{KOREAN_ITEM_MARKERS}]목)?"
-    rf"|제\d+항(?:의\d+)?(?:제\d+호(?:의\d+)?)?(?:[{KOREAN_ITEM_MARKERS}]목)?))"
+    rf"|제\d+항(?:의\d+)?(?:제\d+호(?:의\d+)?)?(?:[{KOREAN_ITEM_MARKERS}]목)?"
+    # ``제2조제1호 및 제2호``처럼 조를 한 번만 적고 호만 잇는 열거. 조가
+    # 없으므로 앞 인용을 이어받을 때만 링크가 되고, 그렇지 않으면 지금처럼
+    # 평문으로 남는다.
+    rf"|제\d+호(?:의\d+)?(?:[{KOREAN_ITEM_MARKERS}]목)?))"
 )
 
 
