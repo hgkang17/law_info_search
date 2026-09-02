@@ -869,11 +869,15 @@ def test_admin_rule_popup_uses_body_parser_not_br_join(tmp_path) -> None:
         LawDocumentCache(tmp_path / "saved"),
     )
     payload = {
+        "_law_go_kr_images": {
+            "158685505": "data:image/gif;base64,R0lGODlhAQABAAAAACw="
+        },
         "AdmRulService": {
             "개정문": {"개정문내용": "훈령 개정문 원본"},
             "행정규칙기본정보": {"행정규칙명": "도시·군관리계획수립지침"},
             "조문내용": (
                 "1-6-2-1. 광역적 기초생활권을 설정한다."
+                '<img id="158685505"></img>'
                 "㉮ 둘 이상의 시ㆍ군이 공동으로 설치하는 시설"
             ),
             "별표단위": {"별표내용": "| 용도지역 | 면적 |"},
@@ -891,6 +895,8 @@ def test_admin_rule_popup_uses_body_parser_not_br_join(tmp_path) -> None:
     assert "legal-indent" in html
     assert "1-6-2-1." in html
     assert "설정한다.㉮" not in html.replace("&nbsp;", "")
+    assert "data:image/gif;base64,R0lGODlhAQABAAAAACw=" in html
+    assert "[[LAW_IMAGE:" not in html
     assert "개정문" not in html
     assert "별표내용" not in html
     assert "{'" not in html

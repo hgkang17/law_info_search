@@ -62,6 +62,8 @@ from utils.formatting import (
     strip_search_highlight_html,
 )
 from utils.parsing import (
+    admin_rule_plain_text,
+    admin_rule_text,
     deserialize_agency_search_payload,
     extract_admin_rule_article,
     json_list,
@@ -77,7 +79,7 @@ from PySide6.QtGui import QColor, QDesktopServices, QFont, QKeySequence, QShortc
 from PySide6.QtWidgets import QAbstractItemView, QApplication, QComboBox, QDialog, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton, QSizePolicy, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
 from html import escape
 import re
-from molit_cgm_expc_api import _find_text
+from molit_cgm_expc_api import ADMIN_RULE_IMAGES_KEY, _find_text
 from ui.dialogs import _position_dialog_beside
 
 
@@ -1764,7 +1766,7 @@ class AiLawSearchTab(QWidget):
             message = json_text(payload.get("Law"))
             raise ValueError(message or "행정규칙 본문을 찾지 못했습니다.")
         raw_body = service.get("조문내용")
-        body = json_text(raw_body)
+        body = admin_rule_text(raw_body)
         if not body:
             raise ValueError("행정규칙 조문내용이 없습니다.")
         selected = extract_admin_rule_article(
@@ -1782,10 +1784,26 @@ class AiLawSearchTab(QWidget):
             raise ValueError("연관 조문을 적용할 검색결과를 찾지 못했습니다.")
         row = self.result_rows[row_index]
         if result.get("target") == "admrul":
+            payload = result.get("payload")
             content = self._extract_related_admin_article(
-                result.get("payload"),
+                payload,
                 row.get("article_number", ""),
                 row.get("article_branch", ""),
+            )
+            embedded_images = (
+                payload.get(ADMIN_RULE_IMAGES_KEY, {})
+                if isinstance(payload, dict)
+                else {}
+            )
+            row["embedded_images"] = (
+                {
+                    str(image_id): str(uri)
+                    for image_id, uri in embedded_images.items()
+                    if str(image_id).isdigit()
+                    and str(uri).casefold().startswith("data:image/")
+                }
+                if isinstance(embedded_images, dict)
+                else {}
             )
         else:
             content = self._extract_related_law_article(result.get("payload"))
@@ -1883,10 +1901,26 @@ class AiLawSearchTab(QWidget):
                 ),
                 use_api_links=True,
                 administrative_rule=is_admin_rule,
+                embedded_images=(
+                    row.get("embedded_images")
+                    if is_admin_rule
+                    and isinstance(row.get("embedded_images"), dict)
+                    else None
+                ),
             )
             html_parts.append("<h2>조문내용</h2>")
             html_parts.append(f'<div class="content">{content_html}</div>')
-            plain_parts.extend(("", "[조문내용]", row["content"]))
+            plain_parts.extend(
+                (
+                    "",
+                    "[조문내용]",
+                    (
+                        admin_rule_plain_text(row["content"])
+                        if is_admin_rule
+                        else row["content"]
+                    ),
+                )
+            )
         else:
             if self.is_related:
                 error = row.get("article_error", "")

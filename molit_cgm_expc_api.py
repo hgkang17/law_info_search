@@ -24,9 +24,10 @@ law.go.kr DRF Open API를 이용해
   교체하면 됩니다.
 """
 
-import sys
+import base64
 import html
 import re
+import sys
 import time
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -38,6 +39,7 @@ import requests
 BASE_URL = "https://www.law.go.kr/DRF"
 LIST_ENDPOINT = f"{BASE_URL}/lawSearch.do"
 DETAIL_ENDPOINT = f"{BASE_URL}/lawService.do"
+FILE_DOWNLOAD_ENDPOINT = "https://www.law.go.kr/LSW/flDownload.do"
 TARGET = "molitCgmExpc"  # 국토교통부 법령해석(중앙부처 1차해석)
 
 
@@ -105,6 +107,15 @@ DETAIL_ID_PARAM = "ID"
 _RETRY_STATUSES = {404, 429, 503, 504}
 _RETRY_ATTEMPTS = 3
 _RETRY_BASE_DELAY = 0.3
+
+# 행정규칙 본문에는 표가 이미지 ID만 가진 태그로 섞여 내려온다.
+# 예: ``<img id="158685505"></img>``. 국가법령정보센터 본문 화면도
+# 이 ID를 ``flDownload.do?flSeq=...``로 바꿔 표시한다.
+_ADMIN_RULE_IMAGE_PATTERN = re.compile(
+    r"(?is)<img\b[^>]*\bid\s*=\s*[\"']?(\d+)[\"']?[^>]*>\s*(?:</img\s*>)?"
+)
+ADMIN_RULE_IMAGES_KEY = "_law_go_kr_images"
+_MAX_ADMIN_RULE_IMAGE_BYTES = 10 * 1024 * 1024
 
 
 def _looks_like_html_error(text: str) -> bool:
@@ -399,6 +410,60 @@ def get_resource_detail(
         expect_json=True,
     )
     return resp.json()
+
+
+def attach_admin_rule_images(payload: dict) -> dict:
+    """행정규칙 본문의 이미지 ID를 검증된 data URI로 붙인다.
+
+    화면 렌더링용 조회에서만 호출한다. 이미지 하나가 일시적으로 실패해도
+    본문 전체를 막지 않고, 받은 이미지만 붙여 텍스트는 계속 표시한다.
+    """
+    service = payload.get("AdmRulService")
+    if not isinstance(service, dict):
+        return payload
+    image_ids: list[str] = []
+    for field in ("조문내용", "부칙"):
+        value = service.get(field)
+        if not isinstance(value, str):
+            continue
+        for image_id in _ADMIN_RULE_IMAGE_PATTERN.findall(html.unescape(value)):
+            if image_id not in image_ids:
+                image_ids.append(image_id)
+    if not image_ids:
+        return payload
+
+    def download(image_id: str) -> tuple[str, str]:
+        response = _request(
+            FILE_DOWNLOAD_ENDPOINT,
+            {"flSeq": image_id},
+            timeout=20,
+        )
+        content = response.content
+        content_type = str(response.headers.get("Content-Type") or "")
+        mime_type = content_type.split(";", 1)[0].strip().casefold()
+        if not mime_type.startswith("image/"):
+            raise ValueError("법제처 이미지 응답 형식이 올바르지 않습니다.")
+        if not content or len(content) > _MAX_ADMIN_RULE_IMAGE_BYTES:
+            raise ValueError("법제처 이미지 크기가 허용 범위를 벗어났습니다.")
+        encoded = base64.b64encode(content).decode("ascii")
+        return image_id, f"data:{mime_type};base64,{encoded}"
+
+    embedded: dict[str, str] = {}
+    worker_count = min(4, len(image_ids))
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = {
+            executor.submit(download, image_id): image_id
+            for image_id in image_ids
+        }
+        for future in as_completed(futures):
+            try:
+                image_id, data_uri = future.result()
+            except (OSError, ValueError, requests.RequestException):
+                continue
+            embedded[image_id] = data_uri
+    if embedded:
+        payload[ADMIN_RULE_IMAGES_KEY] = embedded
+    return payload
 
 
 def get_law_article(

@@ -127,6 +127,37 @@ def json_text(value: object) -> str:
     return "\n".join(line for line in lines if line).strip()
 
 
+ADMIN_RULE_IMAGE_MARKER_PATTERN = re.compile(r"\[\[LAW_IMAGE:(\d+)\]\]")
+_ADMIN_RULE_IMAGE_TAG_PATTERN = re.compile(
+    r"(?is)<img\b[^>]*\bid\s*=\s*[\"']?(\d+)[\"']?[^>]*>\s*(?:</img\s*>)?"
+)
+
+
+def admin_rule_text(value: object) -> str:
+    """행정규칙 원문의 이미지 위치를 보존하면서 텍스트를 정리한다."""
+    if isinstance(value, list):
+        parts = [admin_rule_text(item) for item in value]
+        return "\n".join(part for part in parts if part)
+    if isinstance(value, dict):
+        return admin_rule_text(value.get("content", ""))
+    text = str(value or "")
+    for _ in range(2):
+        decoded = unescape(text)
+        if decoded == text:
+            break
+        text = decoded
+    text = _ADMIN_RULE_IMAGE_TAG_PATTERN.sub(
+        lambda match: f"\n[[LAW_IMAGE:{match.group(1)}]]\n",
+        text,
+    )
+    return json_text(text)
+
+
+def admin_rule_plain_text(value: str) -> str:
+    """복사·검색용 평문에서는 내부 이미지 토큰 대신 짧은 설명을 쓴다."""
+    return ADMIN_RULE_IMAGE_MARKER_PATTERN.sub("[원문 표 이미지]", str(value or ""))
+
+
 def _is_marker_fragment(text: str) -> bool:
     remainder = text
     for _ in range(12):
@@ -1183,10 +1214,14 @@ def _admrul_document_plain(service: dict) -> str:
         effective = json_text(info.get("시행일자"))
         if title:
             parts.append(title + (f" (시행 {effective})" if effective else ""))
-    body = normalize_admin_rule_text(json_text(service.get("조문내용")))
+    body = admin_rule_plain_text(
+        normalize_admin_rule_text(admin_rule_text(service.get("조문내용")))
+    )
     if body:
         parts.append(body)
-    appendix = normalize_admin_rule_text(json_text(service.get("부칙")))
+    appendix = admin_rule_plain_text(
+        normalize_admin_rule_text(admin_rule_text(service.get("부칙")))
+    )
     if appendix:
         parts.append("[부칙]\n" + appendix)
     return "\n".join(parts).strip()

@@ -28,6 +28,7 @@ from .patterns import (
     LAW_UNIT_REFERENCE_PATTERN,
 )
 from .parsing import (
+    ADMIN_RULE_IMAGE_MARKER_PATTERN,
     json_text,
     merge_marker_reference_fragments,
     merge_circled_reference_lines,
@@ -385,6 +386,7 @@ def body_to_html(
     use_api_links: bool = False,
     administrative_rule: bool = False,
     administrative_rule_normalized: bool = False,
+    embedded_images: dict[str, str] | None = None,
 ) -> str:
     """일반 본문과 법령 계층·글머리표 문단을 Qt용 HTML로 변환.
 
@@ -595,6 +597,33 @@ def body_to_html(
         if not line:
             flush_bullet()
             flush_paragraph()
+            continue
+
+        image_match = ADMIN_RULE_IMAGE_MARKER_PATTERN.fullmatch(line.strip())
+        if image_match:
+            flush_bullet()
+            flush_paragraph()
+            image_id = image_match.group(1)
+            image_uri = str((embedded_images or {}).get(image_id) or "")
+            if image_uri.startswith("data:image/"):
+                parts.append(
+                    '<div class="law-source-image" '
+                    'style="margin:8px 0 12px 0;">'
+                    f'<img src="{escape(image_uri, quote=True)}" '
+                    f'alt="원문 표 이미지 {escape(image_id)}" '
+                    'style="max-width:100%;" /></div>'
+                )
+            else:
+                image_url = (
+                    "https://www.law.go.kr/LSW/flDownload.do?flSeq="
+                    f"{image_id}"
+                )
+                parts.append(
+                    '<div class="law-source-image-missing" '
+                    'style="margin:8px 0 12px 0; color:#526176;">'
+                    f'<a href="{escape(image_url, quote=True)}">'
+                    "원문 표 이미지 열기</a></div>"
+                )
             continue
 
         heading_match = LAW_HEADING_PATTERN.match(line)

@@ -69,7 +69,11 @@ from workers.search_worker import (
 )
 from ui.tabs.ai_chat_panel import AiChatPanel
 from llm.inquiries import is_inquiry_target, split_doc_reference
-from molit_cgm_expc_api import AGENCY_BY_TARGET, _find_text
+from molit_cgm_expc_api import (
+    ADMIN_RULE_IMAGES_KEY,
+    AGENCY_BY_TARGET,
+    _find_text,
+)
 from utils.annex_notation import annex_hint_in_query, annex_related_law_name, row_matches_annex_hint
 from utils.annex_parse import parse_annex_bytes
 from utils.constants import DETAIL_FONT_FAMILY, FONT_FAMILY
@@ -83,6 +87,8 @@ from utils.formatting import (
     law_short_name,
 )
 from utils.parsing import (
+    admin_rule_plain_text,
+    admin_rule_text,
     extract_admin_rule_article,
     extract_law_article,
     insert_admin_clause_breaks,
@@ -4626,6 +4632,15 @@ class ResourceSearchTab(QWidget):
         title_guess = name or str(config["label"])
         if not force_api:
             snapshot = self.law_cache.load_snapshot(row)
+            if snapshot is not None and category == "admrul":
+                try:
+                    snapshot_version = int(
+                        snapshot.get("administrative_rule_parse_version") or 0
+                    )
+                except (TypeError, ValueError):
+                    snapshot_version = 0
+                if snapshot_version < ADMIN_RULE_PARSE_VERSION:
+                    snapshot = None
             if snapshot is not None:
                 try:
                     title, html = self._document_reference_html(
@@ -4776,6 +4791,9 @@ class ResourceSearchTab(QWidget):
             else:
                 raise ValueError("문서 본문을 찾지 못했습니다.")
             html_parts = self._popup_detail_header(title, metadata)
+            embedded_images = self._admin_rule_images(
+                record if record is not None else payload
+            )
             for label, value in sections:
                 value = str(value or "")
                 if not value:
@@ -4798,6 +4816,7 @@ class ResourceSearchTab(QWidget):
                         use_api_links=True,
                         administrative_rule=target == "admrul",
                         administrative_rule_normalized=target == "admrul",
+                        embedded_images=embedded_images,
                     )
                     + "</div>"
                 )
@@ -7215,6 +7234,22 @@ class ResourceSearchTab(QWidget):
                 return True
         elif not force_api:
             cached_snapshot = self.law_cache.load_snapshot(row)
+            if (
+                cached_snapshot is not None
+                and str(row.get("target") or "") == "admrul"
+            ):
+                try:
+                    cached_parse_version = int(
+                        cached_snapshot.get("administrative_rule_parse_version")
+                        or 0
+                    )
+                except (TypeError, ValueError):
+                    cached_parse_version = 0
+                # 구버전 저장본은 이미지 ID 자체를 버린 뒤라 화면에서
+                # 재정규화할 수 없다. 이 문서를 처음 다시 열 때만 API를
+                # 호출하고, 새 버전으로 저장한 뒤부터는 로컬에서 연다.
+                if cached_parse_version < ADMIN_RULE_PARSE_VERSION:
+                    cached_snapshot = None
             if cached_snapshot is not None:
                 self._open_cached_resource_snapshot(row, cached_snapshot)
                 return True
@@ -7307,6 +7342,7 @@ class ResourceSearchTab(QWidget):
                     cached_sections,
                     build_toc=True,
                     administrative_rule=True,
+                    embedded_images=self._admin_rule_images(record),
                 )
                 restored_formats = self._restore_cached_formatting(record)
                 restored_memos = self._restore_cached_memos(record)
@@ -7337,6 +7373,11 @@ class ResourceSearchTab(QWidget):
                 sections,
                 build_toc=True,
                 administrative_rule=target == "admrul",
+                embedded_images=(
+                    self._admin_rule_images(payload)
+                    if target == "admrul"
+                    else None
+                ),
             )
             restored_formats = self._restore_cached_formatting(record)
             restored_memos = self._restore_cached_memos(record)
@@ -7512,6 +7553,11 @@ class ResourceSearchTab(QWidget):
             sections,
             build_toc=True,
             administrative_rule=target == "admrul",
+            embedded_images=(
+                self._admin_rule_images(payload)
+                if target == "admrul"
+                else None
+            ),
         )
         status = (
             f"{self.pending_row['label']} ID {self.pending_row['id']} 본문 조회 완료"
@@ -7557,6 +7603,9 @@ class ResourceSearchTab(QWidget):
                             for label, value in sections
                             if str(value or "")
                         ],
+                        "administrative_rule_images": self._admin_rule_images(
+                            payload
+                        ),
                     }
                 )
             if self.law_cache.save_snapshot(
@@ -8003,7 +8052,7 @@ class ResourceSearchTab(QWidget):
             ("소관부처", json_text(info.get("소관부처명"))),
             ("행정규칙종류", json_text(info.get("행정규칙종류"))),
         ]
-        raw_body = json_text(service.get("조문내용"))
+        raw_body = admin_rule_text(service.get("조문내용"))
         if is_keyword_article:
             jo_code = str(self.pending_row.get("keyword_jo") or "")
             body = extract_admin_rule_article(
@@ -8016,10 +8065,27 @@ class ResourceSearchTab(QWidget):
             sections = [("조문", body)]
         else:
             sections = [("조문", normalize_admin_rule_text(raw_body))]
-            appendix = json_text(service.get("부칙"))
+            appendix = admin_rule_text(service.get("부칙"))
             if appendix:
                 sections.append(("부칙", normalize_admin_rule_text(appendix)))
         return title, metadata, sections
+
+    @staticmethod
+    def _admin_rule_images(source: object) -> dict[str, str]:
+        """API payload 또는 저장본에서 검증된 내장 이미지만 꺼낸다."""
+        if not isinstance(source, dict):
+            return {}
+        raw = source.get(ADMIN_RULE_IMAGES_KEY)
+        if not isinstance(raw, dict):
+            raw = source.get("administrative_rule_images")
+        if not isinstance(raw, dict):
+            return {}
+        return {
+            str(image_id): str(uri)
+            for image_id, uri in raw.items()
+            if str(image_id).isdigit()
+            and str(uri).casefold().startswith("data:image/")
+        }
 
     def _parse_ordin_detail(self, data: dict) -> tuple[str, list, list]:
         service = data.get("LawService")
@@ -8119,6 +8185,7 @@ class ResourceSearchTab(QWidget):
         *,
         build_toc: bool = False,
         administrative_rule: bool = False,
+        embedded_images: dict[str, str] | None = None,
     ) -> None:
         html_parts, plain_parts = self._detail_header(title, metadata)
         toc_entries: list[tuple[int, str, str]] = []
@@ -8147,9 +8214,20 @@ class ResourceSearchTab(QWidget):
                 use_api_links=True,
                 administrative_rule=administrative_rule,
                 administrative_rule_normalized=administrative_rule,
+                embedded_images=embedded_images,
             )
             html_parts.append(f'<div class="content">{section_html}</div>')
-            plain_parts.extend(("", f"[{label}]", value))
+            plain_parts.extend(
+                (
+                    "",
+                    f"[{label}]",
+                    (
+                        admin_rule_plain_text(value)
+                        if administrative_rule
+                        else value
+                    ),
+                )
+            )
         three_stage_articles: list[dict[str, object]] = []
         if is_law_document and current_law_id:
             for depth, label, anchor in toc_entries:

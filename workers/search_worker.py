@@ -12,6 +12,7 @@ from models.law import (
 )
 from molit_cgm_expc_api import (
     AgencyConfig,
+    attach_admin_rule_images,
     get_detail,
     get_historical_law,
     get_law_article,
@@ -245,6 +246,7 @@ class RelatedArticleWorker(QThread):
                 payload = get_resource_detail(
                     self.oc, "admrul", item_id, id_param="ID"
                 )
+                attach_admin_rule_images(payload)
                 target = "admrul"
             else:
                 item_id = str(self.row.get("source_id") or "")
@@ -381,6 +383,8 @@ class ResourceApiWorker(QThread):
                     item_id,
                     id_param=self.id_param,
                 )
+                if self.detail_target == "admrul":
+                    attach_admin_rule_images(result)
             elif self.operation == "law_reference_detail":
                 named_row = None
                 if self.law_name:
