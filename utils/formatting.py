@@ -11,7 +11,7 @@ from urllib.parse import quote
 
 from PySide6.QtGui import QFont, QFontMetrics
 
-from .constants import FONT_FAMILY
+from .constants import DETAIL_FONT_CSS_FAMILY, FONT_FAMILY
 from .patterns import (
     BULLET_PATTERN,
     LAW_HEADING_PATTERN,
@@ -47,16 +47,22 @@ from .parsing import (
 )
 
 
+# 폐지ㆍ연혁 법령 안내에 쓰는 기본정보 항목 이름. 화면에서 이 이름이면
+# 값에 경고 색을 입힌다.
+REPEAL_NOTICE_LABEL = "현행여부"
+
+
 DETAIL_DOCUMENT_STYLE = (
     "<style>"
-    "body { font-family:'Malgun Gothic'; font-weight:400; color:#172033; "
+    "body { font-family:" + DETAIL_FONT_CSS_FAMILY + "; font-weight:400; color:#172033; "
     "line-height:1.75; }"
-    "h1 { font-family:'Malgun Gothic'; font-size:21px; font-weight:700; "
+    "h1 { font-family:" + DETAIL_FONT_CSS_FAMILY + "; font-size:21px; font-weight:700; "
     "color:#173b63; margin:0 0 6px 0; }"
     # 법제처 본문처럼 제목 아래에 시행일ㆍ공포번호ㆍ제개정구분을 한 줄로 둔다.
-    ".doc-subtitle { font-family:'Malgun Gothic'; font-size:13px; "
+    ".doc-subtitle { font-family:" + DETAIL_FONT_CSS_FAMILY + "; font-size:13px; "
     "font-weight:400; color:#3d4c60; margin:0 0 14px 0; }"
-    ".doc-short-name { font-size:14px; font-weight:400; color:#3d4c60; }"
+    # 약칭은 제목 글자 크기(21px)의 절반으로 둔다.
+    ".doc-short-name { font-size:11px; font-weight:400; color:#3d4c60; }"
     ".meta { background:#f3f7fb; border:1px solid #cfdcea; "
     "border-radius:8px; padding:14px 18px; margin-bottom:20px; }"
     ".meta table { width:100%; border-collapse:collapse; table-layout:fixed; }"
@@ -65,10 +71,11 @@ DETAIL_DOCUMENT_STYLE = (
     ".meta-label { color:#3d4c60; font-weight:700; margin-right:8px; "
     "white-space:nowrap; }"
     ".meta-value { color:#172033; font-weight:400; }"
-    "h2 { font-family:'Malgun Gothic'; color:#1768aa; font-size:16px; "
+    ".meta-warning { color:#c0392b; font-weight:700; }"
+    "h2 { font-family:" + DETAIL_FONT_CSS_FAMILY + "; color:#1768aa; font-size:16px; "
     "font-weight:700; border-bottom:2px solid #dbeaf7; padding-bottom:6px; "
     "margin-top:22px; }"
-    ".content { font-family:'Malgun Gothic'; font-weight:400; font-size:14px; }"
+    ".content { font-family:" + DETAIL_FONT_CSS_FAMILY + "; font-weight:400; font-size:14px; }"
     ".paragraph { margin:0 0 10px 0; }"
     ".bullet { margin:0 0 7px 0; border-collapse:collapse; }"
     ".bullet-marker { font-weight:400; padding:0; }"
@@ -845,10 +852,14 @@ def detail_document_header(
             row = visible_metadata[offset : offset + 3]
             html_parts.append("<tr>")
             for label, value in row:
+                # 폐지ㆍ연혁 안내는 그냥 지나치기 쉬워 붉게 강조한다.
+                value_class = (
+                    "meta-warning" if label == REPEAL_NOTICE_LABEL else "meta-value"
+                )
                 html_parts.append(
                     '<td><span class="meta-label">'
                     f"{escape(label)}</span>&nbsp;"
-                    '<span class="meta-value">'
+                    f'<span class="{value_class}">'
                     f"{highlight_html_text(value, terms)}</span></td>"
                 )
                 plain_parts.append(f"{label} {value}")

@@ -82,6 +82,7 @@ from utils.formatting import (
     body_to_html,
     detail_document_header,
     law_headline_text,
+    REPEAL_NOTICE_LABEL,
     full_law_url,
     highlight_html_text,
     law_base_name,
@@ -4914,6 +4915,7 @@ class ResourceSearchTab(QWidget):
                     raise ValueError("이 유형은 본문 조회를 지원하지 않습니다.")
             else:
                 raise ValueError("문서 본문을 찾지 못했습니다.")
+            metadata = self._with_repeal_notice(metadata, row)
             html_parts = self._popup_detail_header(title, metadata)
             embedded_images = self._admin_rule_images(
                 record if record is not None else payload
@@ -8030,6 +8032,15 @@ class ResourceSearchTab(QWidget):
                 snapshot, row
             ):
                 self.law_cache.update_snapshot(row, snapshot)
+        # 저장 본문은 그려 둔 HTML을 그대로 되살리므로 _set_detail_document를
+        # 거치지 않는다. 붙박이 제목 줄은 여기서 따로 채워야 시행령처럼
+        # 캐시로 여는 법령에도 머리글이 뜬다.
+        short_name, subtitle = self._law_document_headline(payload)
+        self._set_pinned_headline(
+            str(record.get("name") or row.get("name") or ""),
+            short_name,
+            subtitle,
+        )
         if had_rendered_document:
             restored_formats = 0
             restored_memos = len(
@@ -8336,7 +8347,7 @@ class ResourceSearchTab(QWidget):
             notice = "연혁 법령 — 현행이 아닙니다"
         else:
             return metadata
-        return [("현행여부", notice), *metadata]
+        return [(REPEAL_NOTICE_LABEL, notice), *metadata]
 
     def _set_pinned_headline(
         self, title: str, short_name: str, subtitle: str
@@ -8466,11 +8477,18 @@ class ResourceSearchTab(QWidget):
         for offset in range(0, len(visible_metadata), 3):
             html_parts.append("<tr>")
             for label, value in visible_metadata[offset : offset + 3]:
+                shown = highlight_html_text(value, self.detail_highlight_terms)
+                if label == REPEAL_NOTICE_LABEL:
+                    # 폐지ㆍ연혁 법령을 현행으로 오해하지 않도록 붉게 강조한다.
+                    shown = (
+                        '<span style="color:#c0392b; font-weight:700;">'
+                        f"{shown}</span>"
+                    )
                 html_parts.append(
                     '<td><span class="meta-label">'
                     f"{escape(label)}</span>"
                     "&nbsp;"
-                    f"{highlight_html_text(value, self.detail_highlight_terms)}</td>"
+                    f"{shown}</td>"
                 )
             for _unused in range(3 - len(visible_metadata[offset : offset + 3])):
                 html_parts.append("<td></td>")
