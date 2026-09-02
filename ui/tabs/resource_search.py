@@ -6086,6 +6086,42 @@ class ResourceSearchTab(QWidget):
         if not isinstance(payload, dict) or not isinstance(source_row, dict):
             raise ValueError("인용 조문 응답에서 법령 정보를 찾지 못했습니다.")
 
+        if result.get("mode") == "admin_rule":
+            title, popup_html = self._document_reference_html(
+                source_row, payload=payload
+            )
+            item_id = str(source_row.get("id") or "")
+            reference_key = self._pending_reference_key or (
+                f"doc:admrul:{item_id}"
+            )
+            request = {
+                "href": f"doc:admrul:{item_id}",
+                "category": "admrul",
+                "item_id": item_id,
+                "name": title,
+                "reference_key": reference_key,
+                "title": title,
+            }
+            popup = self._pending_reference_popup
+            popup.reference_request = request
+            popup.reference_key = reference_key
+            popup.set_content(title, popup_html)
+            reference_key = self._remember_reference_popup(
+                {**source_row, "name": title},
+                title,
+                popup_html,
+                "",
+                "",
+                "",
+                "",
+                key_override=reference_key,
+                request_override=request,
+            )
+            popup.reference_key = reference_key
+            self._save_reference_cache(reference_key, title, popup_html)
+            self.status_label.setText(f"{title} 행정규칙 본문 조회 완료")
+            return
+
         jo = str(result.get("jo") or "")
         hang = str(result.get("hang") or "")
         ho = str(result.get("ho") or "")
@@ -6171,6 +6207,7 @@ class ResourceSearchTab(QWidget):
         mok: str,
         *,
         key_override: str = "",
+        request_override: dict[str, str] | None = None,
     ) -> str:
         key = key_override or self._reference_key(
             str(source_row.get("id") or ""),
@@ -6181,12 +6218,10 @@ class ResourceSearchTab(QWidget):
             mok,
         )
         previous_state = self._reference_popup_states.get(key, {})
-        self._reference_popup_states[key] = {
-            "kind": "law_reference",
-            "title": title,
-            "html": html,
-            "scroll": int(previous_state.get("scroll") or 0),
-            "request": {
+        request = (
+            dict(request_override)
+            if isinstance(request_override, dict)
+            else {
                 "law_id": str(source_row.get("id") or ""),
                 "law_name": str(source_row.get("name") or ""),
                 "jo": jo,
@@ -6195,7 +6230,16 @@ class ResourceSearchTab(QWidget):
                 "mok": mok,
                 "reference_key": key,
                 "title": title,
-            },
+            }
+        )
+        request["reference_key"] = key
+        request["title"] = title
+        self._reference_popup_states[key] = {
+            "kind": "law_reference",
+            "title": title,
+            "html": html,
+            "scroll": int(previous_state.get("scroll") or 0),
+            "request": request,
         }
         request = self._reference_popup_states[key]["request"]
         history_id = hashlib.sha256(key.encode("utf-8")).hexdigest()[:20]

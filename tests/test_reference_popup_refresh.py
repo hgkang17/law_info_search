@@ -170,6 +170,64 @@ def test_cached_reference_popup_reopens_without_api() -> None:
     assert status_messages[-1].endswith("API 호출 없음")
 
 
+def test_law_reference_admin_fallback_keeps_document_refresh_request() -> None:
+    name = "훈령·예규 등의 발령 및 관리에 관한 규정"
+    shown: list[tuple[str, str]] = []
+    saved: list[tuple[str, str, str]] = []
+    remembered: list[dict[str, str]] = []
+    popup = SimpleNamespace(
+        reference_request={},
+        reference_key="",
+        set_content=lambda title, html: shown.append((title, html)),
+    )
+    status_messages: list[str] = []
+
+    def remember(*_args, **kwargs):
+        remembered.append(dict(kwargs["request_override"]))
+        return str(kwargs["key_override"])
+
+    tab = SimpleNamespace(
+        _pending_reference_popup=popup,
+        _pending_reference_key=f"{name}::::",
+        _document_reference_html=lambda _row, payload: (
+            name,
+            "<p>행정규칙 본문</p>",
+        ),
+        _remember_reference_popup=remember,
+        _save_reference_cache=lambda key, title, html: saved.append(
+            (key, title, html)
+        ),
+        status_label=SimpleNamespace(setText=status_messages.append),
+    )
+    result = {
+        "mode": "admin_rule",
+        "payload": {"AdmRulService": {"조문내용": "본문"}},
+        "row": {
+            "target": "admrul",
+            "id": "2200000078285",
+            "name": name,
+        },
+    }
+
+    ResourceSearchTab._show_law_reference_detail(tab, result)
+
+    expected_request = {
+        "href": "doc:admrul:2200000078285",
+        "category": "admrul",
+        "item_id": "2200000078285",
+        "name": name,
+        "reference_key": f"{name}::::",
+        "title": name,
+    }
+    assert shown == [(name, "<p>행정규칙 본문</p>")]
+    assert popup.reference_request == expected_request
+    assert remembered == [expected_request]
+    assert saved == [
+        (f"{name}::::", name, "<p>행정규칙 본문</p>")
+    ]
+    assert status_messages == [f"{name} 행정규칙 본문 조회 완료"]
+
+
 def test_saved_reference_opens_popup_without_leaving_saved_history() -> None:
     opened: list[object] = []
     navigation_changes: list[int] = []

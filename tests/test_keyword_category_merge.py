@@ -437,6 +437,93 @@ def test_integrated_keyword_admin_rule_resolves_serial_before_detail(
     assert failed == []
 
 
+def test_admin_rule_name_matches_middle_dot_and_araea_dot(monkeypatch) -> None:
+    monkeypatch.setattr(
+        search_worker_module,
+        "search_resource",
+        lambda *_args, **_kwargs: {
+            "AdmRulSearch": {
+                "admrul": {
+                    "행정규칙명": "훈령ㆍ예규 등의 발령 및 관리에 관한 규정",
+                    "행정규칙일련번호": "900004",
+                }
+            }
+        },
+    )
+
+    item_id = search_worker_module.administrative_rule_detail_id(
+        "test-key", "훈령·예규 등의 발령 및 관리에 관한 규정"
+    )
+
+    assert item_id == "900004"
+
+
+def test_named_law_reference_falls_back_to_admin_rule(
+    qt_app, monkeypatch
+) -> None:
+    name = "훈령·예규 등의 발령 및 관리에 관한 규정"
+    payload = {
+        "AdmRulService": {
+            "행정규칙기본정보": {"행정규칙명": name},
+            "조문내용": "제1조(목적) 이 규정은 발령 및 관리에 관한 사항을 정한다.",
+        }
+    }
+    detail_calls = []
+    attached = []
+
+    monkeypatch.setattr(
+        search_worker_module,
+        "named_law_reference_row",
+        lambda _oc, _name: (_ for _ in ()).throw(ValueError("법령 없음")),
+    )
+    monkeypatch.setattr(
+        search_worker_module,
+        "administrative_rule_detail_id",
+        lambda oc, rule_name: (
+            "2200000078285"
+            if (oc, rule_name) == ("test-key", name)
+            else ""
+        ),
+    )
+
+    def fake_detail(oc, target, item_id, *, id_param="ID"):
+        detail_calls.append((oc, target, item_id, id_param))
+        return payload
+
+    monkeypatch.setattr(search_worker_module, "get_resource_detail", fake_detail)
+    monkeypatch.setattr(
+        search_worker_module,
+        "attach_admin_rule_images",
+        lambda result: attached.append(result),
+    )
+    succeeded = []
+    failed = []
+    worker = ResourceApiWorker(
+        "law_reference_detail",
+        oc="test-key",
+        target="law",
+        law_name=name,
+    )
+    worker.succeeded.connect(
+        lambda operation, result: succeeded.append((operation, result))
+    )
+    worker.failed.connect(lambda operation, error: failed.append((operation, error)))
+
+    worker.run()
+
+    assert detail_calls == [
+        ("test-key", "admrul", "2200000078285", "ID")
+    ]
+    assert attached == [payload]
+    assert failed == []
+    assert succeeded[0][0] == "law_reference_detail"
+    result = succeeded[0][1]
+    assert result["mode"] == "admin_rule"
+    assert result["row"]["target"] == "admrul"
+    assert result["row"]["name"] == name
+    assert result["payload"] is payload
+
+
 def test_integrated_keyword_admin_rule_shows_only_selected_article(window) -> None:
     direct, admin = _keyword_root(
         "행정규칙", "행정규칙명", "공간재구조화계획 수립 등에 관한 지침",

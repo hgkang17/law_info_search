@@ -74,12 +74,17 @@ def administrative_rule_detail_id(
         if isinstance(root, dict)
         else []
     )
-    expected_name = re.sub(r"\s+", "", name)
+    # 원문과 법제처 목록이 가운뎃점(U+00B7)과 아래아점(U+318D)을
+    # 서로 다르게 쓰는 사례가 있다. 제목 비교에서 두 구분점만 제거해
+    # 같은 행정규칙을 놓치지 않되, 다른 문장부호까지 넓게 무시하지 않는다.
+    def normalized_rule_name(value: object) -> str:
+        return re.sub(r"[\s·ㆍ]+", "", str(value or ""))
+
+    expected_name = normalized_rule_name(name)
     candidates = [
         item
         for item in candidates
-        if re.sub(r"\s+", "", json_text(item.get("행정규칙명")))
-        == expected_name
+        if normalized_rule_name(json_text(item.get("행정규칙명"))) == expected_name
     ]
     if not candidates:
         raise ValueError("같은 이름의 행정규칙을 찾지 못했습니다.")
@@ -394,7 +399,43 @@ class ResourceApiWorker(QThread):
                         )
                     except ValueError:
                         if not self.item_id:
-                            raise
+                            # 본문 안의 따옴표 제목은 먼저 법령 링크로 만들어진다.
+                            # 법률ㆍ연혁법령에 없는 제목이면 행정규칙을 한 번 더
+                            # 찾아 같은 참조 팝업에서 열 수 있게 한다.
+                            admin_rule_id = administrative_rule_detail_id(
+                                self.oc, self.law_name
+                            )
+                            payload = get_resource_detail(
+                                self.oc,
+                                "admrul",
+                                admin_rule_id,
+                                id_param="ID",
+                            )
+                            attach_admin_rule_images(payload)
+                            result = {
+                                "payload": payload,
+                                "row": {
+                                    "target": "admrul",
+                                    "label": RESOURCE_CATEGORIES["admrul"][
+                                        "label"
+                                    ],
+                                    "id": admin_rule_id,
+                                    "name": self.law_name,
+                                    "related": "",
+                                    "organization": "",
+                                    "date": "",
+                                    "number": "",
+                                    "effective": "",
+                                    "raw": {},
+                                },
+                                "mode": "admin_rule",
+                                "jo": "",
+                                "hang": "",
+                                "ho": "",
+                                "mok": "",
+                            }
+                            self.succeeded.emit(self.operation, result)
+                            return
                         named_row = None
                 row = choose_law_reference_row(
                     item_id=self.item_id,
