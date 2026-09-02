@@ -29,7 +29,7 @@ import 하지 않는다.
     python test_open_api_guide.py call admrulListGuide --type XML
 
 옵션
-    --oc <인증키>   기본값은 환경변수 LAW_API_OC, 없으면 "test"(샘플 계정)
+    --oc <인증키>   기본값은 환경변수 LAW_API_OC, 없으면 DEFAULT_OC("HGKANG17")
     --type <형식>   JSON(기본) / XML / HTML
     --out <파일>    raw / call 결과를 파일로 저장
     --full          응답을 자르지 않고 전부 출력
@@ -42,7 +42,9 @@ import html
 import json
 import os
 import re
+import shlex
 import sys
+import time
 import xml.etree.ElementTree as ET
 
 import requests
@@ -58,6 +60,14 @@ HEADERS = {
 }
 
 PREVIEW_LIMIT = 4000  # --full 이 없을 때 응답 본문 출력 상한(문자)
+
+# 가이드 목록은 195건이지만 110번(중앙부처 1차 해석 계열)부터는 쓸 일이 없어
+# 목록 단계에서 잘라낸다. 전체를 다시 보려면 None 으로 두면 된다.
+GUIDE_LIMIT = 109
+
+# 인증키(OC). 법제처에 등록한 계정 아이디이며, --oc 나 환경변수 LAW_API_OC 로
+# 덮어쓸 수 있다.
+DEFAULT_OC = "HGKANG17"
 
 
 # ---------------------------------------------------------------- 공통 유틸
@@ -91,7 +101,10 @@ def _cut(text, limit):
 
 
 def fetch_guide_list():
-    """guideList.do 에서 (htmlName, 제목) 목록을 뽑는다."""
+    """guideList.do 에서 (htmlName, 제목) 목록을 뽑는다.
+
+    GUIDE_LIMIT 이 정수면 앞에서부터 그 개수만 돌려준다(110번 이후 제외).
+    """
     page = _get_html(GUIDE_LIST_URL)
     items = []
     seen = set()
@@ -102,7 +115,7 @@ def fetch_guide_list():
         if name and name not in seen:
             seen.add(name)
             items.append((name, title))
-    return items
+    return items[:GUIDE_LIMIT] if GUIDE_LIMIT else items
 
 
 def fetch_guide_html(html_name=None):
@@ -266,6 +279,196 @@ def _summarize_xml(text):
     walk(root)
 
 
+def ask(prompt):
+    """영문ㆍ숫자를 넣는 입력. ESC 를 누르면 None(취소)을 돌려준다.
+
+    한 글자씩 직접 읽어야 ESC 를 잡을 수 있는데, 그렇게 하면 한글 IME 조합이
+    화면에 안 보인다. 그래서 한글을 넣는 '추가 파라미터' 입력에는 쓰지 않는다.
+    콘솔이 아니거나(파이프 입력) msvcrt 가 없는 환경이면 그냥 input() 을 쓴다.
+    """
+    try:
+        import msvcrt
+    except ImportError:
+        msvcrt = None
+    if msvcrt is None or not sys.stdin.isatty():
+        return input(prompt)
+
+    sys.stdout.write(prompt)
+    sys.stdout.flush()
+    typed = []
+    while True:
+        char = msvcrt.getwch()
+        if char == "\x1b":                       # ESC
+            sys.stdout.write("  (취소)\n")
+            sys.stdout.flush()
+            return None
+        if char in ("\r", "\n"):
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+            return "".join(typed)
+        if char == "\x03":                       # Ctrl+C 는 원래 동작대로
+            raise KeyboardInterrupt
+        if char in ("\b", "\x7f"):              # 백스페이스
+            if typed:
+                typed.pop()
+                sys.stdout.write("\b \b")
+                sys.stdout.flush()
+            continue
+        if char in ("\x00", "\xe0"):            # 방향키ㆍ기능키는 두 글자로 온다
+            msvcrt.getwch()
+            continue
+        typed.append(char)
+        sys.stdout.write(char)
+        sys.stdout.flush()
+
+
+def _candidates(data, limit=10):
+    """목록 조회 응답에서 (제목, 일련번호, 항목)을 뽑는다.
+
+    target마다 키 이름이 달라(행정규칙명/법령명한글/제목…) '명'ㆍ'제목'으로 끝나는
+    키와 '일련번호'로 끝나는 키를 짝지어 찾는다. 소관부처명처럼 문서 이름이 아닌
+    것은 걸러낸다.
+    """
+    skip = ("부처", "기관", "담당", "부서", "자명", "법원")
+    rows = []
+
+    def walk(node):
+        if isinstance(node, dict):
+            keys = list(node)
+            title = next((k for k in keys
+                          if (k.endswith("명") or k.endswith("제목"))
+                          and not any(word in k for word in skip)), "")
+            seq = next((k for k in keys if k.endswith("일련번호")), "")
+            if title and seq:
+                rows.append((str(node[title]), str(node[seq]), node))
+                return
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(data)
+    return rows[:limit]
+
+
+def search_by_name(request_url, name, oc, limit=10):
+    """본문 조회 API는 정확한 이름만 받으므로, 같은 target의 목록 조회로 후보를 찾는다."""
+    base, _, query = request_url.partition("?")
+    if "lawService.do" not in base:
+        return []
+    params = {}
+    for pair in query.split("&"):
+        if "=" in pair:
+            key, value = pair.split("=", 1)
+            params[key] = value
+    params.update({"OC": oc, "type": "JSON", "query": name, "display": str(limit)})
+    url = base.replace("http://", "https://").replace("lawService.do", "lawSearch.do")
+    try:
+        res = requests.get(url, params=params, headers=HEADERS, timeout=20)
+        res.encoding = "utf-8"
+        return _candidates(res.json(), limit)
+    except Exception:                     # 목록 조회가 없거나 실패하면 그냥 넘어간다
+        return []
+
+
+def resolve_by_name(request_url, extra, oc):
+    """이름으로 본문을 찾을 때 후보를 먼저 보여 주고 고르게 한다.
+
+    LM 은 정확한 명칭만 받아서 '조달수수료'처럼 일부만 넣거나 '조문수수료'처럼
+    오타가 나면 엉뚱한 옛 규칙이 나오거나 아무것도 안 나온다. 목록 조회로 후보를
+    뽑아 ID(일련번호)로 바꿔 준다.
+    """
+    name = extra.get("LM", "")
+    rows = search_by_name(request_url, name, oc)
+    if not rows:
+        print('  ("{}" 로 찾은 후보가 없습니다. 이름 그대로 불러 봅니다)'.format(name))
+        return extra
+    if len(rows) == 1 and rows[0][0] == name:
+        return extra                      # 이름이 정확히 맞으면 그대로 LM 으로 부른다
+
+    print()
+    print('"{}" 로 찾은 후보 {}건'.format(name, len(rows)))
+    for index, (title, seq, node) in enumerate(rows, 1):
+        extras = [str(node[k]) for k in ("시행일자", "현행연혁구분") if k in node]
+        note = ("  [" + " ".join(extras) + "]") if extras else ""
+        print("  {:>2}. {}{}  (일련번호 {})".format(index, title, note, seq))
+    token = ask("번호 선택 (엔터=1번, s=이름 그대로 조회, ESC=취소): ")
+    if token is None:
+        return None
+    token = token.strip()
+    if token.lower() == "s":
+        return extra
+
+    index = int(token) - 1 if token.isdigit() and 0 < int(token) <= len(rows) else 0
+    title, seq, _node = rows[index]
+    print("  -> {} (ID={})".format(title, seq))
+    extra = dict(extra)
+    extra.pop("LM", None)
+    extra["ID"] = seq
+    return extra
+
+
+EXT_BY_TYPE = {"JSON": "json", "XML": "xml", "HTML": "html"}
+
+
+def save_text(text, path):
+    """응답을 통째로(화면과 달리 자르지 않고) 파일에 쓴다."""
+    with open(path, "w", encoding="utf-8") as fp:
+        fp.write(text)
+    print("저장: {} ({:,}자)".format(os.path.abspath(path), len(text)))
+
+
+def offer_save(text, name, out_type):
+    """화면에는 앞부분만 나오므로, 전체를 파일로 받아 갈지 물어본다."""
+    if not text:
+        return
+    answer = ask("파일로 저장 (엔터=안 함, y=자동 이름, 파일명 직접 입력, ESC=취소): ")
+    if answer is None:
+        return
+    answer = answer.strip()
+    if not answer:
+        return
+    if answer.lower() in ("y", "yes"):
+        answer = "{}_{}.{}".format(name or "response", time.strftime("%Y%m%d_%H%M%S"),
+                                   EXT_BY_TYPE.get(out_type.upper(), "txt"))
+    try:
+        save_text(text, answer)
+    except OSError as exc:
+        print("저장 실패: {}".format(exc))
+
+
+def _missing_required(items, extra):
+    """OC/target/type 은 자동으로 채워지니 빼고, '(필수)'인데 안 채운 변수만 고른다.
+
+    ID/MST 처럼 '둘 중 하나만 있으면 되는' 변수는 가이드 표에도 '필수' 표시가
+    안 붙어 있어서(서로 다른 줄에 그 조건만 설명으로 적힘) 여기 안 걸린다.
+    """
+    return [(key, desc) for key, value, desc in items
+            if "필수" in value and key not in ("OC", "target", "type")
+            and key not in extra]
+
+
+def confirm_required(items, extra):
+    """필수 변수가 빠졌으면 알려주고, 채우거나 그대로 부를지 고르게 한다."""
+    while True:
+        missing = _missing_required(items, extra)
+        if not missing:
+            return extra
+        print()
+        print("!! 필수 파라미터가 빠졌습니다:")
+        for key, desc in missing:
+            print("   {} — {}".format(key, re.sub(r"\s*/\s*", " ", desc).strip()))
+        answer = ask("값 입력(key=value), 엔터=그대로 호출, ESC=취소: ")
+        if answer is None:
+            return None
+        answer = answer.strip()
+        if not answer:
+            return extra
+        extra = dict(extra)
+        extra.update(_split_pairs(answer, [key for key, _value, _desc in items]))
+
+
 def call_api(request_url, extra, oc, out_type, out_path=None, full=False):
     """가이드에 적힌 요청 URL을 그대로 호출해서 응답 모양을 보여준다."""
     if not request_url:
@@ -327,12 +530,108 @@ def call_api(request_url, extra, oc, out_type, out_path=None, full=False):
         print(_cut(text, None if full else PREVIEW_LIMIT))
 
     if out_path:
-        with open(out_path, "w", encoding="utf-8") as fp:
-            fp.write(text)
-        print("\n저장: " + out_path)
+        save_text(text, out_path)
+    return text
 
 
 # ----------------------------------------------------------------- CLI 처리
+
+
+def _request_params(guide):
+    """가이드의 요청변수 표에서 (이름, 값, 설명)을 뽑는다.
+
+    이름은 키 생략 입력을 보정할 때, 값ㆍ설명은 입력 안내를 띄울 때 쓴다.
+    """
+    items = []
+    for section in guide["sections"]:
+        if "요청" not in section["title"]:
+            continue
+        for _headers, rows in section["tables"]:
+            for row in rows:
+                key = row[0].split()[0] if row and row[0] else ""
+                if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key or ""):
+                    items.append((key, row[1] if len(row) > 1 else "",
+                                  row[2] if len(row) > 2 else ""))
+    return items
+
+
+def _guess_key(value, names):
+    """키 없이 값만 넣었을 때 어느 요청변수에 넣을지 고른다.
+
+    숫자면 일련번호(ID)ㆍ행정규칙ID(LID) 쪽, 글자면 이름(LM)ㆍ검색어(query) 쪽을
+    가이드에 실제로 있는 변수 중에서 순서대로 찾는다.
+    """
+    order = ["ID", "MST", "LID", "query"] if value.isdigit() else ["LM", "query"]
+    for key in order:
+        if key in names:
+            return key
+    return ""
+
+
+DESC_LIMIT = 66   # 요청변수 설명을 한 줄로 줄일 때의 상한(문자)
+
+
+def _extra_prompt(items):
+    """지금 보고 있는 API의 요청변수를 설명과 함께 보여 주는 입력 안내 문구.
+
+    API마다 쓸 수 있는 변수가 달라서(목록 조회는 query/display, 본문 조회는
+    ID/MST/LM) 고정된 예시를 띄우면 없는 변수를 넣게 된다. 설명은 가이드의
+    요청변수 표에 적힌 것을 그대로 한 줄로 줄여 쓴다.
+    """
+    usable = [item for item in items if item[0] not in ("OC", "target", "type")]
+    if not usable:
+        return "추가 파라미터 (이 API에는 없음, 엔터): "
+
+    width = max(len(key) for key, _value, _desc in usable)
+    lines = ["추가 파라미터 — 쓸 수 있는 변수"]
+    for key, value, desc in usable:
+        text = re.sub(r"\s*/\s*", " / ", desc).strip()
+        if len(text) > DESC_LIMIT:
+            text = text[:DESC_LIMIT] + "…"
+        mark = "*" if "필수" in value else " "
+        lines.append("   {}{}  {}".format(mark, key.ljust(width), text))
+
+    names = [key for key, _value, _desc in usable]
+    hints = ["* 필수"] if any("필수" in value for _key, value, _desc in usable) else []
+    for label, sample in (("글자", "가"), ("숫자", "1")):
+        key = _guess_key(sample, names)
+        if key:
+            hints.append("{}만 넣으면 {}".format(label, key))
+    hints.append("q=취소")
+    lines.append("  (key=value 형식" + (", " + " / ".join(hints) if hints else "") + ")")
+    return "\n".join(lines) + "\n> "
+
+
+def _split_pairs(raw, names=()):
+    """'query=주차 display=3' 같은 한 줄을 {키: 값}으로.
+
+    LM 처럼 값에 공백이 들어가는 변수가 있어 따옴표를 인정한다
+    (LM="조달수수료 고시"). 따옴표를 닫지 않았으면 예전처럼 공백으로만 나눈다.
+    key= 를 빼고 값만 넣는 실수가 잦아서, 남은 조각은 하나로 이어 붙여
+    가이드의 요청변수 중 알맞은 곳에 넣어 준다.
+    """
+    try:
+        tokens = shlex.split(raw)
+    except ValueError:
+        tokens = [token.strip("\"'") for token in raw.split()]
+
+    pairs, loose = {}, []
+    for token in tokens:
+        if "=" in token:
+            key, value = token.split("=", 1)
+            pairs[key] = value
+        else:
+            loose.append(token)
+
+    if loose:
+        value = " ".join(loose)
+        key = _guess_key(value, names)
+        if key and key not in pairs:
+            pairs[key] = value
+            print('  (키가 없어서 {}="{}" 로 넣었습니다)'.format(key, value))
+        else:
+            print('  ("{}" 은 key=value 형태가 아니라 무시했습니다)'.format(value))
+    return pairs
 
 
 def _parse_argv(argv):
@@ -380,7 +679,10 @@ def interactive():
     print("가이드 {}건\n".format(len(items)))
     _print_list(items)
     print()
-    token = input("번호 또는 htmlName (엔터=기본 가이드): ").strip()
+    token = ask("번호 또는 htmlName (엔터=기본 가이드, ESC=취소): ")
+    if token is None:
+        return
+    token = token.strip()
     html_name = None  # 엔터만 치면 기본 가이드(현행법령 목록 조회)
     if token:
         html_name = _resolve(items, token)
@@ -394,23 +696,37 @@ def interactive():
     if not guide["request_url"]:
         return
     print()
-    if input("이 API를 실제로 호출해볼까요? (y/N): ").strip().lower() != "y":
+    oc = os.environ.get("LAW_API_OC", "").strip() or DEFAULT_OC
+    out_type = ask("type (기본 JSON, ESC=취소): ")
+    if out_type is None:
         return
-    oc = os.environ.get("LAW_API_OC", "").strip()
-    if not oc:
-        oc = input("OC 인증키(엔터=test): ").strip() or "test"
-    out_type = input("type (기본 JSON): ").strip().upper() or "JSON"
-    raw_extra = input("추가 파라미터 (예: query=주차 display=3): ").strip()
-    extra = dict(pair.split("=", 1) for pair in raw_extra.split() if "=" in pair)
+    out_type = out_type.strip().upper() or "JSON"
+
+    param_items = _request_params(guide)
+    # 여기는 한글(법령명ㆍ검색어)을 넣는 자리라 ESC 대신 q 로 취소한다.
+    raw_extra = input(_extra_prompt(param_items)).strip()
+    if raw_extra.lower() in ("q", "quit"):
+        print("취소했습니다.")
+        return
+    extra = _split_pairs(raw_extra, [key for key, _value, _desc in param_items])
+    if extra.get("LM") and "ID" not in extra:
+        extra = resolve_by_name(guide["request_url"], extra, oc)
+        if extra is None:
+            return
+    extra = confirm_required(param_items, extra)
+    if extra is None:
+        return
     print()
-    call_api(guide["request_url"], extra, oc, out_type)
+    text = call_api(guide["request_url"], extra, oc, out_type)
+    print()
+    offer_save(text, html_name or "guide", out_type)
 
 
 def main(argv):
     positional, options, extra = _parse_argv(argv)
     command = positional[0] if positional else ""
     target = positional[1] if len(positional) > 1 else ""
-    oc = options.get("oc") or os.environ.get("LAW_API_OC", "").strip() or "test"
+    oc = options.get("oc") or os.environ.get("LAW_API_OC", "").strip() or DEFAULT_OC
     out_type = (options.get("type") or "JSON").upper()
     out_path = options.get("out")
     full = bool(options.get("full"))
@@ -448,6 +764,9 @@ def main(argv):
 
         if command == "call":
             print()
+            for key, desc in _missing_required(_request_params(guide), extra):
+                print("!! 필수 파라미터가 빠졌습니다: {} — {}".format(
+                    key, re.sub(r"\s*/\s*", " ", desc).strip()))
             call_api(guide["request_url"], extra, oc, out_type, out_path, full)
         return 0
 
