@@ -2847,7 +2847,8 @@ class LawSearchWindow(QMainWindow):
                 border: 1px solid #cfdcea;
                 border-radius: 6px;
                 color: #173b63;
-                font-family: "Pretendard", "Malgun Gothic";
+                /* 본문 머리글을 그대로 옮긴 줄이라 본문과 같은 글꼴을 쓴다. */
+                font-family: "Malgun Gothic", "맑은 고딕";
                 font-size: 13px;
                 font-weight: 400;
                 padding: 6px 10px;
