@@ -66,6 +66,12 @@ def apply_workbench_color_tokens(style_sheet: str) -> str:
 USER_BACKGROUND_ALPHA = 128
 
 
+# 검색줄 콤보(기관ㆍ검색범위ㆍ별표 대상)의 공통 너비. 화면마다 다른 폭을
+# 쓰면 탭을 오갈 때 검색어 칸의 시작 자리가 흔들린다. 가장 긴 항목인
+# ``행정중심복합도시건설청``이 잘리지 않는 값으로 맞춰 두었다.
+SEARCH_COMBO_WIDTH = 170
+
+
 BASE_FOREGROUND_PROPERTY = int(QTextFormat.Property.UserProperty) + 1
 
 

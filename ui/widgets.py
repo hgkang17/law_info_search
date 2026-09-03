@@ -1213,6 +1213,17 @@ class FavoriteTreeItemDelegate(QStyledItemDelegate):
 
     REMOVE_BUTTON_WIDTH = 22
     _KIND_ROLE = int(Qt.ItemDataRole.UserRole) + 1
+    # 줄 여백을 기본값보다 이만큼 줄인다. 트리가 setUniformRowHeights를 쓰므로
+    # 스타일시트의 ``min-height``로는 줄지 않고 이 sizeHint가 높이를 정한다.
+    ROW_HEIGHT_TRIM = 6
+    MINIMUM_ROW_HEIGHT = 18
+
+    def sizeHint(self, option, index):
+        size = super().sizeHint(option, index)
+        size.setHeight(
+            max(self.MINIMUM_ROW_HEIGHT, size.height() - self.ROW_HEIGHT_TRIM)
+        )
+        return size
 
     def _is_record(self, index) -> bool:
         return index.data(self._KIND_ROLE) in ("record", "article")

@@ -6,6 +6,7 @@ from ui.assets import (
     SEARCH_API_REFRESH_TOOLTIP,
 )
 from ui.theme import (
+    SEARCH_COMBO_WIDTH,
     apply_base_foreground_spans,
     build_color_palette_toolbar,
     capture_base_foreground_spans,
@@ -143,7 +144,9 @@ class LawSearchTab(QWidget):
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(12, 12, 12, 12)
+        # 아래쪽만 여백을 두지 않는다. 왼쪽 메뉴 카드는 이 탭 바깥에 있어
+        # 여기 하단 여백만큼 결과 카드가 먼저 끝나 두 칸의 아래 선이 어긋난다.
+        root.setContentsMargins(12, 12, 12, 0)
         root.setSpacing(14)
 
         search_card = QFrame()
@@ -162,7 +165,7 @@ class LawSearchTab(QWidget):
                 self.agency_combo.findData("molitCgmExpc")
             )
             self.agency_combo.setMaxVisibleItems(15)
-            self.agency_combo.setFixedWidth(170)
+            self.agency_combo.setFixedWidth(SEARCH_COMBO_WIDTH)
             search_layout.addWidget(self.agency_combo)
 
         self.scope_combo = QComboBox()
@@ -173,7 +176,7 @@ class LawSearchTab(QWidget):
         )
         self.scope_combo.addItem(scope_label, 1)
         self.scope_combo.addItem("본문", 2)
-        self.scope_combo.setFixedWidth(110)
+        self.scope_combo.setFixedWidth(SEARCH_COMBO_WIDTH)
 
         self.query_input = QLineEdit()
         self.query_input.setPlaceholderText("검색어를 입력하세요")

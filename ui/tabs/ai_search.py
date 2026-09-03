@@ -6,6 +6,7 @@ from ui.assets import (
     SEARCH_API_REFRESH_TOOLTIP,
 )
 from ui.theme import (
+    SEARCH_COMBO_WIDTH,
     apply_base_foreground_spans,
     build_color_palette_toolbar,
     capture_base_foreground_spans,
@@ -209,7 +210,7 @@ class AiLawSearchTab(QWidget):
             self.scope_combo.addItem("법령 별표·서식", 1)
             self.scope_combo.addItem("행정규칙 조문", 2)
             self.scope_combo.addItem("행정규칙 별표·서식", 3)
-        self.scope_combo.setFixedWidth(170)
+        self.scope_combo.setFixedWidth(SEARCH_COMBO_WIDTH)
 
         self.query_input = QLineEdit()
         self.query_input.setPlaceholderText("검색할 키워드를 입력하세요")
@@ -672,7 +673,7 @@ class AiLawSearchTab(QWidget):
                     0 if expanded else 12,
                     0 if expanded else 12,
                     0 if expanded else 12,
-                    0 if expanded else 12,
+                    0,
                 )
 
         if central_layout is not None:

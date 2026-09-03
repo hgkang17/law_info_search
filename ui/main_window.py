@@ -300,7 +300,9 @@ class LawSearchWindow(QMainWindow):
     def _build_ui(self) -> None:
         central = QWidget()
         root = QVBoxLayout(central)
-        root.setContentsMargins(16, 14, 16, 14)
+        # 아래 여백은 위쪽의 절반만 둔다. 상태줄이 창 맨 아래에 붙어야
+        # 왼쪽 메뉴 카드와 본문 카드의 아래 선이 나란히 보인다.
+        root.setContentsMargins(16, 14, 16, 7)
         root.setSpacing(10)
         self.setCentralWidget(central)
 
@@ -1581,33 +1583,36 @@ class LawSearchWindow(QMainWindow):
     def _apply_style(self) -> None:
         self.setFont(QFont(FONT_FAMILY, 10, QFont.Weight.Normal))
         style_sheet = """
-            /* 모든 화면의 스크롤바를 본문보다 한 단계 조용하게 맞춘다. */
+            /* 스크롤바는 본문을 가리지 않도록 얇은 막대 하나로만 둔다.
+               트랙과 화살표 없이 손잡이만 보이고, 올렸을 때만 진해진다. */
             QScrollBar:vertical {
-                width: 10px;
-                margin: 2px 1px;
+                width: 8px;
+                margin: 2px 2px;
                 background: transparent;
                 border: none;
             }
             QScrollBar::handle:vertical {
-                min-height: 32px;
-                background: #b8b8b8;
+                min-height: 28px;
+                background: #c8d1da;
                 border: none;
                 border-radius: 4px;
             }
-            QScrollBar::handle:vertical:hover { background: #969696; }
+            QScrollBar::handle:vertical:hover { background: #9fadbb; }
+            QScrollBar::handle:vertical:pressed { background: #7f8f9f; }
             QScrollBar:horizontal {
-                height: 10px;
-                margin: 1px 2px;
+                height: 8px;
+                margin: 2px 2px;
                 background: transparent;
                 border: none;
             }
             QScrollBar::handle:horizontal {
-                min-width: 32px;
-                background: #b8b8b8;
+                min-width: 28px;
+                background: #c8d1da;
                 border: none;
                 border-radius: 4px;
             }
-            QScrollBar::handle:horizontal:hover { background: #969696; }
+            QScrollBar::handle:horizontal:hover { background: #9fadbb; }
+            QScrollBar::handle:horizontal:pressed { background: #7f8f9f; }
             QScrollBar::add-line,
             QScrollBar::sub-line {
                 width: 0px;
@@ -1617,6 +1622,13 @@ class LawSearchWindow(QMainWindow):
             }
             QScrollBar::add-page,
             QScrollBar::sub-page { background: transparent; }
+            /* 콤보 목록ㆍ메뉴 안의 스크롤바도 같은 모양으로 둔다. */
+            QComboBox QAbstractItemView QScrollBar:vertical,
+            QMenu QScrollBar:vertical {
+                width: 8px;
+                margin: 2px;
+                background: transparent;
+            }
 
             /* 목록의 ⋯ 버튼에서 열리는 메뉴를 하나의 작은 팝업으로 통일. */
             QMenu {
@@ -2565,6 +2577,8 @@ class LawSearchWindow(QMainWindow):
                 background: #f7f9fb;
                 border-color: #edf1f5;
             }
+            /* 즐겨찾기는 한눈에 여러 건을 훑는 목록이라 본문보다 한 포인트
+               작은 글자를 쓰고 줄 여백도 좁게 둔다. */
             QTreeWidget#favoriteTree {
                 background: #fbfcfe;
                 alternate-background-color: #f5f8fb;
@@ -2572,11 +2586,12 @@ class LawSearchWindow(QMainWindow):
                 border: 1px solid #cbd8e4;
                 border-radius: 9px;
                 outline: none;
-                padding: 4px;
+                padding: 2px;
+                font-size: 9pt;
             }
             QTreeWidget#favoriteTree::item {
-                min-height: 27px;
-                padding: 2px 5px;
+                min-height: 20px;
+                padding: 0px 5px;
                 border-radius: 5px;
             }
             QTreeWidget#favoriteTree::item:selected {
@@ -3032,11 +3047,6 @@ class LawSearchWindow(QMainWindow):
                 padding: 0 8px;
                 border-radius: 5px;
                 font-size: 8.5pt;
-            }
-            QComboBox#resourceSearchScope {
-                min-height: 34px;
-                padding: 0 4px;
-                font-size: 8pt;
             }
             QWidget#recentSearchBar {
                 background: transparent;

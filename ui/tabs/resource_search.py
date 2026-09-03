@@ -7,6 +7,7 @@ from ui.assets import (
     SEARCH_API_REFRESH_TOOLTIP,
 )
 from ui.theme import (
+    SEARCH_COMBO_WIDTH,
     BASE_FOREGROUND_PROPERTY,
     apply_base_foreground_spans,
     build_color_palette_toolbar,
@@ -531,7 +532,9 @@ class ResourceSearchTab(QWidget):
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(12, 12, 12, 12)
+        # 아래쪽만 여백을 두지 않는다. 왼쪽 메뉴 카드는 이 탭 바깥에 있어
+        # 여기 하단 여백만큼 결과 카드가 먼저 끝나 두 칸의 아래 선이 어긋난다.
+        root.setContentsMargins(12, 12, 12, 0)
         root.setSpacing(12)
 
         self.root_layout = root
@@ -581,10 +584,7 @@ class ResourceSearchTab(QWidget):
         # 고른다. 고른 값은 카테고리 바의 tabData로 그대로 옮겨 담는다.
         self.annex_target = QComboBox()
         self.annex_target.setObjectName("resourceAnnexTarget")
-        self.annex_target.setSizeAdjustPolicy(
-            QComboBox.SizeAdjustPolicy.AdjustToContents
-        )
-        self.annex_target.setMinimumWidth(78)
+        self.annex_target.setFixedWidth(SEARCH_COMBO_WIDTH)
         self.annex_target.setToolTip(
             "별표·서식을 어느 자료에서 찾을지 고릅니다. 전체는 법령·행정규칙·"
             "자치법규를 한 번에 조회합니다."
@@ -598,10 +598,7 @@ class ResourceSearchTab(QWidget):
 
         self.search_scope = QComboBox()
         self.search_scope.setObjectName("resourceSearchScope")
-        self.search_scope.setSizeAdjustPolicy(
-            QComboBox.SizeAdjustPolicy.AdjustToContents
-        )
-        self.search_scope.setMinimumWidth(86)
+        self.search_scope.setFixedWidth(SEARCH_COMBO_WIDTH)
         self.search_scope.currentIndexChanged.connect(
             self._search_scope_changed
         )
@@ -1207,7 +1204,7 @@ class ResourceSearchTab(QWidget):
             0 if expanded else 12,
             0 if expanded else 12,
             0 if expanded else 12,
-            0 if expanded else 12,
+            0,
         )
 
         scroll_bar = self.detail_view.verticalScrollBar()
