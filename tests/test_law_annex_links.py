@@ -93,9 +93,10 @@ def test_annex_links_are_rendered_after_articles(qt_app, tmp_path) -> None:
     )
 
     html = str(tab._document_states[tab._active_document_key]["source_html"])
-    assert html.index("<h2>조문</h2>") < html.index(
-        '<h2><a name="law-annexes">별표·서식 (2건)</a></h2>'
-    )
+    # 별표 목록에는 따로 제목 줄을 두지 않는다. 찾아올 자리 표시만 남긴다.
+    assert "별표·서식 (2건)</a></h2>" not in html
+    # 조문 구간은 제목을 달지 않으므로 첫 조문 글자를 기준으로 본다.
+    assert html.index("제1조(목적)") < html.index('<a name="law-annexes">')
     # 제목을 누르면 그 자리에서 펼쳐지고, 내려받기는 오른쪽 작은 표시로 연다.
     assert "[별표1] 시험 기준(제1조 관련)" in html
     assert "[별지제2호의3서식] 시험 신청서" in html
@@ -113,11 +114,9 @@ def test_annex_links_are_rendered_after_articles(qt_app, tmp_path) -> None:
         tab.detail_view.textInteractionFlags()
         & Qt.TextInteractionFlag.LinksAccessibleByKeyboard
     )
-    assert tab._document_states[tab._active_document_key]["toc_entries"][-1] == (
-        0,
-        "별표·서식 (2건)",
-        "law-annexes",
-    )
+    # 제목 줄이 없으니 목차에도 넣지 않는다.
+    toc = tab._document_states[tab._active_document_key]["toc_entries"]
+    assert all(anchor != "law-annexes" for _depth, _label, anchor in toc)
     tab.close()
 
 

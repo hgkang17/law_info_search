@@ -61,6 +61,7 @@ from workers.search_worker import (
     ApiWorker,
     RelatedArticleWorker,
 )
+from utils.constants import DEFAULT_DETAIL_FONT_POINT
 from utils.formatting import (
     body_to_html,
     detail_document_header,
@@ -120,7 +121,7 @@ class AiLawSearchTab(QWidget):
         self._active_detail_row: dict[str, object] | None = None
         self._visible_memos: list[dict[str, object]] = []
         self.detail_font_size = self._saved_font_size(
-            f"{service}_detail_font_size", 10.0
+            f"{service}_detail_font_size", DEFAULT_DETAIL_FONT_POINT
         )
         self._reading_mode = False
         self._sort_column = -1

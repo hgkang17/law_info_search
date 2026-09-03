@@ -95,6 +95,7 @@ from molit_cgm_expc_api import (
 from utils.annex_notation import annex_hint_in_query, annex_related_law_name, row_matches_annex_hint
 from utils.annex_parse import parse_annex_bytes
 from utils.law_download import download_law_file
+from utils.constants import DEFAULT_DETAIL_FONT_POINT
 from utils.formatting import (
     body_to_html,
     detail_document_header,
@@ -337,7 +338,7 @@ class ResourceSearchTab(QWidget):
         self._three_stage_link_request_in_flight: dict[str, str] | None = None
         self._updating_cache_checks = False
         self.detail_font_size = self._saved_font_size(
-            "resource_detail_font_size", 10
+            "resource_detail_font_size", DEFAULT_DETAIL_FONT_POINT
         )
         self._sort_column = -1
         self._sort_ascending = True
@@ -5361,23 +5362,27 @@ class ResourceSearchTab(QWidget):
         state = self._annex_previews.get(key)
         if not isinstance(state, dict):
             return ""
-        frame = (
-            '<div style="margin:0 0 10px 0; padding:8px; background:#f6f8fb;'
-            ' border:1px solid #dbe3ec;">'
+        # 원문 위에 어두운 도구줄을 얹는다. 흰 종이와 확실히 구분되어
+        # 미리보기가 어디서 시작하고 끝나는지 한눈에 들어온다.
+        frame = '<div style="margin:0 0 12px 0;">'
+        toolbar_style = (
+            "background:#2b2b2b; color:#e8e8e8; padding:12px 16px;"
+            " font-size:12px;"
         )
+        link_style = "color:#e8e8e8; text-decoration:none;"
         error = str(state.get("error") or "")
         if error:
             return (
                 frame
-                + '<span style="font-size:13px; color:#c0392b;">'
-                + f"원문을 불러오지 못했습니다: {escape(error)}</span></div>"
+                + f'<div style="{toolbar_style}">'
+                + f"원문을 불러오지 못했습니다: {escape(error)}</div></div>"
             )
         data = state.get("data")
         if not data:
             return (
                 frame
-                + '<span style="font-size:13px; color:#526176;">'
-                "원문을 불러오는 중입니다…</span></div>"
+                + f'<div style="{toolbar_style}">'
+                + "원문을 불러오는 중입니다…</div></div>"
             )
         zoom = int(state.get("zoom") or self.ANNEX_PREVIEW_DEFAULT_ZOOM)
         limit = int(state.get("pages") or 0)
@@ -5388,35 +5393,29 @@ class ResourceSearchTab(QWidget):
                 + '<span style="font-size:13px; color:#c0392b;">'
                 "원문을 그리지 못했습니다.</span></div>"
             )
-        entry = self._annex_section_entries[index]
+        # 저장ㆍ닫기는 두지 않는다. 저장은 제목 오른쪽 아이콘이, 닫기는
+        # 제목 자체가 이미 맡고 있어 같은 일을 두 번 늘어놓게 된다.
         toolbar = (
-            '<div style="margin-bottom:6px; font-size:12px; color:#3d4c60;">'
-            f'<a href="annexzoom:{index}:out">축소</a>&nbsp;&nbsp;'
-            f'<a href="annexzoom:{index}:in">확대</a>&nbsp;&nbsp;'
-            f"<span>{zoom}%</span>&nbsp;&nbsp;"
-            f"<span>{len(pages)} / {total}쪽</span>"
+            f'<div style="{toolbar_style}">'
+            f"{zoom}%&nbsp;"
+            f'<a href="annexzoom:{index}:in" style="{link_style}">▲</a>'
+            f'<a href="annexzoom:{index}:out" style="{link_style}">▼</a>'
+            f"&nbsp;&nbsp;&nbsp;&nbsp;{len(pages)} / {total}쪽"
+            "</div>"
         )
-        file_url = str(entry.get("file_url") or "")
-        pdf_url = str(entry.get("pdf_url") or "")
-        if file_url:
-            toolbar += (
-                f'&nbsp;&nbsp;<a href="{escape(file_url, quote=True)}">'
-                "원본 내려받기</a>"
-            )
-        if pdf_url:
-            toolbar += (
-                f'&nbsp;&nbsp;<a href="{escape(pdf_url, quote=True)}">'
-                "PDF 내려받기</a>"
-            )
-        toolbar += "</div>"
+        body = (
+            '<div style="background:#f0f0f0; padding:10px;">'
+            + "".join(pages)
+            + "</div>"
+        )
         more = ""
         if len(pages) < total:
             more = (
-                '<div style="margin-top:6px; font-size:12px;">'
-                f'<a href="annexpages:{index}">나머지 {total - len(pages)}쪽 '
-                "더 보기</a></div>"
+                f'<div style="{toolbar_style}">'
+                f'<a href="annexpages:{index}" style="{link_style}">'
+                f"나머지 {total - len(pages)}쪽 더 보기</a></div>"
             )
-        return frame + toolbar + "".join(pages) + more + "</div>"
+        return frame + toolbar + body + more + "</div>"
 
     @staticmethod
     def _render_annex_pages(
@@ -9116,7 +9115,11 @@ class ResourceSearchTab(QWidget):
             value = str(value or "")
             if not value:
                 continue
-            html_parts.append(f"<h2>{escape(str(label))}</h2>")
+            # ``조문``은 본문 대부분을 차지하는 구간이라 제목을 달아도
+            # 알려 주는 것이 없다. 부칙처럼 뒤에 따로 붙는 구간만 제목을
+            # 둔다.
+            if str(label) != "조문":
+                html_parts.append(f"<h2>{escape(str(label))}</h2>")
             section_html = body_to_html(
                 value,
                 self.detail_highlight_terms,
@@ -9203,11 +9206,10 @@ class ResourceSearchTab(QWidget):
         # 별표를 펼치고 접을 때 본문 전체를 다시 만들지 않고 이 구간만
         # 갈아 끼운다. 주석 표식은 화면에 보이지 않는다.
         html_parts.append(self.ANNEX_SECTION_START)
-        html_parts.append(
-            f'<h2><a name="{section_anchor}">{section_label}</a></h2>'
-        )
-        if toc_entries is not None:
-            toc_entries.append((0, section_label, section_anchor))
+        # 제목 줄은 두지 않는다. 목록만으로 무엇인지 알 수 있고, 조문과
+        # 별표 사이에 큰 제목이 하나 더 끼면 본문 흐름이 끊긴다. 목차에서
+        # 찾아올 수 있게 자리 표시만 남긴다.
+        html_parts.append(f'<a name="{section_anchor}"></a>')
         html_parts.append('<div class="content">')
         plain_parts.extend(("", f"[{section_label}]"))
         for index, entry in enumerate(entries):
@@ -9217,36 +9219,43 @@ class ResourceSearchTab(QWidget):
             key = self._annex_preview_key(entry, index)
             expanded = key in self._annex_previews
 
+            # QTextDocument는 인라인 그림을 글자의 기준선에 맞춘다. 그대로
+            # 두면 아이콘이 글자보다 아래로 처져 글씨가 위에 떠 보인다.
+            # vertical-align으로 가운데를 맞춘다.
+            icon_style = 'style="vertical-align:middle;"'
             icons: list[str] = []
             if file_url:
                 icons.append(
                     f'<a href="{escape(file_url, quote=True)}">'
                     f'<img src="{ANNEX_HWP_ICON_PATH.as_uri()}" '
-                    'width="16" height="16" alt="원본 내려받기"></a>'
+                    f'width="16" height="16" {icon_style} alt="원본 내려받기">'
+                    "</a>"
                 )
             if pdf_url:
                 icons.append(
                     f'<a href="{escape(pdf_url, quote=True)}">'
                     f'<img src="{ANNEX_PDF_ICON_PATH.as_uri()}" '
-                    'width="16" height="16" alt="PDF 내려받기"></a>'
+                    f'width="16" height="16" {icon_style} alt="PDF 내려받기">'
+                    "</a>"
                 )
             icon_html = "&nbsp;".join(icons)
 
-            marker = "&#8862;" if expanded else "&#8862;"
-            marker = "⊟" if expanded else "⊞"
             title_html = escape(shown)
             if pdf_url:
+                # 제목 자체가 펼치고 접는 자리다. 앞에 ⊞ 같은 기호를 두면
+                # 목록이 어수선해지고, 눌러야 할 곳이 기호인지 제목인지도
+                # 헷갈린다. 펼친 것은 아래 미리보기로 알 수 있다.
                 toggle = f"annex:{index}"
+                color = "#1f57c8" if expanded else "#242529"
                 title_html = (
                     f'<a href="{escape(toggle, quote=True)}" '
-                    'style="color:#173b63; text-decoration:none; '
-                    'font-weight:400;">'
-                    f"{marker} {escape(shown)}</a>"
+                    f'style="color:{color}; text-decoration:none; '
+                    'font-weight:400; vertical-align:middle;">'
+                    f"{escape(shown)}</a>"
                 )
             html_parts.append(
-                '<div class="annex-item" style="margin:0; padding:5px 0; '
-                'border-bottom:1px solid #e4ebf2; font-size:13px; '
-                'font-weight:400; color:#173b63;">'
+                '<div class="annex-item" style="margin:0; padding:7px 0; '
+                'font-size:13px; font-weight:400; color:#242529;">'
                 f"{title_html}"
                 + (f"&nbsp;&nbsp;{icon_html}" if icon_html else "")
                 + "</div>"

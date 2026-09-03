@@ -6,7 +6,7 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QLabel, QApplication
 
 from ui.main_window import LawSearchWindow
 from ui.theme import WORKBENCH_COLORS
@@ -86,7 +86,8 @@ def test_gray_workbench_navigation_is_flat_and_compact(monkeypatch) -> None:
         assert window.ai_review_button.text() == "AI 에이전트"
         assert window.viewed_laws_button.text() == "열람 내역"
         assert window.navigation.item(1).text() == "법령 검색"
-        assert not window.app_name_label.isHidden()
+        # 머리글에는 로고만 둔다. 프로그램 이름은 창 제목 표시줄에 있다.
+        assert window.header_card.findChild(QLabel, "appNameLabel") is None
 
         style = window.styleSheet()
         assert "background: #fafafa" in style

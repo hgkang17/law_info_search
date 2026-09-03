@@ -75,6 +75,7 @@ from PySide6.QtWidgets import (
     QToolTip,
 )
 from storage.recent import RecentSearchManager
+from ui.assets import CLOSE_MARK_ICON_PATH
 from utils.formatting import hwp_friendly_clipboard_html
 from utils.parsing import whitespace_flexible_pattern
 
@@ -129,13 +130,14 @@ def favorite_icon(filled: bool, color: str) -> QIcon:
 
 
 def apply_close_icon(button: QPushButton, size: int = 12) -> None:
-    """닫기 동작을 플랫폼 표준 벡터 아이콘으로 통일한다."""
+    """닫기 동작을 얇은 × 표시로 통일한다.
+
+    플랫폼 표준 아이콘(``SP_TitleBarCloseButton``)은 창 제목 표시줄용이라
+    네모 상자 안에 X가 든 모양으로 그려진다. 목록 항목이나 탭에 붙이면
+    상자만 눈에 띄어 어수선하다.
+    """
     button.setText("")
-    button.setIcon(
-        QApplication.style().standardIcon(
-            QStyle.StandardPixmap.SP_TitleBarCloseButton
-        )
-    )
+    button.setIcon(QIcon(str(CLOSE_MARK_ICON_PATH)))
     button.setIconSize(QSize(size, size))
 
 
@@ -853,17 +855,16 @@ class SharedStatusBar(QFrame):
         self._opacity.setOpacity(0.0)
         self.progress.setGraphicsEffect(self._opacity)
         layout.addWidget(self.label, 1)
-        layout.addWidget(self.progress)
-        self._trailing = QHBoxLayout()
-        self._trailing.setContentsMargins(0, 0, 0, 0)
-        self._trailing.setSpacing(10)
-        layout.addLayout(self._trailing)
+        layout.addWidget(self.progress, 0)
+        self._layout = layout
         self._active: StatusLine | None = None
         self._owners: dict[QWidget, StatusLine] = {}
 
     def add_trailing_widget(self, widget: QWidget) -> None:
         """상태 문구와 같은 줄, 오른쪽 끝에 세울 위젯(업데이트ㆍ정보 단추)."""
-        self._trailing.addWidget(widget)
+        self._layout.addWidget(
+            widget, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
 
     def line_for(self, owner: QWidget) -> StatusLine:
         """화면 하나가 쓸 자리를 내주고, 그 화면이 보일 때 앞으로 올린다."""
@@ -2519,7 +2520,7 @@ class ReferenceHistoryBar(QScrollArea):
         container = QWidget()
         container.setObjectName("referenceHistoryContent")
         self._row = QHBoxLayout(container)
-        self._row.setContentsMargins(2, 2, 2, 2)
+        self._row.setContentsMargins(2, 1, 2, 1)
         self._row.setSpacing(self.ROW_SPACING)
         # 칩이 몇 개 없을 때 남는 자리를 칩이 나눠 갖지 않도록 끝을 민다.
         self._row.addStretch(1)
@@ -2529,7 +2530,7 @@ class ReferenceHistoryBar(QScrollArea):
         self._data: list[str] = []
         self._current_index = -1
         self._dragging_chip: ReferenceHistoryChip | None = None
-        self.setFixedHeight(self.CHIP_HEIGHT + 4)
+        self.setFixedHeight(self.CHIP_HEIGHT + 2)
         self.setToolTip(
             "클릭하면 그 조문으로 이동하고, 끌어서 순서를 바꿀 수 있습니다. "
             "항목이 많으면 휠로 좌우로 넘깁니다."

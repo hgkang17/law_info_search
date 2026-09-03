@@ -42,9 +42,9 @@ def test_header_shows_active_document_without_binding_global_ai(qt_app) -> None:
         assert tabs.tabText(tabs.currentIndex()) == "국토계획법"
         assert tabs.isMovable()
         assert window.open_documents_widget.height() == 38
-        app_name = window.header_card.findChild(QLabel, "appNameLabel")
-        assert app_name is not None
-        assert app_name.text() == "국가법령정보 통합검색"
+        # 머리글에는 로고만 둔다. 프로그램 이름 라벨은 없앴다.
+        assert window.header_card.findChild(QLabel, "appNameLabel") is None
+        assert window.header_card.findChild(QLabel, "logoLabel") is not None
         assert window.header_card.layout().indexOf(
             window.oc_api_settings_button
         ) >= 0

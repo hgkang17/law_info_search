@@ -147,7 +147,7 @@ def register_bundled_pretendard_fonts() -> bool:
 
 def ui_font(
     point_size: float | None = None,
-    weight: QFont.Weight = QFont.Weight.Normal,
+    weight: QFont.Weight = QFont.Weight.Medium,
 ) -> QFont:
     """화면 UI에 쓰는 글꼴 한 벌.
 
@@ -178,7 +178,9 @@ def detail_font(point_size: float | None = None) -> QFont:
     font.setWeight(QFont.Weight.Normal)
     if point_size is not None:
         font.setPointSizeF(point_size)
-    font.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
+    # 본문은 화면 UI와 달리 힌팅을 켠다. 오래 읽는 글이라 획이 화소에 맞아
+    # 또렷한 편이 낫다. 화면 UI(ui_font)는 힌팅을 끈 채로 둔다.
+    font.setHintingPreference(QFont.HintingPreference.PreferFullHinting)
     font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
     return font
 
@@ -450,6 +452,8 @@ def build_color_palette_toolbar(
     """
     color_tools = QWidget()
     color_tools.setObjectName("colorTools")
+    # 색 네모 두 줄(21+21)과 줄 사이 여백(2)이 들어가고도 남게 둔다.
+    # 딱 맞춰 두면 테두리가 그려지는 만큼 아래 줄이 잘려 보인다.
     color_tools.setFixedSize(246, 50)
     color_tools.setSizePolicy(
         QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
@@ -475,7 +479,7 @@ def build_color_palette_toolbar(
         for color_name, color_value in PALETTE_COLORS:
             button = QPushButton("")
             button.setObjectName("paletteColorButton")
-            button.setFixedSize(24, 24)
+            button.setFixedSize(21, 21)
             button.setToolTip(
                 palette_color_tooltip(
                     row_label, color_name, color_value, background=is_background
@@ -486,7 +490,11 @@ def build_color_palette_toolbar(
                 "QPushButton {"
                 f"background:{palette_swatch_color(color_value, background=is_background)}; "
                 "border:1px solid #8b98a8; "
-                "border-radius:3px; padding:0; min-height:24px;"
+                # 높이는 setFixedSize와 같은 값을 적어 준다. 스타일시트가
+                # 위젯 크기보다 우선해서, 여기 값이 크면 그만큼 아래 줄이
+                # 칸 밖으로 밀려 잘린다.
+                "border-radius:3px; padding:0;"
+                "min-height:21px; max-height:21px;"
                 "} QPushButton:hover { border:2px solid #1768aa; }"
             )
             button.clicked.connect(

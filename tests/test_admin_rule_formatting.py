@@ -10,7 +10,7 @@ from PySide6.QtCore import QSettings
 
 from storage.cache import LawDocumentCache
 from storage.recent import RecentSearchManager
-from utils.formatting import body_to_html
+from utils.formatting import ARTICLE_BODY_LEFT_MARGIN, body_to_html
 from utils.constants import FONT_FAMILY
 from utils.parsing import (
     insert_admin_clause_breaks,
@@ -351,7 +351,12 @@ def test_period_numbered_items_have_twenty_four_pixel_left_indent() -> None:
     )
     marker_font = QFont(FONT_FAMILY)
     marker_font.setPixelSize(14)
-    expected_margin = 26 + 4 + QFontMetrics(marker_font).horizontalAdvance("1.")
+    expected_margin = (
+        ARTICLE_BODY_LEFT_MARGIN
+        + 12
+        + 4
+        + QFontMetrics(marker_font).horizontalAdvance("1.")
+    )
     assert (str(expected_margin), "1.") in items
     assert (str(expected_margin), "2.") in items
 
@@ -370,10 +375,13 @@ def test_law_hang_ho_mok_indent_is_twelve_pixels_more() -> None:
     marker_font = QFont(FONT_FAMILY)
     marker_font.setPixelSize(14)
     metrics = QFontMetrics(marker_font)
-    assert items["①"] == str(14 + 4 + metrics.horizontalAdvance("①"))
-    assert items["1."] == str(26 + 4 + metrics.horizontalAdvance("1."))
-    assert items["가."] == str(42 + 4 + metrics.horizontalAdvance("가."))
-    assert items["(1)"] == str(66 + 4 + metrics.horizontalAdvance("(1)"))
+    # 항은 조문 제목과 같은 자리에서 시작하고, 아래 단계는 그보다
+    # 12ㆍ20ㆍ44px씩 더 들어간다.
+    base = ARTICLE_BODY_LEFT_MARGIN
+    assert items["①"] == str(base + 4 + metrics.horizontalAdvance("①"))
+    assert items["1."] == str(base + 12 + 4 + metrics.horizontalAdvance("1."))
+    assert items["가."] == str(base + 28 + 4 + metrics.horizontalAdvance("가."))
+    assert items["(1)"] == str(base + 52 + 4 + metrics.horizontalAdvance("(1)"))
 
 
 def test_guideline_period_numbered_items_have_40px_left_indent_only() -> None:

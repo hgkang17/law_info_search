@@ -85,7 +85,7 @@ def test_document_header_shows_short_name_and_effective_line() -> None:
     # 약칭은 제목의 절반 크기로 못박아 둔다. Qt 리치텍스트에서는 h1 안의
     # 클래스 규칙만으로는 제목 크기에 묻힌다.
     assert 'class="doc-short-name"' in html
-    assert "font-size:11px" in html
+    assert "font-size:9px" in html
     assert "( 약칭: 국토계획법 )</span>" in html
     assert '<div class="doc-subtitle">[시행 2026. 7. 1.]' in html
     assert "( 약칭: 국토계획법 )" in plain_parts

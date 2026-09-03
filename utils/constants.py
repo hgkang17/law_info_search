@@ -22,6 +22,9 @@ DETAIL_FONT_CSS_FAMILY = "'Gulim', '굴림', 'Malgun Gothic'"
 # 위 목록과 같은 차례를 QFont에도 그대로 준다. 목록을 지정하지 않으면
 # 위젯이 앱 기본 글꼴의 목록을 상속해 본문 글꼴이 화면 UI 글꼴로 덮인다.
 DETAIL_FONT_FAMILIES = ("Gulim", "굴림", "Malgun Gothic")
+# 본문을 처음 열 때의 글자 크기(pt). 사용자가 본문 위에서 조절하면 그 값이
+# 설정에 남아 다음부터는 그쪽을 쓴다.
+DEFAULT_DETAIL_FONT_POINT = 9.5
 
 APP_TITLE = "국가법령정보 통합검색"
 APP_VERSION = "1.3.3"

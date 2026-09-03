@@ -11,7 +11,7 @@ from urllib.parse import quote
 
 from PySide6.QtGui import QFont, QFontMetrics
 
-from .constants import DETAIL_FONT_CSS_FAMILY, FONT_FAMILY
+from .constants import DETAIL_FONT_CSS_FAMILY, FONT_FAMILY, UI_FONT_CSS_FAMILY
 from .patterns import (
     BULLET_PATTERN,
     LAW_HEADING_PATTERN,
@@ -57,14 +57,16 @@ DETAIL_DOCUMENT_STYLE = (
     # 줄간격은 법제처 본문(130%)에 가깝게 둔다. 예전 175%는 한 항 안의
     # 줄까지 성글게 벌어져 조문 한 덩이가 눈에 잘 안 들어왔다.
     "body { font-family:" + DETAIL_FONT_CSS_FAMILY + "; font-weight:400; color:#202124; "
-    "line-height:1.45; }"
-    "h1 { font-family:" + DETAIL_FONT_CSS_FAMILY + "; font-size:21px; font-weight:700; "
+    "line-height:1.75; }"
+    # 제목은 본문 글꼴(굴림)이 아니라 화면 UI 글꼴을 쓴다. 굵은 굴림은
+    # 획이 뭉쳐 큰 글자에서 읽기 나쁘다.
+    "h1 { font-family:" + UI_FONT_CSS_FAMILY + "; font-size:21px; font-weight:700; "
     "color:#173b63; margin:0 0 6px 0; }"
     # 법제처 본문처럼 제목 아래에 시행일ㆍ공포번호ㆍ제개정구분을 한 줄로 둔다.
     ".doc-subtitle { font-family:" + DETAIL_FONT_CSS_FAMILY + "; font-size:13px; "
     "font-weight:400; color:#3d4c60; margin:0 0 14px 0; }"
     # 약칭은 제목 글자 크기(21px)의 절반으로 둔다.
-    ".doc-short-name { font-size:11px; font-weight:400; color:#3d4c60; }"
+    ".doc-short-name { font-size:9px; font-weight:400; color:#3d4c60; }"
     ".meta { background:#f3f7fb; border:1px solid #cfdcea; "
     "border-radius:8px; padding:14px 18px; margin-bottom:20px; }"
     ".meta table { width:100%; border-collapse:collapse; table-layout:fixed; }"
@@ -78,7 +80,7 @@ DETAIL_DOCUMENT_STYLE = (
     "font-weight:700; border-bottom:2px solid #dbeaf7; padding-bottom:6px; "
     "margin-top:22px; }"
     ".content { font-family:" + DETAIL_FONT_CSS_FAMILY + "; font-weight:400; font-size:14px; }"
-    ".paragraph { margin:0 0 10px 0; }"
+    ".paragraph { margin:0 0 12px 0; }"
     ".bullet { margin:0 0 7px 0; border-collapse:collapse; }"
     ".bullet-marker { font-weight:400; padding:0; }"
     ".bullet-text { font-weight:400; padding:0; }"
@@ -409,10 +411,17 @@ def law_reference_html_text(
     return "".join(parts)
 
 
+# 조문 본문(항ㆍ호ㆍ목)이 시작하는 왼쪽 자리. 조문 제목 줄에는 즐겨찾기
+# 별 단추 자리를 내려고 같은 폭의 왼쪽 여백을 준다(ResourceSearchTab의
+# ``_ARTICLE_FAVORITE_HEADING_MARGIN``). 값을 맞춰 두어야 조와 항이 같은
+# 자리에서 시작한다.
+ARTICLE_BODY_LEFT_MARGIN = 22
+
+
 # 개정 이력 표기를 본문보다 한 단계 작고 연한 파란색으로 둔다. 본문
 # ``.content``가 14px이므로 13px가 한 단계 아래다. 인라인 px로 두면
 # ``scale_document_font_sizes``가 본문 글자 크기와 같은 비율로 함께 키운다.
-AMENDMENT_NOTE_STYLE = "font-size:13px; color:#6f9ec9;"
+AMENDMENT_NOTE_STYLE = "font-size:13px; color:#2d55c8;"
 
 # 본문 HTML은 이스케이프를 거쳐 ``<개정 …>``이 ``&lt;개정 …&gt;``으로 남는다.
 # 꺾쇠 표기는 안쪽에 개정 관련 낱말이 있으면 잡고, 대괄호 표기는 일반 인용
@@ -539,7 +548,8 @@ def body_to_html(
             not guideline_layout
             and bullet_marker in "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳"
         ):
-            left_margin = 14
+            # 항(①②③)은 조문 제목과 같은 자리에서 시작한다.
+            left_margin = ARTICLE_BODY_LEFT_MARGIN
         elif guideline_layout and ADMIN_RULE_CLAUSE_PATTERN.match(
             bullet_marker
         ):
@@ -563,13 +573,13 @@ def body_to_html(
             bullet_marker
         ):
             # 일반 법령의 숫자 호는 항보다 12px 더 들여쓴다.
-            left_margin = 26
+            left_margin = ARTICLE_BODY_LEFT_MARGIN + 12
         else:
             left_margin = (
                 0 if bullet_level == 0 else 4 + (bullet_level - 1) * 24
             )
             if not guideline_layout:
-                left_margin += 14
+                left_margin += ARTICLE_BODY_LEFT_MARGIN
         # 표식은 실제 글자 폭만 사용하고, 뒤에는 줄바꿈되지 않는
         # 공백 한 칸만 둔다.
         # QTextDocument의 표는 첫 열을 임의로 늘려 번호 뒤에 큰
@@ -858,7 +868,7 @@ def detail_document_header(
         # Qt 리치텍스트에서는 h1 안의 클래스 규칙이 제목 크기에 묻혀 약칭이
         # 제목만 하게 나온다. 크기를 인라인으로 못박아 제목의 절반으로 둔다.
         heading += (
-            ' <span class="doc-short-name" style="font-size:11px;'
+            ' <span class="doc-short-name" style="font-size:9px;'
             ' font-weight:400; color:#3d4c60;">'
             f"( 약칭: {highlight_html_text(str(short_name), terms)} )</span>"
         )

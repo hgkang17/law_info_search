@@ -9,7 +9,7 @@ from PySide6.QtGui import QFont, QFontMetrics
 from PySide6.QtWidgets import QApplication
 
 from utils.constants import FONT_FAMILY
-from utils.formatting import body_to_html
+from utils.formatting import ARTICLE_BODY_LEFT_MARGIN, body_to_html
 from utils.parsing import (
     insert_admin_clause_breaks,
     insert_law_style_article_breaks,
@@ -86,7 +86,12 @@ def test_law_style_admin_rule_renders_article_titles() -> None:
     )
     marker_font = QFont(FONT_FAMILY)
     marker_font.setPixelSize(14)
-    law_item_margin = 26 + 4 + QFontMetrics(marker_font).horizontalAdvance("1.")
+    law_item_margin = (
+        ARTICLE_BODY_LEFT_MARGIN
+        + 12
+        + 4
+        + QFontMetrics(marker_font).horizontalAdvance("1.")
+    )
     guideline_item_margin = 40 + 4 + QFontMetrics(marker_font).horizontalAdvance(
         "1."
     )

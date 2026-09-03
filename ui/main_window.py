@@ -230,8 +230,6 @@ class LawSearchWindow(QMainWindow):
         expanded = self._reading_chrome_expanded
         self.navigation_card.setVisible(not compact and not expanded)
         self.compact_navigation.setVisible(compact and not expanded)
-        if hasattr(self, "app_name_label"):
-            self.app_name_label.setVisible(not compact and not expanded)
         if hasattr(self, "resource_tab"):
             self.resource_tab.apply_compact_reader_layout(compact)
 
@@ -384,11 +382,9 @@ class LawSearchWindow(QMainWindow):
         self.open_documents_empty = QLabel("열린 본문 없음")
         self.open_documents_empty.setObjectName("openDocumentsEmpty")
         self.open_documents_layout.addWidget(self.open_documents_empty, 1)
+        # 창 제목 표시줄에 이미 프로그램 이름이 있어 머리글에서는 로고만
+        # 남긴다. 이름 라벨이 차지하던 자리는 열린 본문 띠가 넘겨받는다.
         header_layout.addWidget(logo_label)
-        self.app_name_label = QLabel("국가법령정보 통합검색")
-        self.app_name_label.setObjectName("appNameLabel")
-        self.app_name_label.setFixedWidth(166)
-        header_layout.addWidget(self.app_name_label)
 
         self.compact_navigation = QComboBox()
         self.compact_navigation.setObjectName("compactNavigation")
@@ -624,12 +620,6 @@ class LawSearchWindow(QMainWindow):
         navigation_layout.setContentsMargins(10, 14, 10, 10)
         navigation_layout.setSpacing(5)
 
-        navigation_title = QLabel("조사")
-        navigation_title.setObjectName("navigationTitle")
-        navigation_title.setAlignment(
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-        )
-
         self.favorite_navigation_button = QPushButton("즐겨찾기")
         self.favorite_navigation_button.setObjectName(
             "favoriteNavigationButton"
@@ -690,16 +680,9 @@ class LawSearchWindow(QMainWindow):
             "AI 에이전트에게 법령 검토를 요청합니다. 필요한 법령은 AI가 직접 검색합니다."
         )
         self.ai_review_button.clicked.connect(self._activate_ai_review_page)
-        navigation_layout.addWidget(navigation_title)
         navigation_layout.addWidget(self.favorite_navigation_button)
         navigation_layout.addSpacing(2)
         navigation_layout.addWidget(self.navigation, 1)
-        tools_title = QLabel("도구")
-        tools_title.setObjectName("navigationTitle")
-        tools_title.setAlignment(
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-        )
-        navigation_layout.addWidget(tools_title)
         navigation_layout.addWidget(self.ai_review_button)
         navigation_layout.addWidget(self.viewed_laws_button)
         self.navigation.setCurrentRow(1)
@@ -1689,7 +1672,7 @@ class LawSearchWindow(QMainWindow):
             QMainWindow, QWidget {
                 background: #f3f6f9;
                 color: #172033;
-                font-weight: 400;
+                font-weight: 500;
             }
             QFrame#headerCard {
                 background: #173b63;
@@ -3841,15 +3824,8 @@ class LawSearchWindow(QMainWindow):
                 border-bottom: 1px solid #dedfdf;
                 border-radius: 0px;
             }
-            QLabel#logoLabel,
-            QLabel#appNameLabel {
+            QLabel#logoLabel {
                 background: transparent;
-            }
-            QLabel#appNameLabel {
-                color: #242529;
-                font-family: "Malgun Gothic";
-                font-size: 10.5pt;
-                font-weight: 600;
             }
             QFrame#openDocumentsBar { background: transparent; border: none; }
             QLabel#openDocumentsEmpty {

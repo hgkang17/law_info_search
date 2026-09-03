@@ -47,6 +47,7 @@ datas = [
     ("spin_down.svg", "."),
     ("annex_hwp.svg", "."),
     ("annex_pdf.svg", "."),
+    ("close_mark.svg", "."),
     ("fonts/PretendardVariable.ttf", "fonts"),
     ("fonts/Pretendard-Thin.ttf", "fonts"),
     ("fonts/Pretendard-ExtraLight.ttf", "fonts"),

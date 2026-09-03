@@ -56,7 +56,7 @@ from storage.paths import (
 from workers.search_worker import (
     ApiWorker,
 )
-from utils.constants import FONT_FAMILY
+from utils.constants import DEFAULT_DETAIL_FONT_POINT, FONT_FAMILY
 from utils.formatting import (
     body_to_html,
     detail_document_header,
@@ -112,7 +112,7 @@ class LawSearchTab(QWidget):
         self.is_expc = service == "expc"
         self.is_prec = service == "prec"
         self.detail_font_size = self._saved_font_size(
-            f"{service}_detail_font_size", 10.0
+            f"{service}_detail_font_size", DEFAULT_DETAIL_FONT_POINT
         )
         self._reading_mode = False
         self._normal_window_margins: tuple[int, int, int, int] | None = None

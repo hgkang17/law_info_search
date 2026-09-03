@@ -2,5 +2,5 @@
   <path d="M3.5 1.5h8.2L16.5 6v12.5h-13z" fill="#ffffff" stroke="#2f6fb0" stroke-width="1.2" stroke-linejoin="round"/>
   <path d="M11.7 1.5V6h4.8" fill="none" stroke="#2f6fb0" stroke-width="1.2" stroke-linejoin="round"/>
   <rect x="2.4" y="9.4" width="15.2" height="7" rx="1.6" fill="#2f6fb0"/>
-  <text x="10" y="14.9" font-family="Segoe UI, Arial, sans-serif" font-size="5.2" font-weight="700" fill="#ffffff" text-anchor="middle">HWP</text>
+  <text x="10" y="15.2" font-family="Segoe UI, Arial, sans-serif" font-size="6.6" font-weight="700" fill="#ffffff" text-anchor="middle">H</text>
 </svg>
