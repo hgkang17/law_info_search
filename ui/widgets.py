@@ -939,11 +939,21 @@ class DropdownComboBox(QComboBox):
         view.setStyleSheet(self.POPUP_STYLE)
         view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
+    # 목록에 준 안쪽 여백(위아래 3px)과 테두리(1px)의 합.
+    POPUP_CHROME = 8
+
     def showPopup(self) -> None:
         super().showPopup()
         container = self.findChild(QFrame)
         if container is None:
             return
+        # Qt는 목록 높이를 행 높이만으로 잡고 스타일시트의 안쪽 여백은
+        # 세지 않는다. 그대로 두면 마지막 항목이 그 여백만큼 잘린다.
+        view = self.view()
+        visible = min(self.count(), max(1, self.maxVisibleItems()))
+        rows = sum(view.sizeHintForRow(row) for row in range(visible))
+        if rows:
+            container.setFixedHeight(rows + self.POPUP_CHROME)
         # 목록을 감싼 틀을 투명하게 두면 둥근 모서리 바깥이 창 뒤를 그대로
         # 비쳐 검은 조각처럼 보인다. 틀에도 같은 흰 바탕을 깔아 막는다.
         container.setStyleSheet(
@@ -1851,6 +1861,21 @@ class RecentSearchBar(QWidget):
             )
             self.items_layout.addWidget(button, 1)
             self._query_buttons.append((button, query))
+
+            # 검색어 하나만 지우는 표시. 모두 지우는 단추만 있으면 오타로
+            # 남은 한 건을 치우려고 나머지까지 버려야 한다.
+            remove = QPushButton()
+            remove.setObjectName("recentSearchRemove")
+            apply_close_icon(remove, 9)
+            remove.setFlat(True)
+            remove.setFixedSize(16, 16)
+            remove.setCursor(Qt.CursorShape.PointingHandCursor)
+            remove.setToolTip(f"최근 검색어에서 '{query}'를 지웁니다.")
+            remove.setAccessibleName(f"{query} 최근 검색어 삭제")
+            remove.clicked.connect(
+                lambda _checked=False, value=query: self.manager.remove(value)
+            )
+            self.items_layout.addWidget(remove)
         # 검색어가 적을 때 칩이 남은 한 줄 전체를 늘려 쓰지 않게 한다.
         # 폭이 부족하면 앞의 stretch factor에 따라 모든 칩이 함께 줄어든다.
         self.items_layout.addStretch(1)

@@ -36,6 +36,24 @@ class RecentSearchManager(QObject):
         self.settings.sync()
         self.changed.emit(list(self.items))
 
+    def remove(self, query: str) -> None:
+        """최근 검색어 한 건만 지운다. 없는 값이면 아무것도 하지 않는다."""
+        query = " ".join(str(query).split())
+        if not query:
+            return
+        remaining = [
+            value for value in self.items if value.casefold() != query.casefold()
+        ]
+        if len(remaining) == len(self.items):
+            return
+        self.items = remaining
+        if self.items:
+            self.settings.setValue("recent_searches", self.items)
+        else:
+            self.settings.remove("recent_searches")
+        self.settings.sync()
+        self.changed.emit(list(self.items))
+
     def clear(self) -> None:
         self.items = []
         self.settings.remove("recent_searches")

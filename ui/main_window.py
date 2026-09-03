@@ -3122,6 +3122,17 @@ class LawSearchWindow(QMainWindow):
                 color: #929dab;
                 font-size: 8pt;
             }
+            /* 검색어 하나만 지우는 표시. 칩 바로 오른쪽에 조용히 붙는다. */
+            QPushButton#recentSearchRemove {
+                background: transparent;
+                border: none;
+                padding: 0;
+                margin: 0 6px 0 1px;
+            }
+            QPushButton#recentSearchRemove:hover {
+                background: #f0e3e3;
+                border-radius: 4px;
+            }
             QPushButton#recentSearchButton {
                 min-height: 22px;
                 max-height: 22px;
@@ -3913,6 +3924,11 @@ class LawSearchWindow(QMainWindow):
                 max-height: 40px;
                 margin: 1px 0;
                 padding: 0 11px;
+            }
+            /* 목록 항목은 그림 자리를 두느라 글자가 단추보다 7px 더 들어간다.
+               왼쪽 여백에서 그만큼 빼서 위아래 단추와 글자를 나란히 세운다. */
+            QListWidget#mainNavigation::item {
+                padding-left: 4px;
                 background: transparent;
                 color: #4f5258;
                 border: 1px solid transparent;
