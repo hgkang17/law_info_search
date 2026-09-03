@@ -6,6 +6,7 @@ from ui.assets import (
     SEARCH_API_REFRESH_TOOLTIP,
 )
 from ui.theme import (
+    detail_font as make_detail_font,
     SEARCH_COMBO_WIDTH,
     apply_base_foreground_spans,
     build_color_palette_toolbar,
@@ -55,7 +56,7 @@ from storage.paths import (
 from workers.search_worker import (
     ApiWorker,
 )
-from utils.constants import DETAIL_FONT_FAMILY, FONT_FAMILY
+from utils.constants import FONT_FAMILY
 from utils.formatting import (
     body_to_html,
     detail_document_header,
@@ -352,9 +353,7 @@ class LawSearchTab(QWidget):
 
         self.detail_view = DeferredWrapTextBrowser()
         self.detail_view.setAccessibleName("본문")
-        detail_font = QFont(DETAIL_FONT_FAMILY)
-        detail_font.setWeight(QFont.Weight.Normal)
-        detail_font.setPointSizeF(self.detail_font_size)
+        detail_font = make_detail_font(self.detail_font_size)
         self.detail_view.setFont(detail_font)
         self.detail_view.document().setDefaultFont(detail_font)
         self.detail_view.setOpenExternalLinks(True)
@@ -704,9 +703,7 @@ class LawSearchTab(QWidget):
         )
         self.detail_search.begin_document_change()
         try:
-            font = QFont(DETAIL_FONT_FAMILY)
-            font.setWeight(QFont.Weight.Normal)
-            font.setPointSizeF(self.detail_font_size)
+            font = make_detail_font(self.detail_font_size)
             self.detail_view.setFont(font)
             self.detail_view.document().setDefaultFont(font)
             if html is not None:

@@ -42,11 +42,9 @@ def test_header_shows_active_document_without_binding_global_ai(qt_app) -> None:
         assert tabs.tabText(tabs.currentIndex()) == "국토계획법"
         assert tabs.isMovable()
         assert window.open_documents_widget.height() == 38
-        assert window.header_card.findChild(QLabel, "appTitle") is None
-        assert "국가법령정보 통합검색" not in [
-            child.text()
-            for child in window.header_card.findChildren(QLabel)
-        ]
+        app_name = window.header_card.findChild(QLabel, "appNameLabel")
+        assert app_name is not None
+        assert app_name.text() == "국가법령정보 통합검색"
         assert window.header_card.layout().indexOf(
             window.oc_api_settings_button
         ) >= 0

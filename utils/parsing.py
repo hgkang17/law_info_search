@@ -95,6 +95,14 @@ _AMENDMENT_NOTE_TAG_PATTERN = re.compile(
 )
 
 
+# 조문 끝에 따로 한 줄로 붙는 개정 표기(``[본조신설 2018. 12. 27.]``).
+# 화면에서 그 줄만 조문보다 왼쪽으로 튀어나오지 않게 가려낼 때 쓴다.
+AMENDMENT_NOTE_LINE_PATTERN = re.compile(
+    r"\[(?:전문개정|본조신설|본조제목개정|제목개정|개정|신설|삭제|폐지|제정)"
+    r"[^\[\]]*\]"
+)
+
+
 def json_text(value: object) -> str:
     """JSON 필드의 content 래퍼와 검색 강조 태그를 일반 문자열로 정리."""
     if isinstance(value, list):

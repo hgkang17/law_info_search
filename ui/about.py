@@ -30,7 +30,7 @@ from utils.constants import (
     AUTHOR_NAME,
     CONTACT_EMAIL,
     COPYRIGHT_YEAR,
-    FONT_FAMILY,
+    UI_FONT_CSS_FAMILY,
 )
 
 
@@ -216,7 +216,7 @@ def _notice_html() -> str:
     body = "".join(sections)
     return (
         "<style>"
-        f"body {{ font-family:'{FONT_FAMILY}'; font-size:13px; "
+        f"body {{ font-family:{UI_FONT_CSS_FAMILY}; font-size:13px; "
         "color:#172033; line-height:1.7; }}"
         "a { color:#1768aa; text-decoration:none; }"
         "</style>"

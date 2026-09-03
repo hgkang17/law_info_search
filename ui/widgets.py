@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass
+from math import cos, pi, sin
 import re
 from PySide6.QtCore import (
     QEvent,
@@ -24,9 +25,12 @@ from PySide6.QtGui import (
     QCursor,
     QFont,
     QFontMetrics,
+    QIcon,
     QKeySequence,
     QPainter,
+    QPainterPath,
     QPen,
+    QPixmap,
     QShortcut,
     QTextCharFormat,
     QTextCursor,
@@ -73,6 +77,66 @@ from PySide6.QtWidgets import (
 from storage.recent import RecentSearchManager
 from utils.formatting import hwp_friendly_clipboard_html
 from utils.parsing import whitespace_flexible_pattern
+
+
+def draw_favorite_star(
+    painter: QPainter,
+    rect: QRect,
+    *,
+    filled: bool,
+    color: QColor,
+) -> None:
+    """글꼴 문자 대신 같은 기하 도형으로 즐겨찾기 별을 그린다."""
+    center = rect.center()
+    radius = max(3.0, min(rect.width(), rect.height()) * 0.32)
+    inner = radius * 0.45
+    path = QPainterPath()
+    for index in range(10):
+        angle = -pi / 2 + index * pi / 5
+        distance = radius if index % 2 == 0 else inner
+        point = QPointF(
+            center.x() + cos(angle) * distance,
+            center.y() + sin(angle) * distance,
+        )
+        if index == 0:
+            path.moveTo(point)
+        else:
+            path.lineTo(point)
+    path.closeSubpath()
+    painter.save()
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    pen = QPen(color)
+    pen.setWidthF(1.35)
+    painter.setPen(pen)
+    painter.setBrush(color if filled else Qt.BrushStyle.NoBrush)
+    painter.drawPath(path)
+    painter.restore()
+
+
+def favorite_icon(filled: bool, color: str) -> QIcon:
+    """버튼용 즐겨찾기 아이콘을 공용 벡터 도형으로 만든다."""
+    pixmap = QPixmap(18, 18)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    draw_favorite_star(
+        painter,
+        QRect(0, 0, 18, 18),
+        filled=filled,
+        color=QColor(color),
+    )
+    painter.end()
+    return QIcon(pixmap)
+
+
+def apply_close_icon(button: QPushButton, size: int = 12) -> None:
+    """닫기 동작을 플랫폼 표준 벡터 아이콘으로 통일한다."""
+    button.setText("")
+    button.setIcon(
+        QApplication.style().standardIcon(
+            QStyle.StandardPixmap.SP_TitleBarCloseButton
+        )
+    )
+    button.setIconSize(QSize(size, size))
 
 
 def restore_text_view_scroll(
@@ -368,8 +432,9 @@ def build_dismissible_banner(
     )
     label.setCursor(Qt.CursorShape.IBeamCursor)
 
-    close_button = QPushButton("✕")
+    close_button = QPushButton()
     close_button.setObjectName("bannerDismissButton")
+    apply_close_icon(close_button)
     close_button.setFixedSize(24, 24)
     close_button.setToolTip("이 안내를 닫습니다. 다음 실행에도 숨겨집니다.")
     close_button.setAccessibleName("안내 닫기")
@@ -907,7 +972,7 @@ class SegmentedModeSwitch(QFrame):
     # 검색줄의 콤보ㆍ입력칸과 같은 높이. 버튼 자체 높이는 스타일시트가
     # 정한다. 파이썬에서 setFixedHeight로 잡으면 스타일시트의 여백 규칙과
     # 부딪혀 버튼이 캡슐 밖으로 밀려 나온다.
-    HEIGHT = 40
+    HEIGHT = 38
 
     def __init__(self, items: tuple[tuple[str, str], ...], parent=None) -> None:
         super().__init__(parent)
@@ -991,13 +1056,8 @@ class GroupedNavigationList(QListWidget):
         return rectangles
 
     def paintEvent(self, event) -> None:
-        painter = QPainter(self.viewport())
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(QColor("#41627f"))
-        painter.setBrush(QColor("#173956"))
-        for rectangle in self._section_rects():
-            painter.drawRoundedRect(rectangle, 8, 8)
-        painter.end()
+        # 새 내비게이션은 섹션마다 카드 외곽을 그리지 않는다. 여백과
+        # 작은 그룹 제목만으로 구분해 긴 메뉴 이름을 더 편하게 훑게 한다.
         super().paintEvent(event)
 
 
@@ -1323,15 +1383,12 @@ class FavoriteTitleDelegate(SearchHighlightDelegate):
         star_rect = self._star_rect(option)
         if self._star_only:
             QStyledItemDelegate.paint(self, painter, option, index)
-        painter.save()
-        painter.setPen(QColor("#e2a400" if is_favorite else "#c3ccd6"))
-        font = QFont(painter.font())
-        font.setPointSizeF(font.pointSizeF() + 1.5)
-        painter.setFont(font)
-        painter.drawText(
-            star_rect, Qt.AlignmentFlag.AlignCenter, "★" if is_favorite else "☆"
+        draw_favorite_star(
+            painter,
+            star_rect,
+            filled=is_favorite,
+            color=QColor("#c88700" if is_favorite else "#aeb4bc"),
         )
-        painter.restore()
         if self._star_only:
             return
         shifted_option = QStyleOptionViewItem(option)
@@ -1427,17 +1484,12 @@ class FavoriteTreeItemDelegate(QStyledItemDelegate):
         if is_record:
             remove_rect = self._remove_rect(option)
             hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
-            painter.save()
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-            font = QFont(painter.font())
-            font.setPointSizeF(font.pointSizeF() + 1.0)
-            painter.setFont(font)
-            # 즐겨찾기 표시와 같은 별(★)을 그대로 눌러서 해제하는
-            # 기존 방식을 그대로 따른다. 눌러서 해제된다는 걸 알 수
-            # 있도록 마우스를 올리면 색이 진해진다.
-            painter.setPen(QColor("#c88700" if hovered else "#e2a400"))
-            painter.drawText(remove_rect, Qt.AlignmentFlag.AlignCenter, "★")
-            painter.restore()
+            draw_favorite_star(
+                painter,
+                remove_rect,
+                filled=True,
+                color=QColor("#a86f00" if hovered else "#c88700"),
+            )
 
     def editorEvent(self, event, model, option, index) -> bool:
         if (
@@ -2348,8 +2400,9 @@ class ReferenceHistoryChip(QFrame):
         self.text_label.setAttribute(
             Qt.WidgetAttribute.WA_TransparentForMouseEvents
         )
-        self.close_button = QPushButton("×")
+        self.close_button = QPushButton()
         self.close_button.setObjectName("referenceChipClose")
+        apply_close_icon(self.close_button, 10)
         self.close_button.setFixedSize(18, 18)
         self.close_button.setFlat(True)
         self.close_button.setAccessibleName(f"{text} 참조 제거")

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QRect, Signal, Qt, QTimer
-from PySide6.QtGui import QCursor, QFont
+from PySide6.QtCore import QEvent, QRect, QSize, Signal, Qt, QTimer
+from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
@@ -18,9 +18,14 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtPdf import QPdfDocument
 from PySide6.QtPdfWidgets import QPdfView
-from ui.widgets import PopupDragBar, PopupResizeHandle
+from ui.theme import detail_font
+from ui.widgets import (
+    PopupDragBar,
+    PopupResizeHandle,
+    apply_close_icon,
+    favorite_icon,
+)
 from workers.download_worker import PdfDownloadWorker
-from utils.constants import DETAIL_FONT_FAMILY
 from PySide6.QtCore import QBuffer, QIODevice
 from PySide6.QtWidgets import QApplication
 from html import escape
@@ -136,8 +141,9 @@ class PdfPreviewPopup(QFrame):
         self.pin_button.setCheckable(True)
         self.pin_button.setChecked(True)
         self.pin_button.setFixedSize(58, 30)
-        self.close_button = QPushButton("×")
+        self.close_button = QPushButton()
         self.close_button.setObjectName("referencePopupClose")
+        apply_close_icon(self.close_button)
         self.close_button.setFixedSize(30, 30)
         header.addWidget(self.title_label, 1)
         header.addWidget(self.zoom_spin)
@@ -484,13 +490,15 @@ class LawReferencePopup(QFrame):
             "저장된 조문을 사용하지 않고 같은 조문을 API에서 다시 불러옵니다."
         )
         self.refresh_button.setEnabled(False)
-        self.favorite_button = QPushButton("☆")
+        self.favorite_button = QPushButton()
         self.favorite_button.setObjectName("referencePopupFavorite")
+        self.favorite_button.setIconSize(QSize(16, 16))
         self.favorite_button.setFixedSize(34, 30)
         self.favorite_button.setEnabled(False)
         self.favorite_button.setToolTip("이 조항호목을 즐겨찾기에 추가합니다.")
-        self.close_button = QPushButton("×")
+        self.close_button = QPushButton()
         self.close_button.setObjectName("referencePopupClose")
+        apply_close_icon(self.close_button)
         self.close_button.setFixedSize(30, 30)
         header.addWidget(self.title_label, 1)
         header.addWidget(self.favorite_button)
@@ -510,8 +518,7 @@ class LawReferencePopup(QFrame):
 
         self.browser = QTextBrowser()
         self.browser.setObjectName("referencePopupBrowser")
-        browser_font = QFont(DETAIL_FONT_FAMILY)
-        browser_font.setWeight(QFont.Weight.Normal)
+        browser_font = detail_font()
         self.browser.setFont(browser_font)
         self.browser.document().setDefaultFont(browser_font)
         self.browser.setOpenExternalLinks(False)
@@ -740,7 +747,13 @@ class LawReferencePopup(QFrame):
             except Exception:  # noqa: BLE001 - 별표 확인 실패는 팝업을 막지 않는다.
                 favorite = False
         self.favorite_button.setEnabled(available)
-        self.favorite_button.setText("★" if favorite else "☆")
+        self.favorite_button.setText("")
+        self.favorite_button.setIcon(
+            favorite_icon(
+                favorite,
+                "#c88700" if favorite else "#aeb4bc",
+            )
+        )
         self.favorite_button.setProperty("favorite", favorite)
         self.favorite_button.setToolTip(
             "이 조항호목을 즐겨찾기에서 해제합니다."

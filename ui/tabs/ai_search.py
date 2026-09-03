@@ -6,6 +6,7 @@ from ui.assets import (
     SEARCH_API_REFRESH_TOOLTIP,
 )
 from ui.theme import (
+    detail_font as make_detail_font,
     SEARCH_COMBO_WIDTH,
     apply_base_foreground_spans,
     build_color_palette_toolbar,
@@ -60,7 +61,6 @@ from workers.search_worker import (
     ApiWorker,
     RelatedArticleWorker,
 )
-from utils.constants import DETAIL_FONT_FAMILY
 from utils.formatting import (
     body_to_html,
     detail_document_header,
@@ -80,7 +80,7 @@ from utils.parsing import (
     serialize_agency_search_payload,
 )
 from PySide6.QtCore import QEvent, QRect, QTimer, QUrl, Qt, Signal
-from PySide6.QtGui import QColor, QDesktopServices, QFont, QKeySequence, QShortcut, QTextCharFormat, QTextCursor
+from PySide6.QtGui import QColor, QDesktopServices, QKeySequence, QShortcut, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import QAbstractItemView, QApplication, QDialog, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton, QSizePolicy, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
 from html import escape
 import re
@@ -387,9 +387,7 @@ class AiLawSearchTab(QWidget):
 
         self.detail_view = DeferredWrapTextBrowser()
         self.detail_view.setAccessibleName("본문")
-        detail_font = QFont(DETAIL_FONT_FAMILY)
-        detail_font.setWeight(QFont.Weight.Normal)
-        detail_font.setPointSizeF(self.detail_font_size)
+        detail_font = make_detail_font(self.detail_font_size)
         self.detail_view.setFont(detail_font)
         self.detail_view.document().setDefaultFont(detail_font)
         self.detail_view.setOpenExternalLinks(False)
@@ -767,9 +765,7 @@ class AiLawSearchTab(QWidget):
         )
         self.detail_search.begin_document_change()
         try:
-            font = QFont(DETAIL_FONT_FAMILY)
-            font.setWeight(QFont.Weight.Normal)
-            font.setPointSizeF(self.detail_font_size)
+            font = make_detail_font(self.detail_font_size)
             self.detail_view.setFont(font)
             self.detail_view.document().setDefaultFont(font)
             if html is not None:

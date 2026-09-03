@@ -9,6 +9,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import (
     QBrush,
     QColor,
+    QFont,
     QFontDatabase,
     QKeySequence,
     QShortcut,
@@ -24,7 +25,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from storage.paths import APP_DIR
-from utils.constants import DETAIL_FONT_FAMILY
+from utils.constants import (
+    DETAIL_FONT_FAMILIES,
+    DETAIL_FONT_FAMILY,
+    FONT_FAMILY,
+    UI_FONT_FAMILIES,
+    UI_FONT_PIXEL_SIZE,
+)
 from PySide6.QtWidgets import QLabel
 import re
 
@@ -42,15 +49,15 @@ PALETTE_COLORS: tuple[tuple[str, str], ...] = (
 
 
 WORKBENCH_COLORS: dict[str, str] = {
-    "canvas": "#f1f5f7",
+    "canvas": "#f4f4f3",
     "surface": "#ffffff",
-    "ink": "#172b3a",
-    "navy": "#15324b",
-    "accent": "#087e8b",
-    "accent_hover": "#076b76",
-    "border": "#d5dfe5",
-    "focus": "#4fb7bd",
-    "muted": "#526176",
+    "ink": "#242529",
+    "navy": "#242529",
+    "accent": "#2563eb",
+    "accent_hover": "#1d4ed8",
+    "border": "#dedfdf",
+    "focus": "#3b82f6",
+    "muted": "#62666f",
 }
 
 
@@ -136,6 +143,44 @@ def register_bundled_pretendard_fonts() -> bool:
         if font_id >= 0:
             _PRETENDARD_FONT_IDS.append(font_id)
     return bool(_PRETENDARD_FONT_IDS)
+
+
+def ui_font(
+    point_size: float | None = None,
+    weight: QFont.Weight = QFont.Weight.Normal,
+) -> QFont:
+    """화면 UI에 쓰는 글꼴 한 벌.
+
+    글꼴을 새로 만드는 자리마다 이름만 적어 두면 대체 글꼴과 힌팅이 환경
+    따라 흔들린다. 화면 글꼴은 모두 이 함수를 거치게 해서 한곳에서 바꾼다.
+    """
+    font = QFont(FONT_FAMILY)
+    font.setFamilies(list(UI_FONT_FAMILIES))
+    font.setWeight(weight)
+    if point_size is None:
+        font.setPixelSize(UI_FONT_PIXEL_SIZE)
+    else:
+        font.setPointSizeF(point_size)
+    font.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
+    font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
+    return font
+
+
+def detail_font(point_size: float | None = None) -> QFont:
+    """본문(법령ㆍ행정규칙 조문)에 쓰는 글꼴 한 벌.
+
+    글꼴 이름만 정하고 목록을 비워 두면 위젯이 앱 기본 글꼴의 목록을 물려받아
+    본문 글꼴이 화면 UI 글꼴로 덮인다. 목록까지 못박아야 본문만 다른 글꼴을
+    쓸 수 있다.
+    """
+    font = QFont(DETAIL_FONT_FAMILY)
+    font.setFamilies(list(DETAIL_FONT_FAMILIES))
+    font.setWeight(QFont.Weight.Normal)
+    if point_size is not None:
+        font.setPointSizeF(point_size)
+    font.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
+    font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
+    return font
 
 
 def user_format_color(color: QColor | str, *, background: bool) -> QColor:
@@ -508,13 +553,8 @@ def install_text_color_shortcuts(owner: QWidget) -> None:
         owner.text_color_shortcuts.append(shortcut)
 
 
-def apply_dark_title_bar(widget) -> None:
-    """Windows 네이티브 제목줄만 어두운 테마로 맞춘다.
-
-    앱 본문은 밝은 화면이라 ``ColorScheme.Dark``를 쓰지 않는다. 제목줄은
-    DWM immersive dark mode로만 바꾼다. Windows가 아니면 아무 것도
-    하지 않는다.
-    """
+def apply_light_title_bar(widget) -> None:
+    """Windows 네이티브 제목줄을 밝은 작업공간과 같은 계열로 맞춘다."""
     if sys.platform != "win32" or widget is None:
         return
     hwnd = int(widget.winId())
@@ -522,7 +562,7 @@ def apply_dark_title_bar(widget) -> None:
         return
     import ctypes
 
-    value = ctypes.c_int(1)
+    value = ctypes.c_int(0)
     dwmapi = ctypes.windll.dwmapi
     # 20은 Windows 10 2004 이후, 19는 그 이전. 되는 쪽만 적용된다.
     for attribute in (20, 19):

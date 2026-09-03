@@ -54,8 +54,10 @@ REPEAL_NOTICE_LABEL = "현행여부"
 
 DETAIL_DOCUMENT_STYLE = (
     "<style>"
-    "body { font-family:" + DETAIL_FONT_CSS_FAMILY + "; font-weight:400; color:#172033; "
-    "line-height:1.75; }"
+    # 줄간격은 법제처 본문(130%)에 가깝게 둔다. 예전 175%는 한 항 안의
+    # 줄까지 성글게 벌어져 조문 한 덩이가 눈에 잘 안 들어왔다.
+    "body { font-family:" + DETAIL_FONT_CSS_FAMILY + "; font-weight:400; color:#202124; "
+    "line-height:1.45; }"
     "h1 { font-family:" + DETAIL_FONT_CSS_FAMILY + "; font-size:21px; font-weight:700; "
     "color:#173b63; margin:0 0 6px 0; }"
     # 법제처 본문처럼 제목 아래에 시행일ㆍ공포번호ㆍ제개정구분을 한 줄로 둔다.

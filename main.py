@@ -38,14 +38,14 @@ def main() -> int:
         return 0
 
     from PySide6.QtCore import QTimer
-    from PySide6.QtGui import QFont, QIcon
+    from PySide6.QtGui import QIcon
     from PySide6.QtWidgets import QApplication, QMessageBox
 
     from storage.paths import ensure_cache_dirs, migrate_legacy_cache_dirs
     from ui.assets import LOGO_PATH
     from ui.main_window import LawSearchWindow
-    from ui.theme import register_bundled_pretendard_fonts
-    from utils.constants import APP_VERSION, FONT_FAMILY
+    from ui.theme import register_bundled_pretendard_fonts, ui_font
+    from utils.constants import APP_VERSION
     from utils.updater import (
         cleanup_staged_executable,
         consume_startup_option,
@@ -71,7 +71,7 @@ def main() -> int:
     app.setApplicationName("국가법령정보 통합검색")
     app.setApplicationVersion(APP_VERSION)
     app.setStyle("Fusion")
-    app.setFont(QFont(FONT_FAMILY, 10, QFont.Weight.Normal))
+    app.setFont(ui_font())
     app.setWindowIcon(QIcon(str(LOGO_PATH)))
     window = LawSearchWindow()
     window.show()

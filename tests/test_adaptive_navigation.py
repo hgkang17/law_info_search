@@ -49,6 +49,9 @@ def test_half_screen_uses_compact_navigation(monkeypatch) -> None:
         assert not window.compact_navigation.isHidden()
         assert window.navigation_card.isHidden()
         assert window.minimumWidth() == 900
+        assert window.resource_tab._compact_reader
+        assert not window.resource_tab.compact_format_button.isHidden()
+        assert window.resource_tab.color_tools.isHidden()
 
         law_index = window.compact_navigation.findData(1)
         window.compact_navigation.setCurrentIndex(law_index)
@@ -59,5 +62,35 @@ def test_half_screen_uses_compact_navigation(monkeypatch) -> None:
         window._update_adaptive_navigation()
         assert window.compact_navigation.isHidden()
         assert not window.navigation_card.isHidden()
+        assert not window.resource_tab._compact_reader
+        assert window.resource_tab.compact_format_button.isHidden()
+        assert not window.resource_tab.color_tools.isHidden()
+    finally:
+        window.close()
+
+
+def test_gray_workbench_navigation_is_flat_and_compact(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "ui.main_window.register_bundled_pretendard_fonts", lambda: False
+    )
+    application = QApplication.instance() or QApplication([])
+    assert application is not None
+    window = LawSearchWindow()
+    try:
+        window.resize(1200, 700)
+        window._update_adaptive_navigation()
+
+        assert window.navigation_card.width() == 168
+        assert window.favorite_navigation_button.text() == "즐겨찾기"
+        assert window.favorite_navigation_button.height() <= 44
+        assert window.ai_review_button.text() == "AI 에이전트"
+        assert window.viewed_laws_button.text() == "열람 내역"
+        assert window.navigation.item(1).text() == "법령 검색"
+        assert not window.app_name_label.isHidden()
+
+        style = window.styleSheet()
+        assert "background: #fafafa" in style
+        assert "background: #202124" in style
+        assert "border-bottom: 2px solid #2563eb" in style
     finally:
         window.close()

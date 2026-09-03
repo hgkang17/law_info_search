@@ -56,9 +56,10 @@ from ui.tabs.law_search import LawSearchTab
 from ui.tabs.resource_search import ResourceSearchTab
 from ui.tabs.viewed_laws import ViewedLawsTab
 from ui.theme import (
-    apply_dark_title_bar,
+    apply_light_title_bar,
     apply_workbench_color_tokens,
     register_bundled_pretendard_fonts,
+    ui_font,
 )
 from ui.widgets import (
     CornerCloseTabBar,
@@ -68,7 +69,7 @@ from ui.widgets import (
     TabStripScrollArea,
     close_hovered_reference_popup,
 )
-from utils.constants import APP_VERSION, FONT_FAMILY
+from utils.constants import APP_VERSION, UI_FONT_FAMILIES
 from utils.formatting import body_to_html, detail_document_header, law_short_name
 from utils.parsing import (
     search_terms,
@@ -142,8 +143,8 @@ class LawSearchWindow(QMainWindow):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
-        # 본문은 밝은 화면을 유지하고, Windows 제목줄만 어둡게 맞춘다.
-        apply_dark_title_bar(self)
+        # 네이티브 제목줄까지 밝은 회색 작업공간에 이어지게 한다.
+        apply_light_title_bar(self)
 
     def _load_saved_api_key(self) -> str:
         # API 인증값은 QSettings에 평문으로 저장한다. 이전 버전의 DPAPI
@@ -229,6 +230,10 @@ class LawSearchWindow(QMainWindow):
         expanded = self._reading_chrome_expanded
         self.navigation_card.setVisible(not compact and not expanded)
         self.compact_navigation.setVisible(compact and not expanded)
+        if hasattr(self, "app_name_label"):
+            self.app_name_label.setVisible(not compact and not expanded)
+        if hasattr(self, "resource_tab"):
+            self.resource_tab.apply_compact_reader_layout(compact)
 
     def _compact_navigation_changed(self, index: int) -> None:
         target = self.compact_navigation.itemData(index)
@@ -300,28 +305,28 @@ class LawSearchWindow(QMainWindow):
     def _build_ui(self) -> None:
         central = QWidget()
         root = QVBoxLayout(central)
-        # 아래 여백은 위쪽의 절반만 둔다. 상태줄이 창 맨 아래에 붙어야
-        # 왼쪽 메뉴 카드와 본문 카드의 아래 선이 나란히 보인다.
-        root.setContentsMargins(16, 14, 16, 7)
-        root.setSpacing(10)
+        # 앱 크롬을 창 가장자리까지 이어 하나의 작업공간처럼 보이게 한다.
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
         self.setCentralWidget(central)
 
         header = QFrame()
         header.setObjectName("headerCard")
+        header.setFixedHeight(52)
         self.header_card = header
         header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(16, 8, 16, 8)
-        header_layout.setSpacing(10)
+        header_layout.setContentsMargins(14, 7, 14, 7)
+        header_layout.setSpacing(8)
 
         logo_label = QLabel()
         logo_label.setObjectName("logoLabel")
-        logo_label.setFixedSize(36, 36)
+        logo_label.setFixedSize(28, 28)
         logo_pixmap = QPixmap(str(LOGO_PATH))
         if not logo_pixmap.isNull():
             logo_label.setPixmap(
                 logo_pixmap.scaled(
-                    36,
-                    36,
+                    28,
+                    28,
                     Qt.AspectRatioMode.KeepAspectRatio,
                     Qt.TransformationMode.SmoothTransformation,
                 )
@@ -335,8 +340,7 @@ class LawSearchWindow(QMainWindow):
         self.open_documents_layout.setSpacing(5)
         self.open_documents_label = QLabel("열린 본문")
         self.open_documents_label.setObjectName("openDocumentsLabel")
-        self.open_documents_label.setFixedWidth(58)
-        self.open_documents_layout.addWidget(self.open_documents_label)
+        self.open_documents_label.hide()
 
         # 닫기 × 를 탭 안에 단추로 달면 그만큼 제목 자리가 줄어 글자가
         # 왼쪽으로 밀린다. 모서리에 겹쳐 그려 제목은 가운데 그대로 둔다.
@@ -381,6 +385,10 @@ class LawSearchWindow(QMainWindow):
         self.open_documents_empty.setObjectName("openDocumentsEmpty")
         self.open_documents_layout.addWidget(self.open_documents_empty, 1)
         header_layout.addWidget(logo_label)
+        self.app_name_label = QLabel("국가법령정보 통합검색")
+        self.app_name_label.setObjectName("appNameLabel")
+        self.app_name_label.setFixedWidth(166)
+        header_layout.addWidget(self.app_name_label)
 
         self.compact_navigation = QComboBox()
         self.compact_navigation.setObjectName("compactNavigation")
@@ -610,22 +618,24 @@ class LawSearchWindow(QMainWindow):
 
         navigation_card = QFrame()
         navigation_card.setObjectName("navigationCard")
-        navigation_card.setFixedWidth(136)
+        navigation_card.setFixedWidth(168)
         self.navigation_card = navigation_card
         navigation_layout = QVBoxLayout(navigation_card)
-        navigation_layout.setContentsMargins(7, 10, 7, 10)
-        navigation_layout.setSpacing(4)
+        navigation_layout.setContentsMargins(10, 14, 10, 10)
+        navigation_layout.setSpacing(5)
 
-        navigation_title = QLabel("MAIN MENU")
+        navigation_title = QLabel("조사")
         navigation_title.setObjectName("navigationTitle")
-        navigation_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        navigation_title.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
 
-        self.favorite_navigation_button = QPushButton("★\n즐겨찾기")
+        self.favorite_navigation_button = QPushButton("즐겨찾기")
         self.favorite_navigation_button.setObjectName(
             "favoriteNavigationButton"
         )
         self.favorite_navigation_button.setCheckable(True)
-        self.favorite_navigation_button.setFixedHeight(58)
+        self.favorite_navigation_button.setFixedHeight(40)
         self.favorite_navigation_button.setToolTip(
             "즐겨찾기로 표시한 저장 본문을 모아 봅니다."
         )
@@ -643,23 +653,23 @@ class LawSearchWindow(QMainWindow):
         self.navigation.setSpacing(4)
         self.navigation.addItems(
             (
-                "★\n즐겨찾기",
-                "법령\n검색",
-                "중앙부처\n질의회신",
-                "법령\n해석례",
-                "판례\n검색",
+                "즐겨찾기",
+                "법령 검색",
+                "중앙부처 질의회신",
+                "법령 해석례",
+                "판례 검색",
             )
         )
         self.navigation.item(0).setHidden(True)
         for index in range(self.navigation.count()):
             self.navigation.item(index).setTextAlignment(
-                Qt.AlignmentFlag.AlignCenter
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
             )
-        self.navigation.set_group_ranges([(1, 1), (2, 4)])
-        self.viewed_laws_button = QPushButton("저장\n내역")
+        self.navigation.set_group_ranges([])
+        self.viewed_laws_button = QPushButton("열람 내역")
         self.viewed_laws_button.setObjectName("viewedLawsNavigationButton")
         self.viewed_laws_button.setCheckable(True)
-        self.viewed_laws_button.setFixedHeight(58)
+        self.viewed_laws_button.setFixedHeight(40)
         self.viewed_laws_button.setToolTip(
             "저장된 법령·조문·질의회신·해석례·판례를 API 호출 없이 엽니다."
         )
@@ -672,26 +682,31 @@ class LawSearchWindow(QMainWindow):
         self.viewed_laws_button.clicked.connect(
             self._activate_viewed_laws_page
         )
-        self.ai_review_button = QPushButton("AI\n에이전트")
+        self.ai_review_button = QPushButton("AI 에이전트")
         self.ai_review_button.setObjectName("aiReviewNavigationButton")
         self.ai_review_button.setCheckable(True)
-        self.ai_review_button.setFixedHeight(58)
+        self.ai_review_button.setFixedHeight(40)
         self.ai_review_button.setToolTip(
             "AI 에이전트에게 법령 검토를 요청합니다. 필요한 법령은 AI가 직접 검색합니다."
         )
         self.ai_review_button.clicked.connect(self._activate_ai_review_page)
         navigation_layout.addWidget(navigation_title)
         navigation_layout.addWidget(self.favorite_navigation_button)
-        navigation_layout.addSpacing(8)
+        navigation_layout.addSpacing(2)
         navigation_layout.addWidget(self.navigation, 1)
-        navigation_layout.addSpacing(8)
+        tools_title = QLabel("도구")
+        tools_title.setObjectName("navigationTitle")
+        tools_title.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+        navigation_layout.addWidget(tools_title)
         navigation_layout.addWidget(self.ai_review_button)
         navigation_layout.addWidget(self.viewed_laws_button)
         self.navigation.setCurrentRow(1)
 
         body_layout = QHBoxLayout()
         body_layout.setContentsMargins(0, 0, 0, 0)
-        body_layout.setSpacing(12)
+        body_layout.setSpacing(0)
         body_layout.addWidget(navigation_card)
         body_layout.addWidget(self.tabs, 1)
         root.addLayout(body_layout, 1)
@@ -1581,7 +1596,7 @@ class LawSearchWindow(QMainWindow):
             self.update()
 
     def _apply_style(self) -> None:
-        self.setFont(QFont(FONT_FAMILY, 10, QFont.Weight.Normal))
+        self.setFont(ui_font())
         style_sheet = """
             /* 스크롤바는 본문을 가리지 않도록 얇은 막대 하나로만 둔다.
                트랙과 화살표 없이 손잡이만 보이고, 올렸을 때만 진해진다. */
@@ -1667,10 +1682,13 @@ class LawSearchWindow(QMainWindow):
             QMenu#aiChatHistoryPopup::separator {
                 margin: 3px 7px;
             }
+            /* 글꼴 이름은 여기서 정하지 않는다. 이 규칙은 모든 위젯에
+               닿아서, 본문처럼 자기 글꼴을 따로 쓰는 화면(굴림)까지 덮어
+               버린다. 화면 글꼴은 앱 기본 글꼴(ui/theme.py의 ui_font)이
+               맡고, 본문은 detail_font가 맡는다. */
             QMainWindow, QWidget {
                 background: #f3f6f9;
                 color: #172033;
-                font-family: "Malgun Gothic";
                 font-weight: 400;
             }
             QFrame#headerCard {
@@ -2408,7 +2426,7 @@ class LawSearchWindow(QMainWindow):
                 min-height: 18px;
                 background: transparent;
                 color: #94acc1;
-                font-family: "Pretendard";
+                font-family: "Malgun Gothic";
                 font-size: 12px;
                 font-weight: 700;
                 letter-spacing: 1px;
@@ -2421,7 +2439,7 @@ class LawSearchWindow(QMainWindow):
                 border: 1px solid #41627f;
                 border-radius: 9px;
                 padding: 1px 3px;
-                font-family: "Pretendard SemiBold", "Pretendard";
+                font-family: "Malgun Gothic";
                 font-size: 20px;
                 font-weight: 600;
             }
@@ -2445,7 +2463,7 @@ class LawSearchWindow(QMainWindow):
                 border: none;
                 outline: none;
                 padding: 4px 0;
-                font-family: "Pretendard SemiBold", "Pretendard";
+                font-family: "Malgun Gothic";
                 font-size: 20px;
                 font-weight: 600;
             }
@@ -2459,7 +2477,7 @@ class LawSearchWindow(QMainWindow):
                 border-radius: 9px;
                 padding: 1px 3px;
                 margin: 2px 0;
-                font-family: "Pretendard SemiBold", "Pretendard";
+                font-family: "Malgun Gothic";
                 font-size: 20px;
                 font-weight: 600;
             }
@@ -2629,7 +2647,7 @@ class LawSearchWindow(QMainWindow):
                 border: 1px solid #a86f00;
                 border-radius: 9px;
                 padding: 1px 3px;
-                font-family: "Pretendard SemiBold", "Pretendard";
+                font-family: "Malgun Gothic";
                 font-size: 20px;
                 font-weight: 600;
             }
@@ -2721,7 +2739,7 @@ class LawSearchWindow(QMainWindow):
                 border: none;
                 border-radius: 3px;
                 padding: 0 10px;
-                font-family: "Pretendard SemiBold", "Pretendard";
+                font-family: "Malgun Gothic";
                 font-size: 20px;
                 font-weight: 600;
             }
@@ -2895,7 +2913,7 @@ class LawSearchWindow(QMainWindow):
             QLabel#detailSectionTitle {
                 background: transparent;
                 color: #172033;
-                font-family: "Pretendard";
+                font-family: "Malgun Gothic";
                 font-size: 16px;
                 font-weight: 700;
             }
@@ -2903,7 +2921,7 @@ class LawSearchWindow(QMainWindow):
             QLabel#resultEmptyNotice {
                 background: transparent;
                 color: #6b7a8d;
-                font-family: "Pretendard", "Malgun Gothic";
+                font-family: "Malgun Gothic";
                 font-size: 13px;
                 font-weight: 400;
             }
@@ -3511,10 +3529,11 @@ class LawSearchWindow(QMainWindow):
             }
 
             /* 2026 legal-workbench visual system ------------------------- */
+            /* 글꼴 이름은 여기서도 정하지 않는다. 위 규칙과 같은 이유로
+               본문의 굴림까지 덮는다. */
             QMainWindow, QWidget {
                 background: __WB_CANVAS__;
                 color: __WB_INK__;
-                font-family: "Malgun Gothic";
             }
             QFrame#headerCard {
                 background: __WB_NAVY__;
@@ -3586,7 +3605,7 @@ class LawSearchWindow(QMainWindow):
                 border: 1px solid #315269;
                 border-radius: 3px;
                 padding: 1px 3px;
-                font-family: "Pretendard SemiBold", "Pretendard";
+                font-family: "Malgun Gothic";
                 font-size: 20px;
                 font-weight: 600;
             }
@@ -3681,7 +3700,7 @@ class LawSearchWindow(QMainWindow):
             }
             QLabel#sectionTitle, QLabel#detailSectionTitle {
                 color: #15324b;
-                font-family: "Pretendard", "Malgun Gothic";
+                font-family: "Malgun Gothic";
             }
             QLabel#countBadge {
                 background: #dceff0;
@@ -3796,6 +3815,499 @@ class LawSearchWindow(QMainWindow):
                 border-color: #087e8b;
             }
             QProgressBar::chunk { background: #087e8b; }
+
+            /* 2026-09 gray workbench redesign --------------------------
+               THESIS: 법률 실무의 밀도는 유지하고 앱 크롬은 조용한 회색
+               작업대로 물러난다. 짙은 포털형 사이드바와 카드 중첩을 거부한다.
+               OWN-WORLD: warm gray canvas, white paper, charcoal ink,
+               hairline dividers, blue only for focus and current state.
+               STORY: 메뉴에서 조사 범위를 고르고, 한 줄 검색 후 결과와
+               본문을 같은 면에서 비교한다.
+               FIRST VIEWPORT: 168px rail, 52px utility bar, compact search
+               band, dense results beside a dominant document surface.
+               FORM: quiet desktop workbench, user-pinned direction, seed 56a48721.
+               FINISH: unreviewed and undocumented is unfinished; this build ends
+               with the finish review, the verdict, DESIGN.md, and every shipping
+               raster carrying its provenance. */
+            QMainWindow, QWidget {
+                background: #f4f4f3;
+                color: #242529;
+                font-family: "Malgun Gothic";
+                font-weight: 400;
+            }
+            QFrame#headerCard {
+                background: #fafafa;
+                border: none;
+                border-bottom: 1px solid #dedfdf;
+                border-radius: 0px;
+            }
+            QLabel#logoLabel,
+            QLabel#appNameLabel {
+                background: transparent;
+            }
+            QLabel#appNameLabel {
+                color: #242529;
+                font-family: "Malgun Gothic";
+                font-size: 10.5pt;
+                font-weight: 600;
+            }
+            QFrame#openDocumentsBar { background: transparent; border: none; }
+            QLabel#openDocumentsEmpty {
+                color: #8a8d93;
+                font-size: 9pt;
+            }
+            QTabBar#openDocumentTabs::tab {
+                min-width: 84px;
+                max-width: 188px;
+                min-height: 32px;
+                max-height: 32px;
+                margin: 1px 3px 1px 0;
+                padding: 0 10px;
+                background: transparent;
+                color: #666970;
+                border: 1px solid transparent;
+                border-radius: 6px;
+                font-size: 9pt;
+                font-weight: 500;
+            }
+            QTabBar#openDocumentTabs::tab:hover:!selected {
+                background: #eeeeed;
+                border-color: #e5e5e4;
+                color: #242529;
+            }
+            QTabBar#openDocumentTabs::tab:selected {
+                background: #ffffff;
+                color: #242529;
+                border: 1px solid #dedfdf;
+                border-bottom: 2px solid #2563eb;
+                font-weight: 600;
+            }
+            QPushButton#ocApiSettingsButton {
+                min-height: 30px;
+                max-height: 30px;
+                padding: 0 11px;
+                background: #ffffff;
+                color: #4e5158;
+                border: 1px solid #d7d8d9;
+                border-radius: 6px;
+                font-size: 9pt;
+                font-weight: 500;
+            }
+            QPushButton#ocApiSettingsButton:hover {
+                background: #f0f0ef;
+                color: #242529;
+                border-color: #c8c9ca;
+            }
+            QPushButton#ocApiSettingsButton[apiConfigured="true"] {
+                background: #eef8f1;
+                color: #267344;
+                border-color: #b9ddc5;
+            }
+
+            QFrame#navigationCard {
+                background: #f7f7f6;
+                border: none;
+                border-right: 1px solid #dedfdf;
+                border-radius: 0px;
+            }
+            QLabel#navigationTitle {
+                min-height: 22px;
+                padding: 0 8px;
+                background: transparent;
+                color: #8a8d93;
+                font-family: "Malgun Gothic";
+                font-size: 8.5pt;
+                font-weight: 600;
+                letter-spacing: 0px;
+            }
+            QListWidget#mainNavigation {
+                background: transparent;
+                border: none;
+                outline: none;
+                padding: 0px;
+                font-family: "Malgun Gothic";
+                font-size: 10pt;
+                font-weight: 500;
+            }
+            QListWidget#mainNavigation::item,
+            QPushButton#favoriteNavigationButton,
+            QPushButton#aiReviewNavigationButton,
+            QPushButton#viewedLawsNavigationButton {
+                min-height: 40px;
+                max-height: 40px;
+                margin: 1px 0;
+                padding: 0 11px;
+                background: transparent;
+                color: #4f5258;
+                border: 1px solid transparent;
+                border-radius: 6px;
+                text-align: left;
+                font-family: "Malgun Gothic";
+                font-size: 10pt;
+                font-weight: 500;
+            }
+            QListWidget#mainNavigation::item:hover:!selected,
+            QPushButton#favoriteNavigationButton:hover,
+            QPushButton#aiReviewNavigationButton:hover,
+            QPushButton#viewedLawsNavigationButton:hover {
+                background: #eeeeed;
+                color: #242529;
+                border-color: transparent;
+            }
+            QListWidget#mainNavigation::item:selected,
+            QPushButton#favoriteNavigationButton:checked,
+            QPushButton#aiReviewNavigationButton:checked,
+            QPushButton#viewedLawsNavigationButton:checked {
+                background: #e9e9e8;
+                color: #1f57c8;
+                border: 1px solid #dedfdf;
+                font-weight: 600;
+            }
+            QListWidget#mainNavigation:focus { border: none; }
+
+            QStackedWidget#mainPages,
+            QWidget#resourceSubTabs,
+            QTabWidget::pane {
+                background: #f4f4f3;
+                border: none;
+            }
+            QFrame#card {
+                background: #ffffff;
+                border: 1px solid #dedfdf;
+                border-radius: 8px;
+            }
+            QFrame#categoryTrack {
+                background: transparent;
+                border: none;
+                border-bottom: 1px solid #dedfdf;
+                border-radius: 0px;
+            }
+            QPushButton#categoryTrackButton {
+                background: transparent;
+                color: #666970;
+                border: none;
+                border-bottom: 2px solid transparent;
+                border-radius: 0px;
+                padding: 0 12px;
+                font-family: "Malgun Gothic";
+                font-size: 10pt;
+                font-weight: 500;
+            }
+            QPushButton#categoryTrackButton:hover:!checked {
+                background: #eeeeed;
+                color: #242529;
+            }
+            QPushButton#categoryTrackButton:checked {
+                background: transparent;
+                color: #1f57c8;
+                border-bottom: 2px solid #2563eb;
+                font-weight: 600;
+            }
+            QPushButton#categoryTrackButton:pressed {
+                background: #e5e5e4;
+                color: #1f57c8;
+            }
+
+            QLineEdit,
+            QComboBox,
+            QDoubleSpinBox#fontSizeSpin,
+            QSpinBox#pdfZoomSpin {
+                min-height: 36px;
+                background: #ffffff;
+                color: #2d2f33;
+                border: 1px solid #d7d8d9;
+                border-radius: 6px;
+                selection-background-color: #2563eb;
+                selection-color: #ffffff;
+            }
+            QComboBox { background: #fafafa; }
+            QLineEdit:hover, QComboBox:hover {
+                border-color: #bbbdbf;
+                background: #ffffff;
+            }
+            QLineEdit:focus, QComboBox:focus, QComboBox:on,
+            QDoubleSpinBox#fontSizeSpin:focus,
+            QSpinBox#pdfZoomSpin:focus {
+                border: 2px solid #3b82f6;
+            }
+            QComboBox QAbstractItemView {
+                background: #ffffff;
+                color: #2d2f33;
+                border: 1px solid #d7d8d9;
+                border-radius: 6px;
+                selection-background-color: #edf3ff;
+                selection-color: #174ea6;
+            }
+            QComboBox QAbstractItemView::item:hover {
+                background: #f1f4fb;
+                color: #174ea6;
+            }
+            QLineEdit[readOnly="true"] { background: #f6f6f5; }
+            QPushButton {
+                min-height: 36px;
+                border-radius: 6px;
+                padding: 0 12px;
+                font-weight: 500;
+            }
+            QPushButton:focus { border: 2px solid #3b82f6; }
+            QPushButton#primaryButton {
+                background: #202124;
+                color: #ffffff;
+                border: 1px solid #202124;
+                font-weight: 600;
+            }
+            QPushButton#primaryButton:hover {
+                background: #090a0b;
+                border-color: #090a0b;
+            }
+            QPushButton#secondaryButton,
+            QPushButton#resourceDetailButton {
+                background: #ffffff;
+                color: #4d5056;
+                border: 1px solid #d7d8d9;
+            }
+            QPushButton#secondaryButton:hover,
+            QPushButton#resourceDetailButton:hover {
+                background: #eeeeed;
+                color: #242529;
+            }
+            QPushButton#tocToggleButton,
+            QPushButton#compactFormatButton {
+                min-height: 32px;
+                max-height: 32px;
+                padding: 0 10px;
+                background: #f6f6f5;
+                color: #4d5056;
+                border: 1px solid #d7d8d9;
+                border-radius: 5px;
+                font-weight: 500;
+            }
+            QPushButton#tocToggleButton:hover,
+            QPushButton#compactFormatButton:hover,
+            QPushButton#tocToggleButton:checked {
+                background: #eeeeed;
+                color: #1f57c8;
+                border-color: #c4cbd8;
+            }
+            QCheckBox::indicator {
+                background: #ffffff;
+                border: 1px solid #aeb0b4;
+                border-radius: 3px;
+            }
+            QCheckBox::indicator:hover { border-color: #3b82f6; }
+            QCheckBox::indicator:checked {
+                background: #2563eb;
+                border-color: #2563eb;
+            }
+
+            QLabel#sectionTitle,
+            QLabel#detailSectionTitle,
+            QLabel#pinnedDocumentHeadline {
+                color: #242529;
+            }
+            QLabel#sectionTitle,
+            QLabel#detailSectionTitle {
+                font-family: "Malgun Gothic";
+                font-weight: 600;
+            }
+            QLabel#pinnedDocumentHeadline {
+                background: #f7f7f6;
+                border-color: #dedfdf;
+                border-radius: 5px;
+            }
+            QLabel#countBadge {
+                background: #eeeeed;
+                color: #4e5158;
+                border-radius: 7px;
+            }
+            QLabel#mutedText,
+            QLabel#resultEmptyNotice,
+            QLabel#recentSearchEmpty,
+            QLabel#fontSizeLabel,
+            QLabel#colorRowLabel {
+                color: #73767d;
+            }
+
+            QTableWidget,
+            QTreeWidget#articleToc,
+            QTreeWidget#favoriteTree,
+            QTreeWidget#favoriteCategoryTree,
+            QListWidget#favoriteCategoryList {
+                background: #ffffff;
+                alternate-background-color: #fafafa;
+                color: #34363b;
+                border: 1px solid #dedfdf;
+                border-radius: 5px;
+                selection-background-color: #edf3ff;
+                selection-color: #174ea6;
+                gridline-color: #ececeb;
+            }
+            QHeaderView::section,
+            QTreeWidget#articleToc QHeaderView::section,
+            QTreeWidget#favoriteTree QHeaderView::section {
+                background: #f6f6f5;
+                color: #5d6067;
+                border: none;
+                border-right: 1px solid #e5e5e4;
+                border-bottom: 1px solid #d7d8d9;
+                padding: 7px 8px;
+                font-weight: 600;
+            }
+            QTableWidget::item:selected,
+            QTreeWidget#articleToc::item:selected,
+            QTreeWidget#favoriteTree::item:selected,
+            QTreeWidget#favoriteCategoryTree::item:selected,
+            QListWidget#favoriteCategoryList::item:selected {
+                background: #edf3ff;
+                color: #174ea6;
+            }
+            /* 본문 글꼴은 여기서 정하지 않는다. 스타일시트가 위젯보다
+               우선해서, 코드가 정한 본문 글꼴(굴림)과 사용자가 조절한 글자
+               크기까지 덮어쓴다. 글꼴은 ui/theme.py의 detail_font가 맡는다. */
+            QTextBrowser {
+                background: #ffffff;
+                color: #242529;
+                border: 1px solid #dedfdf;
+                border-radius: 5px;
+                selection-background-color: #2563eb;
+                selection-color: #ffffff;
+            }
+            QTextBrowser QWidget { background: #ffffff; }
+            QSplitter::handle { background: transparent; width: 8px; }
+            QSplitter::handle:hover {
+                background: #e8edf8;
+                border-left: 1px solid #b9c9ea;
+                border-right: 1px solid #b9c9ea;
+            }
+            QSplitter::handle:pressed {
+                background: #c9d7f5;
+                border-color: #7fa1e8;
+            }
+
+            QTabBar::tab,
+            QTabBar#documentTabs::tab,
+            QTabWidget#aiSubTabs QTabBar::tab {
+                background: transparent;
+                color: #666970;
+                border: 1px solid transparent;
+                border-bottom: 2px solid transparent;
+                border-radius: 0px;
+            }
+            QTabBar::tab:hover:!selected,
+            QTabBar#documentTabs::tab:hover:!selected,
+            QTabWidget#aiSubTabs QTabBar::tab:hover:!selected {
+                background: #eeeeed;
+                color: #242529;
+            }
+            QTabBar::tab:selected,
+            QTabBar#documentTabs::tab:selected,
+            QTabWidget#aiSubTabs QTabBar::tab:selected {
+                background: #ffffff;
+                color: #1f57c8;
+                border: 1px solid #dedfdf;
+                border-bottom: 2px solid #2563eb;
+                font-weight: 600;
+            }
+            QFrame#modeSwitchFrame {
+                background: #eeeeed;
+                border: 1px solid #dedfdf;
+                border-radius: 7px;
+            }
+            QPushButton#modeSwitchButton:checked,
+            QPushButton#colorModeButton:checked {
+                background: #ffffff;
+                color: #174ea6;
+                border: 1px solid #cbd8f5;
+            }
+
+            QFrame#aiChatPanel,
+            QFrame#aiChatHistoryPanel {
+                background: #f7f7f6;
+                border: 1px solid #dedfdf;
+                border-radius: 8px;
+            }
+            QLabel#aiChatTitle,
+            QLabel#aiChatQuestionBannerText {
+                color: #242529;
+            }
+            QFrame#aiChatBubbleUser { background: #eeeeed; }
+            QFrame#aiChatComposer {
+                background: #ffffff;
+                border: 1px solid #c9cacc;
+                border-radius: 10px;
+            }
+            QPushButton#aiChatSend {
+                background: #202124;
+                color: #ffffff;
+                border: none;
+            }
+            QPushButton#aiChatSend:hover { background: #090a0b; }
+            QPushButton#aiChatSend:disabled { background: #b7b9bd; }
+            QLabel#aiCliStatusBadge,
+            QLabel#aiChatStatusProvider {
+                background: #eeeeed;
+                color: #565960;
+                border-color: #d7d8d9;
+            }
+            QTabBar#aiProviderTabs::tab {
+                background: #f3f3f2;
+                color: #5f6269;
+                border: 1px solid #dedfdf;
+                border-radius: 6px;
+            }
+            QTabBar#aiProviderTabs::tab:hover:!selected {
+                background: #e9e9e8;
+                color: #242529;
+            }
+            QTabBar#aiProviderTabs::tab:selected {
+                background: #2d2f33;
+                color: #ffffff;
+                border-color: #2d2f33;
+            }
+            QFrame#favoriteCategoryTitleBar {
+                background: #f6f6f5;
+                border: 1px solid #dedfdf;
+                border-radius: 6px;
+            }
+            QLabel#favoriteCategoryTitle {
+                color: #34363b;
+                font-weight: 600;
+            }
+            QPushButton#favoriteAddFolderButton {
+                background: #ffffff;
+                color: #4f5258;
+                border: 1px solid #cfd0d2;
+                border-radius: 4px;
+            }
+            QPushButton#favoriteAddFolderButton:hover {
+                background: #eeeeed;
+                color: #242529;
+                border-color: #bdbfc1;
+            }
+
+            QPushButton#aboutLinkButton,
+            QPushButton#updateLinkButton {
+                color: #6f7279;
+                text-decoration: none;
+            }
+            QPushButton#aboutLinkButton:hover,
+            QPushButton#updateLinkButton:hover { color: #1f57c8; }
+            QMenu {
+                background: #ffffff;
+                color: #2d2f33;
+                border: 1px solid #d7d8d9;
+                border-radius: 7px;
+            }
+            QMenu::item:selected {
+                background: #eeeeed;
+                color: #242529;
+            }
+            QScrollBar::handle:vertical,
+            QScrollBar::handle:horizontal { background: #c7c8ca; }
+            QScrollBar::handle:vertical:hover,
+            QScrollBar::handle:horizontal:hover { background: #9ea0a4; }
+            QProgressBar { background: #e1e2e3; }
+            QProgressBar::chunk { background: #2563eb; }
             """
         self.setStyleSheet(
             apply_workbench_color_tokens(style_sheet)
@@ -3989,12 +4501,12 @@ class LawSearchWindow(QMainWindow):
                 if column == 1:
                     item.setForeground(QColor("#1768aa"))
                     font = item.font()
-                    font.setFamily(FONT_FAMILY)
+                    font.setFamilies(list(UI_FONT_FAMILIES))
                     font.setWeight(QFont.Weight.DemiBold)
                     item.setFont(font)
                 elif column == 2:
                     font = item.font()
-                    font.setFamily(FONT_FAMILY)
+                    font.setFamilies(list(UI_FONT_FAMILIES))
                     font.setWeight(QFont.Weight.Medium)
                     item.setFont(font)
                 self.result_table.setItem(row_index, column, item)

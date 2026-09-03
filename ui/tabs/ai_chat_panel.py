@@ -33,7 +33,6 @@ from PySide6.QtGui import (
     QBrush,
     QColor,
     QDesktopServices,
-    QFont,
     QFontMetrics,
     QLinearGradient,
     QPainter,
@@ -78,6 +77,7 @@ from llm import (
     extract_cited_articles,
 )
 from ui.assets import GEMINI_KEY_MANUAL_PATH
+from ui.widgets import apply_close_icon
 from llm.document_labels import lookup_cached_document_label
 from llm.inquiries import is_inquiry_target, split_doc_reference
 from llm.ai_cli_setup import (
@@ -98,7 +98,7 @@ from llm.verify_citations import (
 )
 from models.law import RESOURCE_CATEGORIES
 from utils.annex_notation import annex_related_law_name
-from utils.constants import FONT_FAMILY
+from ui.theme import ui_font
 from utils.formatting import law_reference_html_text
 from utils.parsing import normalize_article_jo
 from utils.patterns import KOREAN_ITEM_MARKERS, LAW_UNIT_REFERENCE_PATTERN
@@ -1028,8 +1028,9 @@ class AiChatPanel(QFrame):
             header.setSpacing(6)
             title = QLabel("AI 에이전트", self)
             title.setObjectName("aiChatTitle")
-            self.close_button = QPushButton("×", self)
+            self.close_button = QPushButton(self)
             self.close_button.setObjectName("aiChatClose")
+            apply_close_icon(self.close_button)
             self.close_button.setFixedSize(24, 24)
             self.close_button.setToolTip("대화 패널 닫기")
             self.close_button.clicked.connect(self.closeRequested.emit)
@@ -1415,7 +1416,7 @@ class AiChatPanel(QFrame):
             if self.standalone
             else "지금 보고 있는 본문에 대해 물어보세요."
         )
-        self.input_edit.setFont(QFont(FONT_FAMILY, 10))
+        self.input_edit.setFont(ui_font(10))
         self.input_edit.setFixedHeight(64)
         self.input_edit.sendRequested.connect(self._send)
 
@@ -2065,7 +2066,7 @@ class AiChatPanel(QFrame):
             # 네이티브 메뉴 체크는 작은 비트맵이라 고해상도 화면에서
             # 깨지고, 체크 전용 열도 넓게 잡힌다. 글자와 함께 렌더링되는
             # 얇은 체크를 써서 여백을 최소화한다.
-            prefix = "✓ " if index == current else " "
+            prefix = "현재 · " if index == current else ""
             action = menu.addAction(
                 prefix + self.model_combo.itemText(index)
             )
@@ -3458,7 +3459,7 @@ class AiChatPanel(QFrame):
             QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum
         )
         label.setTextFormat(Qt.TextFormat.RichText)
-        label.setFont(QFont(FONT_FAMILY, _CHAT_FONT_POINT))
+        label.setFont(ui_font(_CHAT_FONT_POINT))
         label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
             | Qt.TextInteractionFlag.TextSelectableByKeyboard
@@ -3499,7 +3500,7 @@ class AiChatPanel(QFrame):
         # 걸렸는지와 사용량이 그대로 남는다.
         status = ShimmerLabel()
         status.setObjectName("aiChatProgress")
-        status.setFont(QFont(FONT_FAMILY, 8))
+        status.setFont(ui_font(8))
         # 레이아웃에 넣어 부모가 생긴 뒤에 보이게 한다. 부모 없는 위젯에
         # setVisible(True)를 부르면 Qt가 그것을 독립 창으로 띄우기 때문에,
         # 답을 시작할 때마다 빈 창이 깜빡였다가 사라졌다.
@@ -3511,7 +3512,7 @@ class AiChatPanel(QFrame):
         # 거쳐 왔는지가 남아 있어야 한다.
         tool_log = WidthAwareWrapLabel()
         tool_log.setObjectName("aiChatToolLog")
-        tool_log.setFont(QFont(FONT_FAMILY, 8))
+        tool_log.setFont(ui_font(8))
         tool_log.setWordWrap(True)
         tool_log.setMinimumWidth(0)
         tool_log.setSizePolicy(
@@ -3527,7 +3528,7 @@ class AiChatPanel(QFrame):
         label.setWordWrap(True)
         label.setMinimumWidth(0)
         label.setTextFormat(Qt.TextFormat.RichText)
-        label.setFont(QFont(FONT_FAMILY, _CHAT_FONT_POINT))
+        label.setFont(ui_font(_CHAT_FONT_POINT))
         label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Minimum)
         # 마우스로 드래그해 고를 수 있게 하면서, 조문 링크(제N조)도 함께
         # 눌러야 하므로 두 상호작용을 같이 켠다.
@@ -3558,7 +3559,7 @@ class AiChatPanel(QFrame):
         label = WidthAwareWrapLabel(escape(text))
         label.setObjectName("aiChatErrorText")
         label.setWordWrap(True)
-        label.setFont(QFont(FONT_FAMILY, 9))
+        label.setFont(ui_font(9))
         label.setContentsMargins(0, 8, 0, 2)
         return label
 
@@ -4075,7 +4076,7 @@ class AiChatPanel(QFrame):
         for category, item_id, name in documents[:4]:
             label = RESOURCE_CATEGORIES.get(category, {}).get("label", category)
             title = name or item_id
-            button = QPushButton(f"☆ {title} 즐겨찾기에 추가")
+            button = QPushButton(f"{title} 즐겨찾기에 추가")
             button.setObjectName("aiChatFavoriteButton")
             button.setMinimumWidth(0)
             button.setSizePolicy(
@@ -4092,7 +4093,7 @@ class AiChatPanel(QFrame):
                 except Exception:  # noqa: BLE001 - 확인 실패는 단추만 살린다
                     already = False
             if already:
-                button.setText(f"★ {title} 즐겨찾기에 있음")
+                button.setText(f"{title} 즐겨찾기에 있음")
                 button.setEnabled(False)
             else:
                 button.clicked.connect(
@@ -4133,7 +4134,7 @@ class AiChatPanel(QFrame):
         row.setSpacing(6)
         for law_id, jo, label in articles[:6]:
             short = label or f"제{jo}조"
-            button = QPushButton(f"☆ {short}만 즐겨찾기")
+            button = QPushButton(f"{short}만 즐겨찾기")
             button.setObjectName("aiChatFavoriteButton")
             button.setMinimumWidth(0)
             button.setSizePolicy(
@@ -4148,7 +4149,7 @@ class AiChatPanel(QFrame):
                 except Exception:  # noqa: BLE001 - 확인 실패는 단추만 살린다
                     already = False
             if already:
-                button.setText(f"★ {short} 즐겨찾기에 있음")
+                button.setText(f"{short} 즐겨찾기에 있음")
                 button.setEnabled(False)
             else:
                 button.clicked.connect(
@@ -4168,14 +4169,14 @@ class AiChatPanel(QFrame):
         self, button: QPushButton, law_id: str, jo: str, label: str
     ) -> None:
         self.article_favorite_handler(law_id, jo, label, "")
-        button.setText(f"★ {label} 즐겨찾기에 있음")
+        button.setText(f"{label} 즐겨찾기에 있음")
         button.setEnabled(False)
 
     def _favorite_button_clicked(
         self, button: QPushButton, category: str, item_id: str, name: str
     ) -> None:
         self.favorite_handler(category, item_id, name)
-        button.setText(f"★ {name or item_id} 즐겨찾기에 있음")
+        button.setText(f"{name or item_id} 즐겨찾기에 있음")
         button.setEnabled(False)
 
     def _show_used_articles(self, column: QWidget | None, text: str) -> None:
@@ -4198,7 +4199,7 @@ class AiChatPanel(QFrame):
             QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Minimum
         )
         label.setTextFormat(Qt.TextFormat.RichText)
-        label.setFont(QFont(FONT_FAMILY, 8))
+        label.setFont(ui_font(8))
         label.setOpenExternalLinks(False)
         label.linkActivated.connect(self._article_link_clicked)
         layout.addWidget(label)

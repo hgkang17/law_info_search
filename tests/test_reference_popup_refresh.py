@@ -117,7 +117,8 @@ def test_reference_popup_favorite_button_tracks_exact_unit() -> None:
 
     popup.set_content("제10조제1항제2호", "<p>본문</p>")
     assert popup.favorite_button.isEnabled()
-    assert popup.favorite_button.text() == "☆"
+    assert popup.favorite_button.text() == ""
+    assert not popup.favorite_button.icon().isNull()
 
     popup.show()
     app.processEvents()
@@ -131,7 +132,9 @@ def test_reference_popup_favorite_button_tracks_exact_unit() -> None:
 
     favorite = True
     popup._refresh_favorite_button()
-    assert popup.favorite_button.text() == "★"
+    assert popup.favorite_button.text() == ""
+    assert not popup.favorite_button.icon().isNull()
+    assert "해제" in popup.favorite_button.toolTip()
 
 
 def test_cached_reference_popup_reopens_without_api() -> None:

@@ -9,6 +9,9 @@ from ui.assets import (
     SEARCH_API_REFRESH_TOOLTIP,
 )
 from ui.theme import (
+    detail_font as make_detail_font,
+    ui_font,
+    PALETTE_COLORS,
     SEARCH_COMBO_WIDTH,
     BASE_FOREGROUND_PROPERTY,
     apply_base_foreground_spans,
@@ -35,6 +38,7 @@ from ui.widgets import (
     StableHorizontalTableWidget,
     TabStripScrollArea,
     batch_table_updates,
+    apply_close_icon,
     build_detail_header_controls,
     build_restore_view_button,
     build_search_result_head,
@@ -44,6 +48,7 @@ from ui.widgets import (
     replace_search_term_backgrounds,
     configure_adaptive_result_rows,
     configure_horizontal_splitter,
+    favorite_icon,
     resize_adaptive_result_rows,
     restore_text_view_scroll,
 )
@@ -89,7 +94,6 @@ from molit_cgm_expc_api import (
 )
 from utils.annex_notation import annex_hint_in_query, annex_related_law_name, row_matches_annex_hint
 from utils.annex_parse import parse_annex_bytes
-from utils.constants import DETAIL_FONT_FAMILY, FONT_FAMILY
 from utils.law_download import download_law_file
 from utils.formatting import (
     body_to_html,
@@ -102,6 +106,7 @@ from utils.formatting import (
     law_short_name,
 )
 from utils.parsing import (
+    AMENDMENT_NOTE_LINE_PATTERN,
     admin_rule_plain_text,
     admin_rule_text,
     extract_admin_rule_article,
@@ -791,7 +796,49 @@ class ResourceSearchTab(QWidget):
         self.detail_font_label = detail_font_label
         self.detail_font_spin = detail_controls.font_spin
         self.restore_view_button = build_restore_view_button(self)
+        self.toc_toggle_button = QPushButton("목차")
+        self.toc_toggle_button.setObjectName("tocToggleButton")
+        self.toc_toggle_button.setCheckable(True)
+        self.toc_toggle_button.setAccessibleName("조문 목차 열기 또는 닫기")
+        self.toc_toggle_button.setToolTip(
+            "좁은 화면에서 조문 목차를 열거나 닫습니다 (Alt+T)"
+        )
+        self.toc_toggle_button.setShortcut(QKeySequence("Alt+T"))
+        self.toc_toggle_button.toggled.connect(self._toggle_compact_toc)
+        self.toc_toggle_button.hide()
+
+        self.compact_format_button = QPushButton("서식")
+        self.compact_format_button.setObjectName("compactFormatButton")
+        self.compact_format_button.setAccessibleName("본문 서식 메뉴")
+        self.compact_format_button.setToolTip(
+            "음영색, 글자색, 초기화와 메모 도구를 엽니다"
+        )
+        compact_format_menu = QMenu(self.compact_format_button)
+        for row_label, is_background in (("음영색", True), ("글자색", False)):
+            color_menu = compact_format_menu.addMenu(row_label)
+            for color_name, color_value in PALETTE_COLORS:
+                action = color_menu.addAction(color_name)
+                action.triggered.connect(
+                    lambda _checked=False, value=color_value,
+                    background=is_background: self._apply_palette_color(
+                        value, background=background
+                    )
+                )
+        compact_format_menu.addSeparator()
+        compact_format_menu.addAction("선택 서식 초기화").triggered.connect(
+            self._reset_selected_colors
+        )
+        compact_format_menu.addAction("전체 서식 초기화").triggered.connect(
+            self._reset_all_colors
+        )
+        compact_format_menu.addSeparator()
+        compact_format_menu.addAction("선택 영역 메모").triggered.connect(
+            self._edit_selection_memo
+        )
+        self.compact_format_button.setMenu(compact_format_menu)
+        self.compact_format_button.hide()
         detail_head.addWidget(self.restore_view_button)
+        detail_head.addWidget(self.toc_toggle_button)
         detail_head.addWidget(detail_title)
         detail_head.addWidget(detail_font_label)
         detail_head.addWidget(self.detail_font_spin)
@@ -799,6 +846,7 @@ class ResourceSearchTab(QWidget):
         detail_head.addWidget(self.color_tools)
         detail_head.addWidget(self.color_reset_tools)
         detail_head.addWidget(self.memo_button)
+        detail_head.addWidget(self.compact_format_button)
         detail_head.addStretch()
         detail_head.addWidget(self.expand_detail_button)
 
@@ -844,9 +892,7 @@ class ResourceSearchTab(QWidget):
 
         self.detail_view = DeferredWrapTextBrowser()
         self.detail_view.setAccessibleName("본문")
-        detail_font = QFont(DETAIL_FONT_FAMILY)
-        detail_font.setWeight(QFont.Weight.Normal)
-        detail_font.setPointSizeF(self.detail_font_size)
+        detail_font = make_detail_font(self.detail_font_size)
         self.detail_view.setFont(detail_font)
         self.detail_view.document().setDefaultFont(detail_font)
         self.detail_view.setOpenExternalLinks(False)
@@ -987,6 +1033,7 @@ class ResourceSearchTab(QWidget):
         self._document_cache_order: list[str] = []
         self._document_cache_limit = 4
         self._current_toc_entries: list[tuple[int, str, str]] = []
+        self._compact_reader = False
         self._restoring_document = False
         self._pending_selection_row = -1
         self._selection_open_scheduled = False
@@ -1280,7 +1327,7 @@ class ResourceSearchTab(QWidget):
 
     def _apply_result_table_font(self) -> None:
         size = 9.0
-        font = QFont(FONT_FAMILY)
+        font = ui_font()
         font.setPointSizeF(size)
         self.result_table.setFont(font)
         self.result_table.horizontalHeader().setFont(font)
@@ -1429,9 +1476,7 @@ class ResourceSearchTab(QWidget):
         )
         self.detail_search.begin_document_change()
         try:
-            font = QFont(DETAIL_FONT_FAMILY)
-            font.setWeight(QFont.Weight.Normal)
-            font.setPointSizeF(self.detail_font_size)
+            font = make_detail_font(self.detail_font_size)
             self.detail_view.setFont(font)
             self.detail_view.document().setDefaultFont(font)
             if html is not None:
@@ -1796,7 +1841,7 @@ class ResourceSearchTab(QWidget):
 
     def _install_document_tab_favorite(self, index: int, key: str) -> None:
         """본문 탭 양쪽에 즐겨찾기 별표와 닫기 × 를 단다."""
-        star = QPushButton("☆")
+        star = QPushButton()
         star.setObjectName("documentTabFavorite")
         star.setFlat(True)
         star.setFixedSize(22, 22)
@@ -1811,8 +1856,9 @@ class ResourceSearchTab(QWidget):
         self.document_tabs.setTabButton(
             index, QTabBar.ButtonPosition.LeftSide, star
         )
-        close = QPushButton("×")
+        close = QPushButton()
         close.setObjectName("documentTabClose")
+        apply_close_icon(close, 11)
         close.setFlat(True)
         close.setFixedSize(22, 22)
         close.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1871,7 +1917,13 @@ class ResourceSearchTab(QWidget):
                 )
             else:
                 is_favorite = bool(row) and self.law_cache.is_favorite(row)
-            star.setText("★" if is_favorite else "☆")
+            star.setIcon(
+                favorite_icon(
+                    is_favorite,
+                    "#c88700" if is_favorite else "#aeb4bc",
+                )
+            )
+            star.setIconSize(QSize(16, 16))
             star.setEnabled(row is not None)
             star.setToolTip(
                 "즐겨찾기에서 뺍니다." if is_favorite else "즐겨찾기에 넣습니다."
@@ -2008,6 +2060,8 @@ class ResourceSearchTab(QWidget):
         if not entries:
             self.toc_search_count.setText("0/0")
             self.toc_panel.hide()
+            self.toc_toggle_button.setChecked(False)
+            self.toc_toggle_button.hide()
             return
 
         parents: dict[int, QTreeWidgetItem] = {}
@@ -2032,13 +2086,48 @@ class ResourceSearchTab(QWidget):
                 parents[depth] = item
 
         self.toc_tree.expandAll()
-        self.toc_panel.show()
-        self.detail_content_splitter.setSizes([210, 700])
+        self.apply_compact_reader_layout(self._compact_reader)
         self._refresh_toc_search()
         # 새로 채운 목차는 맨 위에서 시작한다. 나무를 비우고 다시 채워도
         # 스크롤 값은 남아, 문서를 바꾸면 앞 문서에서 보던 자리가 그대로
         # 보였다. 기억해 둔 자리가 있으면 부르는 쪽이 뒤이어 되돌린다.
         self.toc_tree.verticalScrollBar().setValue(0)
+
+    def _toggle_compact_toc(self, checked: bool) -> None:
+        """좁은 화면에서 본문 폭을 지키며 목차를 필요할 때만 연다."""
+        if not self._compact_reader or not self._current_toc_entries:
+            return
+        self.toc_panel.setVisible(checked)
+        available = max(1, self.detail_content_splitter.width())
+        self.detail_content_splitter.setSizes(
+            [min(240, max(190, available // 3)), available]
+            if checked
+            else [0, available]
+        )
+        self.toc_toggle_button.setText("목차 닫기" if checked else "목차")
+
+    def apply_compact_reader_layout(self, compact: bool) -> None:
+        """900px급 창에서는 목차와 색상 팔레트를 점진적으로 펼친다."""
+        self._compact_reader = bool(compact)
+        has_toc = bool(self._current_toc_entries)
+        self.toc_toggle_button.setVisible(compact and has_toc)
+        self.compact_format_button.setVisible(compact)
+        self.color_tools.setVisible(not compact)
+        self.color_reset_tools.setVisible(not compact)
+        self.memo_button.setVisible(not compact)
+
+        if compact:
+            if not has_toc:
+                self.toc_toggle_button.setChecked(False)
+            self._toggle_compact_toc(self.toc_toggle_button.isChecked())
+            if not self.toc_toggle_button.isChecked():
+                self.toc_panel.hide()
+        else:
+            self.toc_toggle_button.setChecked(False)
+            self.toc_toggle_button.setText("목차")
+            self.toc_panel.setVisible(has_toc)
+            if has_toc:
+                self.detail_content_splitter.setSizes([210, 700])
 
     def _refresh_toc_search(self) -> None:
         query = self.toc_search_input.text().strip().casefold()
@@ -2205,7 +2294,7 @@ class ResourceSearchTab(QWidget):
         viewport = self.detail_view.viewport()
         star_size = self._ARTICLE_FAVORITE_SIZE
         for article in self._current_three_stage_articles:
-            favorite_button = QPushButton("☆", viewport)
+            favorite_button = QPushButton(viewport)
             favorite_button.setObjectName("articleFavoriteButton")
             favorite_button.setFixedSize(star_size, star_size)
             favorite_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -2288,6 +2377,7 @@ class ResourceSearchTab(QWidget):
                     changed = True
                 if changed:
                     format_cursor.setBlockFormat(block_format)
+            self._align_amendment_note_blocks(document, format_cursor, heading_margin)
         finally:
             format_cursor.endEditBlock()
             if connected:
@@ -2296,6 +2386,25 @@ class ResourceSearchTab(QWidget):
                 )
         self._refresh_inline_article_favorites()
         self._schedule_three_stage_button_positions()
+
+    @staticmethod
+    def _align_amendment_note_blocks(document, cursor, margin: float) -> None:
+        """``[본조신설 …]`` 줄을 그 위 조문과 같은 자리에서 시작하게 한다.
+
+        조문 첫 줄에는 별 단추 자리를 내려고 왼쪽 여백을 준다. 조문 끝에
+        따로 붙는 개정 표기 줄은 그 여백을 받지 못해 혼자 왼쪽으로 튀어나와
+        보였다. 같은 여백을 줘 조문과 줄을 맞춘다.
+        """
+        block = document.begin()
+        while block.isValid():
+            text = block.text().strip()
+            if AMENDMENT_NOTE_LINE_PATTERN.fullmatch(text):
+                cursor.setPosition(block.position())
+                block_format = cursor.blockFormat()
+                if block_format.leftMargin() != margin:
+                    block_format.setLeftMargin(margin)
+                    cursor.setBlockFormat(block_format)
+            block = block.next()
 
     def _refresh_inline_article_favorites(self) -> None:
         """본문의 조문별 별표를 저장 상태와 맞춘다."""
@@ -2327,7 +2436,13 @@ class ResourceSearchTab(QWidget):
                     favorite_keys[law_id] = keys
                 favorite = (jo, "", "", "") in keys
             label = str(article.get("label") or self._law_reference_label(jo))
-            button.setText("★" if favorite else "☆")
+            button.setIcon(
+                favorite_icon(
+                    favorite,
+                    "#c88700" if favorite else "#aeb4bc",
+                )
+            )
+            button.setIconSize(QSize(16, 16))
             button.setEnabled(row is not None)
             button.setToolTip(
                 f"{label} 즐겨찾기를 "

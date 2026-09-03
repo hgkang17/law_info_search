@@ -75,3 +75,57 @@ def test_plain_bracket_citation_is_not_styled():
         '"신축"이란 대지[기존 건축물이 해체된 대지를 포함한다]에 축조하는 것'
     )
     assert "<span" not in html
+
+
+def test_amendment_note_line_starts_where_the_article_starts(tmp_path) -> None:
+    """조문 끝 ``[본조신설 …]`` 줄이 조문과 같은 자리에서 시작한다.
+
+    조문 첫 줄에는 별 단추 자리를 내려고 왼쪽 여백을 준다. 그 여백을 받지
+    못한 개정 표기 줄만 왼쪽으로 튀어나와 보였다.
+    """
+    from PySide6.QtCore import QSettings
+
+    from storage.cache import LawDocumentCache
+    from storage.recent import RecentSearchManager
+    from ui.tabs.resource_search import ResourceSearchTab
+
+    payload = {
+        "법령": {
+            "기본정보": {"법령명_한글": "지방자치법", "법령ID": "000123"},
+            "조문": {
+                "조문단위": [
+                    {
+                        "조문내용": "제2조의2(주민과 지방자치단체의 관계) 주민은 권리를 가진다.",
+                        "조문참고자료": "[본조신설 2018.12.27]",
+                    }
+                ]
+            },
+        }
+    }
+    settings = QSettings(str(tmp_path / "note.ini"), QSettings.Format.IniFormat)
+    tab = ResourceSearchTab(
+        lambda: "",
+        RecentSearchManager(settings),
+        LawDocumentCache(tmp_path / "saved"),
+    )
+    try:
+        row = {"target": "law", "id": "000123", "label": "법령", "name": "지방자치법"}
+        tab.pending_row = row
+        tab._open_document_tab(row, defer_restore=True)
+        title, metadata, sections = tab._parse_law_detail(payload)
+        tab._set_detail_document(title, metadata, sections, build_toc=True)
+
+        margins = {}
+        block = tab.detail_view.document().begin()
+        while block.isValid():
+            text = block.text().strip()
+            if text.startswith("제2조의2"):
+                margins["조문"] = block.blockFormat().leftMargin()
+            elif text.startswith("[본조신설"):
+                margins["개정표기"] = block.blockFormat().leftMargin()
+            block = block.next()
+
+        assert margins["조문"] == tab._ARTICLE_FAVORITE_HEADING_MARGIN
+        assert margins["개정표기"] == margins["조문"]
+    finally:
+        tab.close()

@@ -888,8 +888,9 @@ def test_model_menu_uses_compact_text_check_without_native_indicator(
     captured = panel._build_model_menu().actions()
 
     assert len(captured) == 2
-    assert captured[0].text().startswith(" 첫 번째")
-    assert captured[1].text().startswith("✓ 두 번째")
+    # 고른 모델만 "현재 · "를 앞에 달고 나머지는 이름만 쓴다.
+    assert captured[0].text() == "첫 번째 모델"
+    assert captured[1].text().startswith("현재 · 두 번째")
     assert all(not action.isCheckable() for action in captured)
 
 
@@ -908,8 +909,8 @@ def test_gemini_model_menu_starts_with_unselectable_quota_note(panel) -> None:
 
     assert captured[0].text() == GeminiProvider.FREE_QUOTA_MENU_NOTE
     assert captured[0].isEnabled() is False
-    assert captured[1].text().startswith(" 첫 번째")
-    assert captured[2].text().startswith("✓ 두 번째")
+    assert captured[1].text() == "첫 번째 모델"
+    assert captured[2].text().startswith("현재 · 두 번째")
     captured[0].trigger()
     assert panel.model_combo.currentIndex() == 1
 

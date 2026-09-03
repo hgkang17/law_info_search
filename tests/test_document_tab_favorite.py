@@ -53,7 +53,9 @@ def test_document_tab_gets_a_favorite_star(tmp_path) -> None:
 
     assert tab.document_tabs.count() == 1
     star = _star(tab)
-    assert star.text() == "☆"
+    assert star.text() == ""
+    assert not star.icon().isNull()
+    assert star.accessibleName() == "본문 탭 즐겨찾기"
     assert star.isEnabled()
 
 
@@ -254,7 +256,9 @@ def test_reference_popup_star_saves_article_with_real_mouse_click(tmp_path) -> N
     app.processEvents()
 
     assert tab.law_cache.is_article_favorite(ROW, "000200")
-    assert popup.favorite_button.text() == "★"
+    assert popup.favorite_button.text() == ""
+    assert not popup.favorite_button.icon().isNull()
+    assert "해제" in popup.favorite_button.toolTip()
 
 
 def test_full_law_body_has_article_favorite_stars_on_heading_left(tmp_path) -> None:
@@ -284,7 +288,8 @@ def test_full_law_body_has_article_favorite_stars_on_heading_left(tmp_path) -> N
 
     assert len(tab._article_favorite_buttons) == 2
     first_star = tab._article_favorite_buttons[0]
-    assert first_star.text() == "☆"
+    assert first_star.text() == ""
+    assert not first_star.icon().isNull()
     assert first_star.isVisible()
     anchor = tab._current_three_stage_articles[0]["anchor"]
     position = tab._three_stage_anchor_positions[anchor]
@@ -304,12 +309,16 @@ def test_full_law_body_has_article_favorite_stars_on_heading_left(tmp_path) -> N
 
     first_star.click()
     assert tab.law_cache.is_article_favorite(ROW, "000100")
-    assert first_star.text() == "★"
-    assert tab._article_favorite_buttons[1].text() == "☆"
+    assert first_star.text() == ""
+    assert not first_star.icon().isNull()
+    assert "해제" in first_star.toolTip()
+    assert tab._article_favorite_buttons[1].text() == ""
+    assert not tab._article_favorite_buttons[1].icon().isNull()
 
     first_star.click()
     assert not tab.law_cache.is_article_favorite(ROW, "000100")
-    assert first_star.text() == "☆"
+    assert first_star.text() == ""
+    assert "추가" in first_star.toolTip()
 
 
 def test_inline_favorite_refresh_loads_saved_file_once(
@@ -402,15 +411,19 @@ def test_star_toggles_saved_document(tmp_path) -> None:
     tab.law_cache.save_snapshot(ROW, html="<p>본문</p>", plain_text="본문")
 
     tab._open_document_tab(dict(ROW))
+    empty_icon_key = _star(tab).icon().cacheKey()
     _star(tab).click()
 
     assert tab.law_cache.is_favorite(ROW) is True
-    assert _star(tab).text() == "★"
+    assert _star(tab).text() == ""
+    assert _star(tab).icon().cacheKey() != empty_icon_key
 
     _star(tab).click()
 
     assert tab.law_cache.is_favorite(ROW) is False
-    assert _star(tab).text() == "☆"
+    assert _star(tab).text() == ""
+    assert not _star(tab).icon().isNull()
+    assert _star(tab).toolTip() == "즐겨찾기에 넣습니다."
 
 
 def test_star_follows_favorite_changed_elsewhere(tmp_path) -> None:
@@ -421,11 +434,12 @@ def test_star_follows_favorite_changed_elsewhere(tmp_path) -> None:
 
     tab.law_cache.set_favorite(ROW, True)
     tab._refresh_document_tab_favorites()
-    assert _star(tab).text() == "★"
+    filled_icon_key = _star(tab).icon().cacheKey()
+    assert not _star(tab).icon().isNull()
 
     tab.law_cache.set_favorite(ROW, False)
     tab._refresh_document_tab_favorites()
-    assert _star(tab).text() == "☆"
+    assert _star(tab).icon().cacheKey() != filled_icon_key
 
 
 def test_long_title_wraps_instead_of_being_cut(tmp_path) -> None:

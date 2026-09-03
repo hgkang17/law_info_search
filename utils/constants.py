@@ -2,13 +2,26 @@
 
 from __future__ import annotations
 
+# 화면 UI(메뉴ㆍ단추ㆍ표) 글꼴. 본문 글꼴과 따로 두지만 지금은 같은
+# 맑은고딕을 쓴다. Pretendard와 Segoe UI를 차례로 시험해 봤다가 되돌렸다.
+# Segoe UI는 한글 글리프가 없어 한글만 대체 글꼴로 넘어가는 탓에 한 화면에
+# 두 글꼴이 섞였다.
 FONT_FAMILY = "Malgun Gothic"
+UI_FONT_FAMILIES = ("Malgun Gothic", "맑은 고딕")
+# 화면 글자 크기(px). pt로 두면 화면 배율에 따라 반올림이 갈려 위젯마다
+# 크기가 미세하게 달라진다.
+UI_FONT_PIXEL_SIZE = 14
+# 스타일시트에 그대로 넣을 수 있는 형태.
+UI_FONT_CSS_FAMILY = '"Malgun Gothic", "맑은 고딕"' 
 # 본문(법령ㆍ행정규칙 조문) 글꼴. 화면 UI 글꼴과 따로 두어 여기만 바꾸면
-# 본문 전체가 함께 바뀐다.
-DETAIL_FONT_FAMILY = "Malgun Gothic"
+# 본문 전체가 함께 바뀐다. 돋움ㆍ맑은고딕을 거쳐 굴림으로 두었다.
+DETAIL_FONT_FAMILY = "Gulim"
 # 본문 HTML(QTextDocument)용 글꼴 목록. 글꼴이 없는 환경을 위해 대체 글꼴을
 # 함께 적는다. 위 DETAIL_FONT_FAMILY와 같은 글꼴을 첫머리에 둔다.
-DETAIL_FONT_CSS_FAMILY = "'Malgun Gothic', '맑은 고딕', 'Dotum'"
+DETAIL_FONT_CSS_FAMILY = "'Gulim', '굴림', 'Malgun Gothic'"
+# 위 목록과 같은 차례를 QFont에도 그대로 준다. 목록을 지정하지 않으면
+# 위젯이 앱 기본 글꼴의 목록을 상속해 본문 글꼴이 화면 UI 글꼴로 덮인다.
+DETAIL_FONT_FAMILIES = ("Gulim", "굴림", "Malgun Gothic")
 
 APP_TITLE = "국가법령정보 통합검색"
 APP_VERSION = "1.3.3"
