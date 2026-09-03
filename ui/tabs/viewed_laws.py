@@ -72,9 +72,10 @@ class ViewedLawsTab(QWidget):
         self.favorite_category_cards: dict[str, QFrame] = {}
 
         root = QVBoxLayout(self)
-        # 아래쪽만 여백을 두지 않는다. 왼쪽 메뉴 카드는 이 탭 바깥에 있어
-        # 여기 하단 여백만큼 결과 카드가 먼저 끝나 두 칸의 아래 선이 어긋난다.
-        root.setContentsMargins(12, 12, 12, 0)
+        # 위아래 여백을 두지 않는다. 왼쪽 메뉴 카드는 이 탭 바깥에 있어
+        # 여기 여백만큼 본문이 늦게 시작하고 먼저 끝나 두 칸의 위아래 선이
+        # 어긋난다.
+        root.setContentsMargins(12, 0, 12, 0)
         root.setSpacing(12)
 
         heading = QFrame()

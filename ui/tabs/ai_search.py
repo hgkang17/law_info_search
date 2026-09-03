@@ -18,6 +18,7 @@ from ui.theme import (
 )
 from ui.widgets import (
     CenteredCheckDelegate,
+    DropdownComboBox,
     DeferredWrapTextBrowser,
     DetailSearchBar,
     FavoriteTitleDelegate,
@@ -80,7 +81,7 @@ from utils.parsing import (
 )
 from PySide6.QtCore import QEvent, QRect, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QKeySequence, QShortcut, QTextCharFormat, QTextCursor
-from PySide6.QtWidgets import QAbstractItemView, QApplication, QComboBox, QDialog, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton, QSizePolicy, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QApplication, QDialog, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton, QSizePolicy, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
 from html import escape
 import re
 from molit_cgm_expc_api import ADMIN_RULE_IMAGES_KEY, _find_text
@@ -201,7 +202,7 @@ class AiLawSearchTab(QWidget):
             "직접검색은 키워드가 그대로 들어간 조문을 찾습니다."
         )
 
-        self.scope_combo = QComboBox()
+        self.scope_combo = DropdownComboBox()
         if self.is_related:
             self.scope_combo.addItem("법령 조문", 0)
             self.scope_combo.addItem("행정규칙 조문", 1)
@@ -671,7 +672,7 @@ class AiLawSearchTab(QWidget):
             if host_layout is not None:
                 host_layout.setContentsMargins(
                     0 if expanded else 12,
-                    0 if expanded else 12,
+                    0,
                     0 if expanded else 12,
                     0,
                 )

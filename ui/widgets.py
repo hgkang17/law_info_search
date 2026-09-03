@@ -23,6 +23,7 @@ from PySide6.QtGui import (
     QColor,
     QCursor,
     QFont,
+    QFontMetrics,
     QKeySequence,
     QPainter,
     QPen,
@@ -35,6 +36,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
+    QComboBox,
     QDoubleSpinBox,
     QFrame,
     QGraphicsOpacityEffect,
@@ -61,7 +63,13 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import QPointF
 from PySide6.QtGui import QPalette, QTextLayout
-from PySide6.QtWidgets import QApplication, QButtonGroup, QToolTip
+from PySide6.QtWidgets import (
+    QApplication,
+    QButtonGroup,
+    QStyleOptionButton,
+    QStylePainter,
+    QToolTip,
+)
 from storage.recent import RecentSearchManager
 from utils.formatting import hwp_friendly_clipboard_html
 from utils.parsing import whitespace_flexible_pattern
@@ -538,18 +546,100 @@ class ResultHeaderView(QHeaderView):
             painter.restore()
 
 
+class CategoryTabButton(QPushButton):
+    """분류 단추. 고른 것에만 아래 줄로 작은 부제를 함께 그린다.
+
+    ``법령`` 아래 ``(법률·대통령령·부령)``처럼 그 분류가 무엇을 포함하는지
+    한 줄로 덧붙인다. QPushButton은 서식 있는 글자를 못 받으므로 배경은
+    스타일시트가 그리게 두고 글자만 직접 그린다.
+    """
+
+    SUBTITLE_POINT_DROP = 2.0
+    LINE_GAP = 1
+
+    def __init__(self, text: str, subtitle: str = "", parent=None) -> None:
+        super().__init__(text, parent)
+        self._subtitle = subtitle
+
+    def subtitle(self) -> str:
+        return self._subtitle
+
+    def paintEvent(self, event) -> None:
+        if not self._subtitle or not self.isChecked():
+            super().paintEvent(event)
+            return
+        painter = QStylePainter(self)
+        option = QStyleOptionButton()
+        self.initStyleOption(option)
+        # 글자는 아래에서 직접 그리므로 여기서는 배경만 그린다.
+        option.text = ""
+        painter.drawControl(QStyle.ControlElement.CE_PushButton, option)
+
+        title_font = QFont(self.font())
+        subtitle_font = QFont(self.font())
+        subtitle_font.setPointSizeF(
+            max(6.0, title_font.pointSizeF() - self.SUBTITLE_POINT_DROP)
+        )
+        subtitle_font.setBold(False)
+        title_height = QFontMetrics(title_font).height()
+        subtitle_height = QFontMetrics(subtitle_font).height()
+        total = title_height + self.LINE_GAP + subtitle_height
+        top = self.rect().top() + (self.height() - total) // 2
+
+        painter.setPen(self.palette().color(self.foregroundRole()))
+        painter.setFont(title_font)
+        painter.drawText(
+            QRect(0, top, self.width(), title_height),
+            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
+            self.text(),
+        )
+        painter.setFont(subtitle_font)
+        painter.drawText(
+            QRect(
+                0,
+                top + title_height + self.LINE_GAP,
+                self.width(),
+                subtitle_height,
+            ),
+            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
+            self._subtitle,
+        )
+
+
 class PairedCategoryBar(QWidget):
-    """QTabBar 대신, 짝이 되는 두 버튼(예: 법령·별표·서식)을 실제 테두리 프레임 안에 넣어
-    하나의 세트로 보여주는 상단 카테고리 바. QTabBar의 최소 API(addTab/tabData/
-    currentIndex/currentChanged 등)를 흉내내 기존 연동 코드를 그대로 사용할 수 있게 함."""
+    """분류를 고르는 상단 세그먼트 바.
+
+    예전에는 분류마다 캡슐(테두리 프레임)을 따로 두어, 나란히 선 캡슐들이
+    저마다 테두리를 갖는 '프레임 속 프레임'처럼 보였다. 지금은 트랙 하나
+    안에 버튼을 나란히 넣고 고른 것만 알약 모양으로 도드라지게 한다.
+
+    QTabBar의 최소 API(addTab/tabData/currentIndex/currentChanged 등)를
+    흉내내므로 기존 연동 코드는 그대로 쓴다.
+    """
 
     currentChanged = Signal(int)
+
+    FRAME_HEIGHT = 52
+    TRACK_PADDING = 4
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._row_layout = QHBoxLayout(self)
         self._row_layout.setContentsMargins(0, 0, 0, 0)
         self._row_layout.setSpacing(8)
+        # 분류 버튼이 모두 들어가는 트랙 하나.
+        self._track = QFrame()
+        self._track.setObjectName("categoryTrack")
+        self._track.setFixedHeight(self.FRAME_HEIGHT)
+        self._track_layout = QHBoxLayout(self._track)
+        self._track_layout.setContentsMargins(
+            self.TRACK_PADDING,
+            self.TRACK_PADDING,
+            self.TRACK_PADDING,
+            self.TRACK_PADDING,
+        )
+        self._track_layout.setSpacing(2)
+        self._row_layout.addWidget(self._track)
         self._buttons: list[QPushButton] = []
         self._tab_data: list[object] = []
         self._group = QButtonGroup(self)
@@ -557,49 +647,35 @@ class PairedCategoryBar(QWidget):
         self._group.idClicked.connect(self._set_current)
         self._current_index = -1
 
-    def _make_button(self, text: str, object_name: str) -> QPushButton:
-        button = QPushButton(text)
+    def _make_button(
+        self, text: str, object_name: str, subtitle: str = ""
+    ) -> QPushButton:
+        button = CategoryTabButton(text, subtitle)
         button.setObjectName(object_name)
         button.setCheckable(True)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
-        button.setFixedHeight(self.FRAME_HEIGHT - 8)
+        button.setFixedHeight(self.FRAME_HEIGHT - self.TRACK_PADDING * 2)
         index = len(self._buttons)
         self._buttons.append(button)
         self._tab_data.append(None)
         self._group.addButton(button, index)
+        # 분류 수가 적어도 바를 가득 채우도록 남는 폭을 고르게 나눈다.
+        self._track_layout.addWidget(button, 1)
         return button
 
-    FRAME_HEIGHT = 44
-
-    def addTab(self, text: str) -> int:
-        # 통합검색도 옆 카테고리 묶음과 같은 캡슐형 외곽을 쓴다.
-        # 안쪽 버튼은 별도 테두리 없이 배경으로만 선택 상태를 표시한다.
-        frame = QFrame()
-        frame.setObjectName("resourceSubTabSingleFrame")
-        frame.setFixedHeight(self.FRAME_HEIGHT)
-        frame_layout = QHBoxLayout(frame)
-        frame_layout.setContentsMargins(4, 4, 4, 4)
-        button = self._make_button(text, "resourceSubTabSingle")
-        frame_layout.addWidget(button)
-        self._row_layout.addWidget(frame)
+    def addTab(self, text: str, subtitle: str = "") -> int:
+        self._make_button(text, "categoryTrackButton", subtitle)
         return len(self._buttons) - 1
 
     def add_pair(self, first_text: str, second_text: str) -> tuple[int, int]:
-        frame = QFrame()
-        frame.setObjectName("resourceSubTabFrame")
-        frame.setFixedHeight(self.FRAME_HEIGHT)
-        frame_layout = QHBoxLayout(frame)
-        frame_layout.setContentsMargins(4, 4, 4, 4)
-        frame_layout.setSpacing(2)
-        first = self._make_button(first_text, "resourceSubTabPaired")
-        second = self._make_button(second_text, "resourceSubTabPaired")
-        frame_layout.addWidget(first)
-        frame_layout.addWidget(second)
-        self._row_layout.addWidget(frame)
+        """짝지어 붙던 두 분류. 지금은 같은 트랙에 나란히 들어간다."""
+        self._make_button(first_text, "categoryTrackButton")
+        self._make_button(second_text, "categoryTrackButton")
         return len(self._buttons) - 2, len(self._buttons) - 1
 
     def add_stretch(self) -> None:
-        self._row_layout.addStretch(1)
+        """예전에는 트랙 오른쪽 남는 자리를 밀어냈다. 지금은 트랙이 가로를
+        가득 채우고 버튼이 그 안에서 폭을 나누므로 아무것도 하지 않는다."""
 
     def setTabData(self, index: int, data: object) -> None:
         if 0 <= index < len(self._tab_data):
@@ -689,7 +765,9 @@ class StatusLine:
 class SharedStatusBar(QFrame):
     """창 아래에 하나만 두는 상태줄. 오른쪽에 프로그램 정보 단추가 함께 선다."""
 
-    HEIGHT = 26
+    # 글자 한 줄이 들어갈 만큼만 둔다. 창 맨 아래라 여백이 남으면 그대로
+    # 빈 띠로 보인다.
+    HEIGHT = 18
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -751,6 +829,70 @@ class SharedStatusBar(QFrame):
             if line is not None:
                 self.set_active(line)
         return super().eventFilter(watched, event)
+
+
+class DropdownComboBox(QComboBox):
+    """펼친 목록이 칸 바로 아래로 내려오는 콤보.
+
+    Fusion 스타일은 고른 항목이 칸 자리에 겹치도록 목록을 띄운다. 그래서
+    펼치는 순간 지금 무엇을 고른 상태인지가 목록에 가려 보이지 않는다.
+    목록을 칸 아래로 내려 ``법령``(칸) / ``법령``ㆍ``본문``(목록)이 함께
+    보이게 한다. 아래에 자리가 모자라면 위로 띄운다.
+    """
+
+    POPUP_GAP = 4
+
+    # Fusion 스타일은 콤보 목록을 창 밖 별도 위젯으로 띄우고 자기 델리게이트로
+    # 그린다. 그래서 창 스타일시트의 ``QComboBox QAbstractItemView`` 규칙이
+    # 목록에 닿지 않는다. 목록에 직접 입히고, 델리게이트도 기본으로 바꾼다.
+    POPUP_STYLE = """
+        QAbstractItemView {
+            background: #ffffff;
+            border: 1px solid #cfdae6;
+            border-radius: 5px;
+            padding: 3px;
+            outline: none;
+        }
+        QAbstractItemView::item {
+            min-height: 28px;
+            padding: 0 8px;
+            border-radius: 4px;
+            color: #34465a;
+        }
+        QAbstractItemView::item:selected,
+        QAbstractItemView::item:hover {
+            background: #e4eff9;
+            color: #14606f;
+        }
+    """
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        view = self.view()
+        view.setItemDelegate(QStyledItemDelegate(view))
+        view.setStyleSheet(self.POPUP_STYLE)
+        view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+    def showPopup(self) -> None:
+        super().showPopup()
+        container = self.findChild(QFrame)
+        if container is None:
+            return
+        # 목록을 감싼 틀을 투명하게 두면 둥근 모서리 바깥이 창 뒤를 그대로
+        # 비쳐 검은 조각처럼 보인다. 틀에도 같은 흰 바탕을 깔아 막는다.
+        container.setStyleSheet(
+            "QFrame { background: #ffffff; border: 1px solid #cfdae6;"
+            " border-radius: 5px; }"
+        )
+        anchor = self.mapToGlobal(QPoint(0, 0))
+        below = anchor.y() + self.height() + self.POPUP_GAP
+        screen = self.screen()
+        if screen is not None:
+            available = screen.availableGeometry()
+            if below + container.height() > available.bottom():
+                above = anchor.y() - container.height() - self.POPUP_GAP
+                below = above if above >= available.top() else below
+        container.move(anchor.x(), below)
 
 
 class SegmentedModeSwitch(QFrame):
@@ -2198,8 +2340,8 @@ class ReferenceHistoryChip(QFrame):
         self._dragging = False
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(9, 0, 3, 0)
-        layout.setSpacing(5)
+        layout.setContentsMargins(8, 0, 2, 0)
+        layout.setSpacing(3)
         layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         self.text_label = QLabel(text)
         self.text_label.setObjectName("referenceChipText")
@@ -2208,7 +2350,7 @@ class ReferenceHistoryChip(QFrame):
         )
         self.close_button = QPushButton("×")
         self.close_button.setObjectName("referenceChipClose")
-        self.close_button.setFixedSize(24, 24)
+        self.close_button.setFixedSize(18, 18)
         self.close_button.setFlat(True)
         self.close_button.setAccessibleName(f"{text} 참조 제거")
         self.close_button.setToolTip(f"{text} 참조 제거")
@@ -2218,7 +2360,7 @@ class ReferenceHistoryChip(QFrame):
         )
         layout.addWidget(self.text_label)
         layout.addWidget(self.close_button)
-        self.setFixedHeight(30)
+        self.setFixedHeight(22)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
     def set_text(self, text: str) -> None:
@@ -2299,9 +2441,9 @@ class ReferenceHistoryBar(QScrollArea):
     항목이 늘어도 본문 크기가 흔들리지 않는다.
     """
 
-    ROW_HEIGHT = 24
+    ROW_HEIGHT = 18
     ROW_SPACING = 4
-    CHIP_HEIGHT = 30
+    CHIP_HEIGHT = 22
     # 휠 한 칸(120)에 옮길 거리. 칩 하나가 대략 이 정도 폭이다.
     WHEEL_STEP = 60
 
@@ -2334,7 +2476,7 @@ class ReferenceHistoryBar(QScrollArea):
         self._data: list[str] = []
         self._current_index = -1
         self._dragging_chip: ReferenceHistoryChip | None = None
-        self.setFixedHeight(self.CHIP_HEIGHT + 8)
+        self.setFixedHeight(self.CHIP_HEIGHT + 4)
         self.setToolTip(
             "클릭하면 그 조문으로 이동하고, 끌어서 순서를 바꿀 수 있습니다. "
             "항목이 많으면 휠로 좌우로 넘깁니다."

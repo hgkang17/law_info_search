@@ -28,12 +28,22 @@ KEYWORD_CATEGORY_LABEL = "지능형 법령검색시스템(AI)"
 # 세 대상을 한 번에 부른 뒤 결과를 합쳐 보여 주는 자리다.
 ANNEX_ALL_TARGET = "__annex_all__"
 ANNEX_TARGETS = ("licbyl", "admbyl", "ordinbyl")
+# 맨 위가 기본값이다. 어느 자료에 있는지 모르고 찾는 경우가 많아 전체를
+# 앞에 두고 기본으로 삼는다.
 ANNEX_TARGET_ITEMS = (
+    ("전체", ANNEX_ALL_TARGET),
     ("법령", "licbyl"),
     ("행정규칙", "admbyl"),
     ("자치법규", "ordinbyl"),
-    ("전체", ANNEX_ALL_TARGET),
 )
+
+
+# 분류 단추 아래에 작게 붙는 부제. 그 분류가 무엇을 포함하는지 알려 준다.
+CATEGORY_SUBTITLES = {
+    "law": "법률·대통령령·부령",
+    "admrul": "훈령·예규·고시",
+    "ordin": "조례·규칙",
+}
 
 
 RESOURCE_CATEGORIES = {

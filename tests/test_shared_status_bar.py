@@ -47,11 +47,15 @@ def test_each_screen_hides_its_own_status_row(window) -> None:
 def test_update_and_about_buttons_share_the_status_line(window, qt_app) -> None:
     """상태 문구와 오픈소스 고지 단추가 같은 줄에 선다."""
     qt_app.processEvents()
-    label_top = window.status_bar.label.mapTo(
-        window, window.status_bar.label.rect().topLeft()
-    ).y()
+
+    def middle(widget) -> int:
+        top = widget.mapTo(window, widget.rect().topLeft()).y()
+        return top + widget.height() // 2
+
+    # 높이가 저마다 달라도 같은 줄에서 가운데가 맞아야 한 줄로 읽힌다.
+    label_middle = middle(window.status_bar.label)
     for button in (window.update_button, window.about_button):
-        assert button.mapTo(window, button.rect().topLeft()).y() == label_top
+        assert abs(middle(button) - label_middle) <= 1
 
 
 def test_status_text_follows_the_screen_in_front(window, qt_app) -> None:

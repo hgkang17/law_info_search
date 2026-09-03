@@ -853,8 +853,11 @@ def detail_document_header(
     """
     heading = highlight_html_text(str(title), terms)
     if short_name:
+        # Qt 리치텍스트에서는 h1 안의 클래스 규칙이 제목 크기에 묻혀 약칭이
+        # 제목만 하게 나온다. 크기를 인라인으로 못박아 제목의 절반으로 둔다.
         heading += (
-            ' <span class="doc-short-name">'
+            ' <span class="doc-short-name" style="font-size:11px;'
+            ' font-weight:400; color:#3d4c60;">'
             f"( 약칭: {highlight_html_text(str(short_name), terms)} )</span>"
         )
     html_parts = [

@@ -18,6 +18,7 @@ from ui.theme import (
 )
 from ui.widgets import (
     CenteredCheckDelegate,
+    DropdownComboBox,
     DeferredWrapTextBrowser,
     DetailSearchBar,
     FavoriteTitleDelegate,
@@ -69,7 +70,7 @@ from utils.parsing import (
 )
 from PySide6.QtCore import QRect, QTimer, QUrl, Qt
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QKeySequence, QShortcut, QTextCharFormat, QTextCursor
-from PySide6.QtWidgets import QAbstractItemView, QApplication, QComboBox, QDialog, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton, QSizePolicy, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QApplication, QDialog, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton, QSizePolicy, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
 from html import escape
 from molit_cgm_expc_api import (
     AGENCIES,
@@ -144,9 +145,10 @@ class LawSearchTab(QWidget):
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
-        # 아래쪽만 여백을 두지 않는다. 왼쪽 메뉴 카드는 이 탭 바깥에 있어
-        # 여기 하단 여백만큼 결과 카드가 먼저 끝나 두 칸의 아래 선이 어긋난다.
-        root.setContentsMargins(12, 12, 12, 0)
+        # 위아래 여백을 두지 않는다. 왼쪽 메뉴 카드는 이 탭 바깥에 있어
+        # 여기 여백만큼 본문이 늦게 시작하고 먼저 끝나 두 칸의 위아래 선이
+        # 어긋난다.
+        root.setContentsMargins(12, 0, 12, 0)
         root.setSpacing(14)
 
         search_card = QFrame()
@@ -155,9 +157,9 @@ class LawSearchTab(QWidget):
         search_layout.setContentsMargins(10, 12, 10, 12)
         search_layout.setSpacing(8)
 
-        self.agency_combo: QComboBox | None = None
+        self.agency_combo: DropdownComboBox | None = None
         if self.is_central:
-            self.agency_combo = QComboBox()
+            self.agency_combo = DropdownComboBox()
             self.agency_combo.addItem("전체 기관", "__all__")
             for agency in AGENCIES:
                 self.agency_combo.addItem(agency.name, agency.target)
@@ -168,7 +170,7 @@ class LawSearchTab(QWidget):
             self.agency_combo.setFixedWidth(SEARCH_COMBO_WIDTH)
             search_layout.addWidget(self.agency_combo)
 
-        self.scope_combo = QComboBox()
+        self.scope_combo = DropdownComboBox()
         scope_label = (
             "안건명"
             if self.is_central

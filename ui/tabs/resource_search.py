@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from ui.assets import (
     ADMIN_RULE_PARSE_VERSION,
+    ANNEX_HWP_ICON_PATH,
+    ANNEX_PDF_ICON_PATH,
     SEARCH_API_REFRESH_TOOLTIP,
 )
 from ui.theme import (
@@ -20,6 +22,7 @@ from ui.theme import (
 )
 from ui.widgets import (
     CenteredCheckDelegate,
+    DropdownComboBox,
     DeferredWrapTextBrowser,
     DetailSearchBar,
     FavoriteTitleDelegate,
@@ -51,6 +54,7 @@ from ui.dialogs import (
 )
 from models.law import (
     ANNEX_ALL_TARGET,
+    CATEGORY_SUBTITLES,
     ANNEX_TARGET_ITEMS,
     ANNEX_TARGETS,
     KEYWORD_CATEGORY_LABEL,
@@ -74,6 +78,7 @@ from workers.search_worker import (
     AnnexReferenceWorker,
     ResourceApiWorker,
 )
+from workers.download_worker import PdfDownloadWorker
 from ui.tabs.ai_chat_panel import AiChatPanel
 from llm.inquiries import is_inquiry_target, split_doc_reference
 from molit_cgm_expc_api import (
@@ -125,9 +130,22 @@ from utils.three_stage_alignment import (
     law_content_blocks,
     primary_source_unit,
 )
-from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QTimer, QUrl, QUrlQuery, Qt
+from PySide6.QtCore import (
+    QBuffer,
+    QEvent,
+    QIODevice,
+    QPoint,
+    QPointF,
+    QRect,
+    QSize,
+    QTimer,
+    QUrl,
+    QUrlQuery,
+    Qt,
+)
+from PySide6.QtPdf import QPdfDocument
 from PySide6.QtGui import QBrush, QColor, QCursor, QDesktopServices, QFont, QKeySequence, QShortcut, QTextCharFormat, QTextCursor, QTextDocument, QTextFormat
-from PySide6.QtWidgets import QAbstractItemView, QApplication, QComboBox, QDialog, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMenu, QMessageBox, QProgressBar, QPushButton, QSizePolicy, QSplitter, QStackedWidget, QTabBar, QTableWidget, QTableWidgetItem, QTextEdit, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QApplication, QDialog, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMenu, QMessageBox, QProgressBar, QPushButton, QSizePolicy, QSplitter, QStackedWidget, QTabBar, QTableWidget, QTableWidgetItem, QTextEdit, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 from datetime import datetime
 from html import escape, unescape
 from pathlib import Path
@@ -275,6 +293,11 @@ class ResourceSearchTab(QWidget):
         self.pending_row: dict[str, object] | None = None
         self._pending_reference_title = "인용 조문"
         self._pending_reference_key = ""
+        # 본문 하단 별표ㆍ서식에서 펼쳐 둔 항목. 키는 그 별표의 PDF 주소이고
+        # 값은 배율(%)ㆍ내려받은 원문ㆍ오류 문구를 담는다. 접으면 지운다.
+        self._annex_previews: dict[str, dict[str, object]] = {}
+        self._annex_section_entries: list[dict[str, str]] = []
+        self._annex_preview_workers: dict[str, object] = {}
         self._pending_favorite_row: dict[str, object] | None = None
         # 크게 보기에서 대화 패널을 열어 둔 채로 나왔는지. 다시 들어갈 때
         # 그대로 되살린다.
@@ -484,7 +507,7 @@ class ResourceSearchTab(QWidget):
 
     def _annex_target_changed(self, *_args: object) -> None:
         """별표ㆍ서식 대상 콤보에서 고른 API로 카테고리를 갈아 끼운다."""
-        target = str(self.annex_target.currentData() or ANNEX_TARGETS[0])
+        target = str(self.annex_target.currentData() or ANNEX_ALL_TARGET)
         if self.category_tabs.tabData(self._annex_tab_index) == target:
             return
         self.category_tabs.setTabData(self._annex_tab_index, target)
@@ -532,9 +555,10 @@ class ResourceSearchTab(QWidget):
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
-        # 아래쪽만 여백을 두지 않는다. 왼쪽 메뉴 카드는 이 탭 바깥에 있어
-        # 여기 하단 여백만큼 결과 카드가 먼저 끝나 두 칸의 아래 선이 어긋난다.
-        root.setContentsMargins(12, 12, 12, 0)
+        # 위아래 여백을 두지 않는다. 왼쪽 메뉴 카드는 이 탭 바깥에 있어
+        # 여기 여백만큼 본문이 늦게 시작하고 먼저 끝나 두 칸의 위아래 선이
+        # 어긋난다.
+        root.setContentsMargins(12, 0, 12, 0)
         root.setSpacing(12)
 
         self.root_layout = root
@@ -557,13 +581,14 @@ class ResourceSearchTab(QWidget):
         default_category_index = integrated_index
         for target in ("law", "admrul", "ordin"):
             index = self.category_tabs.addTab(
-                str(RESOURCE_CATEGORIES[target]["label"])
+                str(RESOURCE_CATEGORIES[target]["label"]),
+                CATEGORY_SUBTITLES.get(target, ""),
             )
             self.category_tabs.setTabData(index, target)
             if target == "law":
                 default_category_index = index
         self._annex_tab_index = self.category_tabs.addTab("별표·서식")
-        self.category_tabs.setTabData(self._annex_tab_index, ANNEX_TARGETS[0])
+        self.category_tabs.setTabData(self._annex_tab_index, ANNEX_ALL_TARGET)
         self.category_tabs.add_stretch()
         self.category_tabs.setCurrentIndex(default_category_index)
         root.addWidget(self.category_tabs)
@@ -582,7 +607,7 @@ class ResourceSearchTab(QWidget):
 
         # 별표ㆍ서식은 캡슐 하나로 묶여 있으므로 어느 API를 부를지 여기서
         # 고른다. 고른 값은 카테고리 바의 tabData로 그대로 옮겨 담는다.
-        self.annex_target = QComboBox()
+        self.annex_target = DropdownComboBox()
         self.annex_target.setObjectName("resourceAnnexTarget")
         self.annex_target.setFixedWidth(SEARCH_COMBO_WIDTH)
         self.annex_target.setToolTip(
@@ -596,7 +621,7 @@ class ResourceSearchTab(QWidget):
         )
         self.annex_target.hide()
 
-        self.search_scope = QComboBox()
+        self.search_scope = DropdownComboBox()
         self.search_scope.setObjectName("resourceSearchScope")
         self.search_scope.setFixedWidth(SEARCH_COMBO_WIDTH)
         self.search_scope.currentIndexChanged.connect(
@@ -1202,7 +1227,7 @@ class ResourceSearchTab(QWidget):
                 central_layout.setContentsMargins(*self._normal_window_margins)
         self.root_layout.setContentsMargins(
             0 if expanded else 12,
-            0 if expanded else 12,
+            0,
             0 if expanded else 12,
             0,
         )
@@ -2628,7 +2653,9 @@ class ResourceSearchTab(QWidget):
                 1,
                 rect.left() - button.width() - self._ARTICLE_FAVORITE_GAP,
             )
-            button_y = rect.top()
+            # 줄 높이가 단추보다 크다. 위에 맞추면 별이 조문 제목보다
+            # 떠 보이므로 그 줄의 한가운데에 놓는다.
+            button_y = rect.top() + (rect.height() - button.height()) // 2
             visible = (
                 rect.bottom() >= 0
                 and button_y <= viewport.height()
@@ -2660,7 +2687,7 @@ class ResourceSearchTab(QWidget):
             cursor.setPosition(position)
             rect = self.detail_view.cursorRect(cursor)
             button_x = max(1, viewport.width() - button.width() - 8)
-            button_y = rect.top()
+            button_y = rect.top() + (rect.height() - button.height()) // 2
             visible = (
                 rect.bottom() >= 0
                 and button_y <= viewport.height()
@@ -5096,7 +5123,231 @@ class ResourceSearchTab(QWidget):
             }
         )
 
+    ANNEX_SECTION_START = "<!--annex-section-->"
+    ANNEX_SECTION_END = "<!--/annex-section-->"
+    ANNEX_PREVIEW_ZOOM_STEPS = (60, 80, 100, 130, 160, 200)
+    ANNEX_PREVIEW_DEFAULT_ZOOM = 100
+    # 한 번에 본문에 끼워 넣는 최대 쪽수. 별표 하나가 수십 쪽인 경우가 있어
+    # 전부 그리면 본문이 무거워진다.
+    ANNEX_PREVIEW_PAGE_LIMIT = 8
+
+    def _annex_entry_at(self, raw_index: str) -> tuple[int, dict[str, str]] | None:
+        try:
+            index = int(str(raw_index).split(":", 1)[0])
+        except (TypeError, ValueError):
+            return None
+        if not 0 <= index < len(self._annex_section_entries):
+            return None
+        return index, self._annex_section_entries[index]
+
+    def _toggle_annex_preview(self, raw_index: str) -> None:
+        """별표 제목을 누르면 그 자리에서 원문을 펼치거나 접는다."""
+        found = self._annex_entry_at(raw_index)
+        if found is None:
+            return
+        index, entry = found
+        key = self._annex_preview_key(entry, index)
+        if key in self._annex_previews:
+            self._annex_previews.pop(key, None)
+            self._rerender_annex_section()
+            self.status_label.setText(
+                f"{self._annex_display_title(entry)} 미리보기를 접었습니다."
+            )
+            return
+        self._annex_previews[key] = {
+            "zoom": self.ANNEX_PREVIEW_DEFAULT_ZOOM,
+            "pages": self.ANNEX_PREVIEW_PAGE_LIMIT,
+            "data": None,
+            "error": "",
+        }
+        self._rerender_annex_section()
+        self._start_annex_download(key, entry)
+
+    def _change_annex_preview_zoom(self, raw: str) -> None:
+        """펼쳐 둔 미리보기를 한 단계 크게 또는 작게 그린다."""
+        parts = str(raw).split(":")
+        if len(parts) < 2:
+            return
+        found = self._annex_entry_at(parts[0])
+        if found is None:
+            return
+        index, entry = found
+        state = self._annex_previews.get(self._annex_preview_key(entry, index))
+        if not isinstance(state, dict):
+            return
+        steps = self.ANNEX_PREVIEW_ZOOM_STEPS
+        current = int(state.get("zoom") or self.ANNEX_PREVIEW_DEFAULT_ZOOM)
+        position = min(range(len(steps)), key=lambda i: abs(steps[i] - current))
+        position += 1 if parts[1] == "in" else -1
+        state["zoom"] = steps[max(0, min(len(steps) - 1, position))]
+        self._rerender_annex_section()
+
+    def _show_more_annex_pages(self, raw_index: str) -> None:
+        """쪽수가 많아 잘라 둔 미리보기의 나머지를 마저 그린다."""
+        found = self._annex_entry_at(raw_index)
+        if found is None:
+            return
+        index, entry = found
+        state = self._annex_previews.get(self._annex_preview_key(entry, index))
+        if isinstance(state, dict):
+            state["pages"] = 0  # 0은 제한 없음
+            self._rerender_annex_section()
+
+    def _start_annex_download(self, key: str, entry: dict[str, str]) -> None:
+        """미리보기에 쓸 원문을 배경에서 받는다. 받아 둔 것이 있으면 곧바로 쓴다."""
+        if key in self._annex_preview_workers:
+            return
+        pdf_url = str(entry.get("pdf_url") or "")
+        if not pdf_url:
+            return
+        worker = PdfDownloadWorker(pdf_url, self)
+        self._annex_preview_workers[key] = worker
+
+        def finished(data: bytes, cache_key: str = key) -> None:
+            state = self._annex_previews.get(cache_key)
+            if isinstance(state, dict):
+                state["data"] = bytes(data)
+                state["error"] = ""
+            self._annex_preview_workers.pop(cache_key, None)
+            self._rerender_annex_section()
+
+        def failed(message: str, cache_key: str = key) -> None:
+            state = self._annex_previews.get(cache_key)
+            if isinstance(state, dict):
+                state["error"] = str(message)
+            self._annex_preview_workers.pop(cache_key, None)
+            self._rerender_annex_section()
+
+        worker.succeeded.connect(finished)
+        worker.failed.connect(failed)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _rerender_annex_section(self) -> None:
+        """본문에서 별표 목록 구간만 새로 만들어 갈아 끼운다."""
+        state = self._document_states.get(self._active_document_key)
+        source = str(state.get("source_html") or "") if isinstance(state, dict) else ""
+        if self.ANNEX_SECTION_START not in source:
+            return
+        head, _, rest = source.partition(self.ANNEX_SECTION_START)
+        _, _, tail = rest.partition(self.ANNEX_SECTION_END)
+        parts: list[str] = []
+        self._append_law_annex_section(parts, [], self._annex_section_entries)
+        scroll_bar = self.detail_view.verticalScrollBar()
+        position = scroll_bar.value()
+        rendered = head + "".join(parts) + tail
+        self._replace_detail_content(html=rendered)
+        if isinstance(state, dict):
+            state["source_html"] = rendered
+        scroll_bar.setValue(min(position, scroll_bar.maximum()))
+
+    def _annex_preview_html(self, key: str, index: int) -> str:
+        """펼친 별표 한 건의 미리보기 조각."""
+        state = self._annex_previews.get(key)
+        if not isinstance(state, dict):
+            return ""
+        frame = (
+            '<div style="margin:0 0 10px 0; padding:8px; background:#f6f8fb;'
+            ' border:1px solid #dbe3ec;">'
+        )
+        error = str(state.get("error") or "")
+        if error:
+            return (
+                frame
+                + '<span style="font-size:13px; color:#c0392b;">'
+                + f"원문을 불러오지 못했습니다: {escape(error)}</span></div>"
+            )
+        data = state.get("data")
+        if not data:
+            return (
+                frame
+                + '<span style="font-size:13px; color:#526176;">'
+                "원문을 불러오는 중입니다…</span></div>"
+            )
+        zoom = int(state.get("zoom") or self.ANNEX_PREVIEW_DEFAULT_ZOOM)
+        limit = int(state.get("pages") or 0)
+        pages, total = self._render_annex_pages(bytes(data), zoom, limit)
+        if not pages:
+            return (
+                frame
+                + '<span style="font-size:13px; color:#c0392b;">'
+                "원문을 그리지 못했습니다.</span></div>"
+            )
+        entry = self._annex_section_entries[index]
+        toolbar = (
+            '<div style="margin-bottom:6px; font-size:12px; color:#3d4c60;">'
+            f'<a href="annexzoom:{index}:out">축소</a>&nbsp;&nbsp;'
+            f'<a href="annexzoom:{index}:in">확대</a>&nbsp;&nbsp;'
+            f"<span>{zoom}%</span>&nbsp;&nbsp;"
+            f"<span>{len(pages)} / {total}쪽</span>"
+        )
+        file_url = str(entry.get("file_url") or "")
+        pdf_url = str(entry.get("pdf_url") or "")
+        if file_url:
+            toolbar += (
+                f'&nbsp;&nbsp;<a href="{escape(file_url, quote=True)}">'
+                "원본 내려받기</a>"
+            )
+        if pdf_url:
+            toolbar += (
+                f'&nbsp;&nbsp;<a href="{escape(pdf_url, quote=True)}">'
+                "PDF 내려받기</a>"
+            )
+        toolbar += "</div>"
+        more = ""
+        if len(pages) < total:
+            more = (
+                '<div style="margin-top:6px; font-size:12px;">'
+                f'<a href="annexpages:{index}">나머지 {total - len(pages)}쪽 '
+                "더 보기</a></div>"
+            )
+        return frame + toolbar + "".join(pages) + more + "</div>"
+
+    @staticmethod
+    def _render_annex_pages(
+        data: bytes, zoom: int, limit: int
+    ) -> tuple[list[str], int]:
+        """PDF 원문을 쪽마다 그림으로 바꿔 본문에 넣을 수 있게 한다."""
+        buffer = QBuffer()
+        buffer.setData(data)
+        if not buffer.open(QIODevice.OpenModeFlag.ReadOnly):
+            return [], 0
+        document = QPdfDocument()
+        document.load(buffer)
+        total = max(0, document.pageCount())
+        if not total:
+            return [], 0
+        shown = total if limit <= 0 else min(total, limit)
+        images: list[str] = []
+        for page in range(shown):
+            point_size = document.pagePointSize(page)
+            width = max(1, round(point_size.width() * zoom / 100 * 96 / 72))
+            height = max(1, round(point_size.height() * zoom / 100 * 96 / 72))
+            image = document.render(page, QSize(width, height))
+            if image.isNull():
+                continue
+            store = QBuffer()
+            store.open(QIODevice.OpenModeFlag.WriteOnly)
+            if not image.save(store, "PNG"):
+                continue
+            encoded = bytes(store.data().toBase64()).decode("ascii")
+            images.append(
+                '<div style="margin:0 0 6px 0;">'
+                f'<img src="data:image/png;base64,{encoded}"'
+                f' width="{width}" height="{height}"></div>'
+            )
+        return images, total
+
     def _detail_link_clicked(self, url: QUrl) -> None:
+        if url.scheme() == "annex":
+            self._toggle_annex_preview(url.toString()[len("annex:") :])
+            return
+        if url.scheme() == "annexzoom":
+            self._change_annex_preview_zoom(url.toString()[len("annexzoom:") :])
+            return
+        if url.scheme() == "annexpages":
+            self._show_more_annex_pages(url.toString()[len("annexpages:") :])
+            return
         if url.scheme() == "pdfpreview":
             real_url = unquote(url.toString()[len("pdfpreview:") :])
             self._show_pdf_preview(real_url)
@@ -8814,19 +9065,29 @@ class ResourceSearchTab(QWidget):
         self._save_active_document_state()
         self._queue_three_stage_link_request(title)
 
-    @staticmethod
     def _append_law_annex_section(
+        self,
         html_parts: list[str],
         plain_parts: list[str],
         entries: list[dict[str, str]],
         *,
         toc_entries: list[tuple[int, str, str]] | None = None,
     ) -> None:
-        """조문이 끝난 뒤 별표·서식 미리보기와 다운로드 링크를 붙인다."""
+        """조문이 끝난 뒤 별표·서식 목록을 붙인다.
+
+        제목을 누르면 그 자리에서 펼쳐지며 원문 미리보기가 본문 안에 들어온다.
+        내려받기는 제목 오른쪽의 작은 문서 표시로 연다.
+        """
+        # 이름이 같은 분류 함수(_law_annex_entries)가 따로 있으므로
+        # 화면 상태는 다른 이름으로 둔다.
+        self._annex_section_entries = list(entries)
         if not entries:
             return
         section_label = f"별표·서식 ({len(entries)}건)"
         section_anchor = "law-annexes"
+        # 별표를 펼치고 접을 때 본문 전체를 다시 만들지 않고 이 구간만
+        # 갈아 끼운다. 주석 표식은 화면에 보이지 않는다.
+        html_parts.append(self.ANNEX_SECTION_START)
         html_parts.append(
             f'<h2><a name="{section_anchor}">{section_label}</a></h2>'
         )
@@ -8834,54 +9095,80 @@ class ResourceSearchTab(QWidget):
             toc_entries.append((0, section_label, section_anchor))
         html_parts.append('<div class="content">')
         plain_parts.extend(("", f"[{section_label}]"))
-        for entry in entries:
-            label = str(entry.get("label") or "별표·서식")
-            title = str(entry.get("title") or "").strip()
-            shown = f"{label} — {title}" if title else label
+        for index, entry in enumerate(entries):
+            shown = self._annex_display_title(entry)
             file_url = str(entry.get("file_url") or "")
             pdf_url = str(entry.get("pdf_url") or "")
-            actions: list[str] = []
-            if pdf_url:
-                preview_url = f"pdfpreview:{quote(pdf_url, safe='')}"
-                actions.append(
-                    '<span style="white-space:nowrap;">'
-                    f'<a href="{escape(preview_url, quote=True)}">미리보기</a>'
-                    "</span>"
-                )
+            key = self._annex_preview_key(entry, index)
+            expanded = key in self._annex_previews
+
+            icons: list[str] = []
             if file_url:
-                actions.append(
-                    '<span style="white-space:nowrap;">'
-                    f'<a href="{escape(file_url, quote=True)}">원본 다운로드</a>'
-                    "</span>"
+                icons.append(
+                    f'<a href="{escape(file_url, quote=True)}">'
+                    f'<img src="{ANNEX_HWP_ICON_PATH.as_uri()}" '
+                    'width="16" height="16" alt="원본 내려받기"></a>'
                 )
             if pdf_url:
-                actions.append(
-                    '<span style="white-space:nowrap;">'
-                    f'<a href="{escape(pdf_url, quote=True)}">PDF 다운로드</a>'
-                    "</span>"
+                icons.append(
+                    f'<a href="{escape(pdf_url, quote=True)}">'
+                    f'<img src="{ANNEX_PDF_ICON_PATH.as_uri()}" '
+                    'width="16" height="16" alt="PDF 내려받기"></a>'
                 )
-            action_html = " &middot; ".join(actions)
+            icon_html = "&nbsp;".join(icons)
+
+            marker = "&#8862;" if expanded else "&#8862;"
+            marker = "⊟" if expanded else "⊞"
+            title_html = escape(shown)
+            if pdf_url:
+                toggle = f"annex:{index}"
+                title_html = (
+                    f'<a href="{escape(toggle, quote=True)}" '
+                    'style="color:#173b63; text-decoration:none; '
+                    'font-weight:400;">'
+                    f"{marker} {escape(shown)}</a>"
+                )
             html_parts.append(
-                '<div class="annex-item" style="margin:0; padding:8px 0; '
-                'border-bottom:1px solid #e4ebf2;">'
-                f'<div style="font-weight:600; color:#173b63;">'
-                f"{escape(shown)}</div>"
-                + (
-                    f'<div style="margin-top:3px;">{action_html}</div>'
-                    if action_html
-                    else '<div style="margin-top:3px; color:#526176;">'
-                    "제공된 링크가 없습니다.</div>"
-                )
+                '<div class="annex-item" style="margin:0; padding:5px 0; '
+                'border-bottom:1px solid #e4ebf2; font-size:13px; '
+                'font-weight:400; color:#173b63;">'
+                f"{title_html}"
+                + (f"&nbsp;&nbsp;{icon_html}" if icon_html else "")
                 + "</div>"
             )
+            if not pdf_url and not file_url:
+                html_parts.append(
+                    '<div style="font-size:13px; color:#526176;">'
+                    "제공된 링크가 없습니다.</div>"
+                )
+            if expanded:
+                html_parts.append(self._annex_preview_html(key, index))
+
             plain_parts.append(shown)
             if pdf_url:
-                plain_parts.append(f"PDF 미리보기·다운로드: {pdf_url}")
+                plain_parts.append(f"PDF 내려받기: {pdf_url}")
             if file_url:
-                plain_parts.append(f"원본 다운로드: {file_url}")
+                plain_parts.append(f"원본 내려받기: {file_url}")
             if not file_url and not pdf_url:
                 plain_parts.append("제공된 링크가 없습니다.")
         html_parts.append("</div>")
+        html_parts.append(self.ANNEX_SECTION_END)
+
+    @staticmethod
+    def _annex_display_title(entry: dict[str, str]) -> str:
+        """``[별표1] 이름`` 형식으로 맞춘다.
+
+        API가 주는 표지는 ``별표 1``ㆍ``별표 1의2``처럼 띄어쓰기가 섞여 있다.
+        묶음표 안에서는 붙여 써야 목록에서 제목이 한눈에 들어온다.
+        """
+        label = str(entry.get("label") or "별표·서식").strip()
+        title = str(entry.get("title") or "").strip()
+        compact = re.sub(r"\s+", "", label)
+        return f"[{compact}] {title}" if title else f"[{compact}]"
+
+    @staticmethod
+    def _annex_preview_key(entry: dict[str, str], index: int) -> str:
+        return str(entry.get("pdf_url") or entry.get("file_url") or index)
 
     def _commit_detail(self, html_parts: list[str], plain_parts: list[str]) -> None:
         rendered_html = "".join(html_parts)

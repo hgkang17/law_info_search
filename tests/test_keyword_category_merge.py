@@ -45,7 +45,8 @@ def test_keyword_categories_sit_next_to_integrated_search(window) -> None:
     # 지능형 법령검색은 캡슐 하나로 묶여 통합검색 바로 옆에 붙고, 어느
     # API를 고른 상태인지는 그 캡슐의 tabData가 들고 있다.
     assert targets[:2] == ["__all__", "ai_related"]
-    assert targets[2:] == ["law", "admrul", "ordin", "licbyl"]
+    # 별표·서식 캡슐은 세 대상을 한 번에 찾는 전체가 기본이다.
+    assert targets[2:] == ["law", "admrul", "ordin", "__annex_all__"]
 
 
 def test_annex_capsule_carries_the_chosen_annex_target(window) -> None:
@@ -60,9 +61,11 @@ def test_annex_capsule_carries_the_chosen_annex_target(window) -> None:
         assert not resource.annex_target.isHidden()
         assert _category_targets(window)[-1] == target
 
-    # 콤보로 고르면 카테고리도 함께 바뀐다.
-    resource.annex_target.setCurrentIndex(0)
+    # 콤보로 고르면 카테고리도 함께 바뀐다. 맨 위는 전체다.
+    resource.annex_target.setCurrentIndex(1)
     assert resource.category_target == "licbyl"
+    resource.annex_target.setCurrentIndex(0)
+    assert resource.category_target == "__annex_all__"
 
     resource.select_category("law")
     assert not resource.is_annex_category

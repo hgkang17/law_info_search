@@ -36,6 +36,14 @@ SPIN_DOWN_ICON_PATH = APP_DIR / "spin_down.svg"
 FAVORITE_PLUS_ICON_PATH = APP_DIR / "favorite_plus.svg"
 
 
+# 본문 하단 별표ㆍ서식 목록에서 원본(HWP)ㆍPDF 내려받기를 나타내는 표시.
+# 한글과컴퓨터ㆍAdobe의 실제 상표를 쓰지 않고 문서 모양으로만 그렸다.
+ANNEX_HWP_ICON_PATH = APP_DIR / "annex_hwp.svg"
+
+
+ANNEX_PDF_ICON_PATH = APP_DIR / "annex_pdf.svg"
+
+
 # LGPL v3ㆍSIL OFL 1.1은 재배포판에 라이선스 사본을 함께 담도록 요구한다.
 # 빌드 설정이 이 폴더를 통째로 번들에 넣고, 프로그램 정보 대화상자가
 # 여기를 열어 준다.

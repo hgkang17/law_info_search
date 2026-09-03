@@ -2293,10 +2293,13 @@ class LawSearchWindow(QMainWindow):
                 color: #8a4b2a;
                 font-size: 11px;
             }
+            /* 상태줄 안에 서는 링크라 줄 높이를 넘지 않게 못박는다. */
             QPushButton#aboutLinkButton, QPushButton#updateLinkButton {
                 background: transparent;
                 border: none;
                 padding: 0 2px;
+                min-height: 16px;
+                max-height: 16px;
                 color: #6b7c91;
                 font-size: 11px;
                 text-decoration: underline;
@@ -2418,9 +2421,9 @@ class LawSearchWindow(QMainWindow):
                 border: 1px solid #41627f;
                 border-radius: 9px;
                 padding: 1px 3px;
-                font-family: "Malgun Gothic";
-                font-size: 14px;
-                font-weight: 700;
+                font-family: "Pretendard SemiBold", "Pretendard";
+                font-size: 20px;
+                font-weight: 600;
             }
             QPushButton#favoriteNavigationButton:hover {
                 background: #1e4b73;
@@ -2435,15 +2438,19 @@ class LawSearchWindow(QMainWindow):
             QPushButton#favoriteNavigationButton:focus {
                 border-color: #9ecbf0;
             }
+            /* 목록 글꼴은 위젯 자체에 걸어야 항목까지 따라온다.
+               ``::item``에만 주면 Qt가 위젯 글꼴을 그대로 쓴다. */
             QListWidget#mainNavigation {
                 background: transparent;
                 border: none;
                 outline: none;
                 padding: 4px 0;
-                font-family: "Malgun Gothic";
-                font-size: 14px;
-                font-weight: 700;
+                font-family: "Pretendard SemiBold", "Pretendard";
+                font-size: 20px;
+                font-weight: 600;
             }
+            /* 왼쪽 주 메뉴와 법령검색 분류 단추는 같은 위계의 이동 수단이라
+               글꼴 규격을 하나로 맞춘다. */
             QListWidget#mainNavigation::item {
                 min-height: 60px;
                 background: transparent;
@@ -2452,6 +2459,9 @@ class LawSearchWindow(QMainWindow):
                 border-radius: 9px;
                 padding: 1px 3px;
                 margin: 2px 0;
+                font-family: "Pretendard SemiBold", "Pretendard";
+                font-size: 20px;
+                font-weight: 600;
             }
             QListWidget#mainNavigation::item:selected {
                 background: #f2f8fc;
@@ -2619,9 +2629,9 @@ class LawSearchWindow(QMainWindow):
                 border: 1px solid #a86f00;
                 border-radius: 9px;
                 padding: 1px 3px;
-                font-family: "Malgun Gothic";
-                font-size: 14px;
-                font-weight: 700;
+                font-family: "Pretendard SemiBold", "Pretendard";
+                font-size: 20px;
+                font-weight: 600;
             }
             QPushButton#viewedLawsNavigationButton:hover {
                 background: #dba000;
@@ -2697,36 +2707,35 @@ class LawSearchWindow(QMainWindow):
             QWidget#resourceSubTabs {
                 background: transparent;
             }
-            QFrame#resourceSubTabFrame,
-            QFrame#resourceSubTabSingleFrame {
-                background: #e9eff5;
-                border: 1px solid #d4e0ea;
-                border-radius: 11px;
-            }
-            QPushButton#resourceSubTabSingle,
-            QPushButton#resourceSubTabPaired {
-                min-width: 76px;
-                background: transparent;
-                color: #40566b;
+            /* 분류 단추가 모두 들어가는 띠 하나. 분류마다 상자를 따로 두면
+               나란히 선 테두리들이 서로 경쟁해 어수선해진다. 띠는 가로를
+               가득 채우고, 지금 고른 분류만 밝게 도드라진다. */
+            QFrame#categoryTrack {
+                background: #1d3c5c;
                 border: none;
-                border-radius: 8px;
-                padding: 0 14px;
+                border-radius: 5px;
+            }
+            QPushButton#categoryTrackButton {
+                background: transparent;
+                color: #d7e3ef;
+                border: none;
+                border-radius: 3px;
+                padding: 0 10px;
+                font-family: "Pretendard SemiBold", "Pretendard";
+                font-size: 20px;
                 font-weight: 600;
             }
-            QPushButton#resourceSubTabSingle:checked,
-            QPushButton#resourceSubTabPaired:checked {
-                background: #1976b8;
-                color: white;
+            QPushButton#categoryTrackButton:checked {
+                background: #1a73c8;
+                color: #ffffff;
             }
-            QPushButton#resourceSubTabSingle:hover:!checked,
-            QPushButton#resourceSubTabPaired:hover:!checked {
-                background: #dce7f0;
-                color: #155f94;
+            QPushButton#categoryTrackButton:hover:!checked {
+                background: #27507a;
+                color: #ffffff;
             }
-            QPushButton#resourceSubTabSingle:pressed,
-            QPushButton#resourceSubTabPaired:pressed {
-                background: #14689f;
-                color: white;
+            QPushButton#categoryTrackButton:pressed {
+                background: #155fa9;
+                color: #ffffff;
             }
             /* 검색줄 안의 모드 스위치. 카테고리 캡슐과 같은 모양이되
                검색어 칸ㆍ콤보와 한 줄에 서도록 한 치수 작게 둔다. */
@@ -3029,7 +3038,7 @@ class LawSearchWindow(QMainWindow):
             QPushButton#bannerDismissButton:focus {
                 border: 2px solid #2679bd;
             }
-            QLineEdit, QComboBox {
+            QLineEdit {
                 min-height: 38px;
                 background: white;
                 border: 1px solid #cfd8e3;
@@ -3038,8 +3047,57 @@ class LawSearchWindow(QMainWindow):
                 selection-background-color: #1768aa;
                 font-weight: 400;
             }
-            QLineEdit:focus, QComboBox:focus {
+            QLineEdit:focus {
                 border: 2px solid #2679bd;
+            }
+            /* 콤보는 고르는 칸이라 입력칸(흰 바탕)과 구분되게 한 톤 낮춘
+               바탕을 쓰고, 오른쪽 화살표는 얇은 ∨ 하나로 둔다. */
+            QComboBox {
+                min-height: 38px;
+                background: #f3f6fa;
+                border: 1px solid #dbe3ec;
+                border-radius: 5px;
+                padding: 0 11px;
+                selection-background-color: #1768aa;
+                font-weight: 400;
+            }
+            QComboBox:hover {
+                background: #eaf0f7;
+                border-color: #c8d4e1;
+            }
+            QComboBox:focus, QComboBox:on {
+                border: 2px solid #2679bd;
+            }
+            QComboBox::drop-down {
+                subcontrol-origin: padding;
+                subcontrol-position: center right;
+                width: 24px;
+                border: none;
+                background: transparent;
+            }
+            QComboBox::down-arrow {
+                image: url("__SPIN_DOWN_ICON__");
+                width: 9px;
+                height: 6px;
+            }
+            /* 펼친 목록은 흰 바탕에 둥근 모서리로, 칸과 떨어져 보이게 한다. */
+            QComboBox QAbstractItemView {
+                background: #ffffff;
+                border: 1px solid #cfdae6;
+                border-radius: 5px;
+                padding: 3px;
+                outline: none;
+                selection-background-color: #e4eff9;
+                selection-color: #1768aa;
+            }
+            QComboBox QAbstractItemView::item {
+                min-height: 30px;
+                padding: 0 8px;
+                border-radius: 6px;
+            }
+            QComboBox QAbstractItemView::item:hover {
+                background: #eef5fc;
+                color: #1768aa;
             }
             QLineEdit#resultFilterInput {
                 min-height: 18px;
@@ -3528,8 +3586,8 @@ class LawSearchWindow(QMainWindow):
                 border: 1px solid #315269;
                 border-radius: 3px;
                 padding: 1px 3px;
-                font-family: "Malgun Gothic";
-                font-size: 13px;
+                font-family: "Pretendard SemiBold", "Pretendard";
+                font-size: 20px;
                 font-weight: 600;
             }
             QPushButton#aiReviewNavigationButton:hover {
@@ -3574,12 +3632,25 @@ class LawSearchWindow(QMainWindow):
                 border: 1px solid __WB_BORDER__;
                 border-radius: 5px;
             }
-            QLineEdit, QComboBox,
+            QLineEdit,
             QDoubleSpinBox#fontSizeSpin,
             QSpinBox#pdfZoomSpin {
                 border-color: #bfcdd6;
                 border-radius: 4px;
                 selection-background-color: __WB_ACCENT__;
+            }
+            /* 콤보는 앞에서 정한 둥근 모서리와 연한 선택색을 지킨다.
+               여기서 다시 지정하지 않으면 위 규칙에 묶여 각진 모서리와
+               짙은 강조색으로 덮인다. */
+            QComboBox {
+                border-color: #cfdae6;
+                border-radius: 5px;
+            }
+            QComboBox QAbstractItemView {
+                border-color: #cfdae6;
+                border-radius: 5px;
+                selection-background-color: #e4eff9;
+                selection-color: #14606f;
             }
             QLineEdit:focus, QComboBox:focus,
             QDoubleSpinBox#fontSizeSpin:focus,
@@ -3588,8 +3659,10 @@ class LawSearchWindow(QMainWindow):
             }
             QPushButton { border-radius: 4px; }
             QPushButton:focus { border: 2px solid __WB_FOCUS__; }
+            /* 메뉴 목록 전체를 감싸는 포커스 테두리는 고른 항목을 가리는
+               장식일 뿐이라 두지 않는다. 어느 메뉴인지는 항목 강조로 안다. */
             QListWidget#mainNavigation:focus {
-                border: 2px solid __WB_FOCUS__;
+                border: none;
             }
             QPushButton#primaryButton {
                 background: __WB_ACCENT__;
@@ -3699,17 +3772,13 @@ class LawSearchWindow(QMainWindow):
                 border-top: 3px solid #087e8b;
             }
             QTabWidget#aiSubTabs QTabBar::tab:selected,
-            QPushButton#resourceSubTabSingle:checked,
-            QPushButton#resourceSubTabPaired:checked,
             QPushButton#modeSwitchButton:checked,
             QPushButton#colorModeButton:checked {
                 background: #087e8b;
                 border-color: #087e8b;
             }
-            QFrame#resourceSubTabFrame,
-            QFrame#resourceSubTabSingleFrame,
             QFrame#modeSwitchFrame {
-                border-radius: 4px;
+                border-radius: 6px;
                 background: #e5ecef;
             }
             QTabBar#documentTabs::tab:selected {
