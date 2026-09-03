@@ -3924,11 +3924,6 @@ class LawSearchWindow(QMainWindow):
                 max-height: 40px;
                 margin: 1px 0;
                 padding: 0 11px;
-            }
-            /* 목록 항목은 그림 자리를 두느라 글자가 단추보다 7px 더 들어간다.
-               왼쪽 여백에서 그만큼 빼서 위아래 단추와 글자를 나란히 세운다. */
-            QListWidget#mainNavigation::item {
-                padding-left: 4px;
                 background: transparent;
                 color: #4f5258;
                 border: 1px solid transparent;
@@ -3937,6 +3932,12 @@ class LawSearchWindow(QMainWindow):
                 font-family: "Malgun Gothic";
                 font-size: 10pt;
                 font-weight: 500;
+            }
+            /* 목록 항목은 그림 자리를 두느라 글자가 단추보다 7px 더 들어간다.
+               왼쪽 여백에서 그만큼 빼서 위아래 단추와 글자를 나란히 세운다.
+               위 묶음 규칙 뒤에 두어 여백만 덮어쓴다. */
+            QListWidget#mainNavigation::item {
+                padding-left: 4px;
             }
             QListWidget#mainNavigation::item:hover:!selected,
             QPushButton#favoriteNavigationButton:hover,
