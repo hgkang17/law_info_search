@@ -738,6 +738,7 @@ class ResourceSearchTab(QWidget):
             Qt.TextInteractionFlag.TextSelectableByMouse
             | Qt.TextInteractionFlag.TextSelectableByKeyboard
             | Qt.TextInteractionFlag.LinksAccessibleByMouse
+            | Qt.TextInteractionFlag.LinksAccessibleByKeyboard
         )
         self.detail_view.anchorClicked.connect(self._detail_link_clicked)
         self.detail_view.viewport().setMouseTracking(True)
@@ -7743,6 +7744,9 @@ class ResourceSearchTab(QWidget):
                 if target == "admrul"
                 else None
             ),
+            law_annexes=(
+                self._law_annex_entries(payload) if target == "law" else None
+            ),
         )
         status = (
             f"{self.pending_row['label']} ID {self.pending_row['id']} 본문 조회 완료"
@@ -8218,6 +8222,65 @@ class ResourceSearchTab(QWidget):
                 body_parts.append(note)
         return title, metadata, [("조문", "\n".join(body_parts))]
 
+    @staticmethod
+    def _law_annex_label(unit: dict[str, object]) -> str:
+        """법령 본문 API의 별표 번호를 사람이 읽는 표기로 바꾼다."""
+        kind = json_text(unit.get("별표구분")) or "별표·서식"
+        raw_number = json_text(unit.get("별표번호"))
+        raw_branch = json_text(unit.get("별표가지번호"))
+        number = (
+            str(int(raw_number))
+            if raw_number.isdigit() and int(raw_number) > 0
+            else raw_number.lstrip("0") or raw_number
+        )
+        branch = (
+            str(int(raw_branch))
+            if raw_branch.isdigit() and int(raw_branch) > 0
+            else ""
+        )
+        if not number:
+            return kind
+        numbered = f"{number}의{branch}" if branch else number
+        if kind == "별표":
+            return f"별표 {numbered}"
+        if kind in ("별지", "별지서식", "서식"):
+            branch_suffix = f"의{branch}" if branch else ""
+            return f"별지 제{number}호{branch_suffix}서식"
+        return f"{kind} {numbered}"
+
+    @classmethod
+    def _law_annex_entries(cls, data: object) -> list[dict[str, str]]:
+        """법령 본문 응답에 같이 든 별표·서식 다운로드 정보를 꺼낸다."""
+        if not isinstance(data, dict):
+            return []
+        law = data.get("법령")
+        if not isinstance(law, dict):
+            return []
+        annex = law.get("별표")
+        if not isinstance(annex, dict):
+            return []
+        entries: list[dict[str, str]] = []
+        for raw_unit in json_list(annex.get("별표단위")):
+            if not isinstance(raw_unit, dict):
+                continue
+            unit = {str(key): value for key, value in raw_unit.items()}
+            title = json_text(
+                unit.get("별표제목문자열") or unit.get("별표제목")
+            )
+            file_url = full_law_url(unit.get("별표서식파일링크"))
+            pdf_url = full_law_url(unit.get("별표서식PDF파일링크"))
+            if not title and not file_url and not pdf_url:
+                continue
+            entries.append(
+                {
+                    "label": cls._law_annex_label(unit),
+                    "title": title,
+                    "file_url": file_url,
+                    "pdf_url": pdf_url,
+                }
+            )
+        return entries
+
     def _append_law_children(self, node: object, output: list[str]) -> None:
         if not isinstance(node, dict):
             return
@@ -8507,6 +8570,7 @@ class ResourceSearchTab(QWidget):
         embedded_images: dict[str, str] | None = None,
         short_name: str = "",
         subtitle: str = "",
+        law_annexes: list[dict[str, str]] | None = None,
     ) -> None:
         html_parts, plain_parts = self._detail_header(
             title, metadata, short_name=short_name, subtitle=subtitle
@@ -8552,6 +8616,12 @@ class ResourceSearchTab(QWidget):
                     ),
                 )
             )
+        self._append_law_annex_section(
+            html_parts,
+            plain_parts,
+            law_annexes or [],
+            toc_entries=toc_entries if build_toc else None,
+        )
         three_stage_articles: list[dict[str, object]] = []
         if is_law_document and current_law_id:
             for depth, label, anchor in toc_entries:
@@ -8588,6 +8658,75 @@ class ResourceSearchTab(QWidget):
             self.detail_view.viewport().update()
         self._save_active_document_state()
         self._queue_three_stage_link_request(title)
+
+    @staticmethod
+    def _append_law_annex_section(
+        html_parts: list[str],
+        plain_parts: list[str],
+        entries: list[dict[str, str]],
+        *,
+        toc_entries: list[tuple[int, str, str]] | None = None,
+    ) -> None:
+        """조문이 끝난 뒤 별표·서식 미리보기와 다운로드 링크를 붙인다."""
+        if not entries:
+            return
+        section_label = f"별표·서식 ({len(entries)}건)"
+        section_anchor = "law-annexes"
+        html_parts.append(
+            f'<h2><a name="{section_anchor}">{section_label}</a></h2>'
+        )
+        if toc_entries is not None:
+            toc_entries.append((0, section_label, section_anchor))
+        html_parts.append('<div class="content">')
+        plain_parts.extend(("", f"[{section_label}]"))
+        for entry in entries:
+            label = str(entry.get("label") or "별표·서식")
+            title = str(entry.get("title") or "").strip()
+            shown = f"{label} — {title}" if title else label
+            file_url = str(entry.get("file_url") or "")
+            pdf_url = str(entry.get("pdf_url") or "")
+            actions: list[str] = []
+            if pdf_url:
+                preview_url = f"pdfpreview:{quote(pdf_url, safe='')}"
+                actions.append(
+                    '<span style="white-space:nowrap;">'
+                    f'<a href="{escape(preview_url, quote=True)}">미리보기</a>'
+                    "</span>"
+                )
+            if file_url:
+                actions.append(
+                    '<span style="white-space:nowrap;">'
+                    f'<a href="{escape(file_url, quote=True)}">원본 다운로드</a>'
+                    "</span>"
+                )
+            if pdf_url:
+                actions.append(
+                    '<span style="white-space:nowrap;">'
+                    f'<a href="{escape(pdf_url, quote=True)}">PDF 다운로드</a>'
+                    "</span>"
+                )
+            action_html = " &middot; ".join(actions)
+            html_parts.append(
+                '<div class="annex-item" style="margin:0; padding:8px 0; '
+                'border-bottom:1px solid #e4ebf2;">'
+                f'<div style="font-weight:600; color:#173b63;">'
+                f"{escape(shown)}</div>"
+                + (
+                    f'<div style="margin-top:3px;">{action_html}</div>'
+                    if action_html
+                    else '<div style="margin-top:3px; color:#526176;">'
+                    "제공된 링크가 없습니다.</div>"
+                )
+                + "</div>"
+            )
+            plain_parts.append(shown)
+            if pdf_url:
+                plain_parts.append(f"PDF 미리보기·다운로드: {pdf_url}")
+            if file_url:
+                plain_parts.append(f"원본 다운로드: {file_url}")
+            if not file_url and not pdf_url:
+                plain_parts.append("제공된 링크가 없습니다.")
+        html_parts.append("</div>")
 
     def _commit_detail(self, html_parts: list[str], plain_parts: list[str]) -> None:
         rendered_html = "".join(html_parts)
