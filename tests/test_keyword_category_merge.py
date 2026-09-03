@@ -42,9 +42,44 @@ def _category_targets(window: LawSearchWindow) -> list[str]:
 def test_keyword_categories_sit_next_to_integrated_search(window) -> None:
     targets = _category_targets(window)
 
-    # 통합검색 바로 옆에 한 쌍으로 붙는다.
-    assert targets[:3] == ["__all__", "ai_related", "ai_search"]
-    assert "law" in targets and "admrul" in targets
+    # 지능형 법령검색은 캡슐 하나로 묶여 통합검색 바로 옆에 붙고, 어느
+    # API를 고른 상태인지는 그 캡슐의 tabData가 들고 있다.
+    assert targets[:2] == ["__all__", "ai_related"]
+    assert targets[2:] == ["law", "admrul", "ordin", "licbyl"]
+
+
+def test_annex_capsule_carries_the_chosen_annex_target(window) -> None:
+    """별표ㆍ서식 캡슐 하나가 세 API와 전체검색을 함께 맡는다."""
+    resource = window.resource_tab
+
+    for target in ("licbyl", "admbyl", "ordinbyl", "__annex_all__"):
+        assert resource.select_category(target)
+        assert resource.category_target == target
+        assert resource.is_annex_category
+        assert resource.annex_target.currentData() == target
+        assert not resource.annex_target.isHidden()
+        assert _category_targets(window)[-1] == target
+
+    # 콤보로 고르면 카테고리도 함께 바뀐다.
+    resource.annex_target.setCurrentIndex(0)
+    assert resource.category_target == "licbyl"
+
+    resource.select_category("law")
+    assert not resource.is_annex_category
+    assert resource.annex_target.isHidden()
+
+
+def test_keyword_mode_switch_swaps_the_api(window) -> None:
+    """검색줄의 모드 스위치가 연관ㆍ직접 화면을 갈아 끼운다."""
+    resource = window.resource_tab
+    resource.select_category("ai_related")
+    assert window.ai_tabs.currentWidget() is window.ai_related_tab
+    assert window.ai_related_tab.mode_switch.current_value() == "ai_related"
+
+    window.ai_related_tab.mode_switch.changed.emit("ai_search")
+    assert resource.category_target == "ai_search"
+    assert window.ai_tabs.currentWidget() is window.ai_search_tab
+    assert window.ai_search_tab.mode_switch.current_value() == "ai_search"
 
 
 def test_keyword_search_left_the_main_menu(window) -> None:
@@ -191,7 +226,6 @@ def test_keyword_reading_mode_hides_outer_law_category_bar(window) -> None:
     assert resource.category_tabs.isHidden()
     assert not window.header_card.isHidden()
     assert not window.open_documents_widget.isHidden()
-    assert keyword.description_row.isHidden()
     assert keyword.main_splitter.sizes()[0] == 0
     assert keyword.expand_detail_button.isHidden()
 

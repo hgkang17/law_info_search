@@ -24,8 +24,8 @@ from ui.widgets import (
     RecentSearchBar,
     ResultHeaderView,
     SearchHighlightDelegate,
+    SegmentedModeSwitch,
     StableHorizontalTableWidget,
-    build_dismissible_banner,
     build_detail_header_controls,
     build_restore_view_button,
     build_search_result_head,
@@ -45,6 +45,9 @@ from ui.tabs.ai_chat_panel import AiChatPanel
 from models.law import (
     AI_RELATED_AGENCY,
     AI_SEARCH_AGENCY,
+    KEYWORD_CATEGORY_LABELS,
+    KEYWORD_DIRECT_TARGET,
+    KEYWORD_RELATED_TARGET,
 )
 from storage.cache import LawDocumentCache, SearchResultCache
 from storage.recent import RecentSearchManager
@@ -74,7 +77,7 @@ from utils.parsing import (
     whitespace_insensitive_contains,
     serialize_agency_search_payload,
 )
-from PySide6.QtCore import QEvent, QRect, QTimer, QUrl, Qt
+from PySide6.QtCore import QEvent, QRect, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QKeySequence, QShortcut, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import QAbstractItemView, QApplication, QComboBox, QDialog, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton, QSizePolicy, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
 from html import escape
@@ -85,6 +88,9 @@ from ui.dialogs import _position_dialog_beside
 
 class AiLawSearchTab(QWidget):
     """지능형 직접검색 또는 연관법령 추천 결과를 표시하는 탭."""
+
+    # 검색줄의 모드 스위치가 다른 API를 고르면 법령검색 탭에 알린다.
+    mode_requested = Signal(str)
 
     def __init__(
         self,
@@ -126,6 +132,20 @@ class AiLawSearchTab(QWidget):
         install_text_color_shortcuts(self)
         self.law_cache.changed.connect(self._refresh_snapshot_checks)
 
+    def idle_status_text(self) -> str:
+        """검색 전 하단 상태바에 띄우는 안내.
+
+        예전에는 화면 위쪽 배너로 띄우고 ✕로 닫을 수 있었는데, 한 번 닫으면
+        다시 뜨지 않아 이 화면이 무엇을 찾는지 알 길이 없었다. 다른 화면과
+        같이 하단 상태바로 옮겨 늘 보이게 한다.
+        """
+        if self.is_related:
+            return "키워드와 연관성이 높은 법령·행정규칙 조문을 추천합니다."
+        return (
+            "키워드가 직접 포함된 법령·행정규칙의 조문 또는 별표·서식을 "
+            "찾습니다. 키워드가 검색되는 모든 조문을 표시합니다."
+        )
+
     def _saved_font_size(self, key: str, default: float) -> float:
         try:
             value = float(
@@ -135,6 +155,20 @@ class AiLawSearchTab(QWidget):
             value = default
         return clamp_detail_font_size(value)
 
+    def use_shared_status(self, bar) -> None:
+        """창 아래 공용 상태줄을 이 화면의 상태 자리로 삼는다.
+
+        화면 코드는 계속 ``self.status_label``ㆍ``self.progress``에 쓰지만,
+        실제 표시는 공용 하단바가 맡는다. 이 화면이 앞에 나올 때만 그 문구가
+        올라가므로 뒤에서 끝난 검색이 보고 있는 화면을 덮어쓰지 않는다.
+        """
+        line = bar.line_for(self)
+        line.setText(self.status_label.text())
+        self.status_row.hide()
+        self.status_label = line
+        self.progress = line
+        self._progress_opacity = line
+
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
         # 법령검색 탭 안에 끼워지므로 바깥 12px를 또 두면 검색칸이
@@ -142,28 +176,29 @@ class AiLawSearchTab(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(12)
 
-        self._description_settings_key = (
-            "related_law_banner_dismissed"
-            if self.is_related
-            else "direct_search_banner_dismissed"
-        )
-        description_row = build_dismissible_banner(
-            "키워드와 연관성이 높은 법령·행정규칙 조문을 추천합니다."
-            if self.is_related
-            else "키워드가 직접 포함된 법령·행정규칙의 조문 또는 별표·서식을 찾습니다. "
-            "키워드가 검색되는 모든 조문을 표시합니다",
-            self.recent_search_manager.settings,
-            self._description_settings_key,
-        )
-        self.description_row = description_row
-        root.addWidget(description_row)
-
         search_card = QFrame()
         search_card.setObjectName("card")
         self.search_card = search_card
         search_layout = QHBoxLayout(search_card)
         search_layout.setContentsMargins(10, 12, 10, 12)
         search_layout.setSpacing(8)
+
+        # 연관검색ㆍ직접검색은 카테고리 바에서 캡슐 하나로 묶였다. 어느
+        # API를 쓰는지는 여기서 고르고, 화면 전환은 법령검색 탭이 맡는다.
+        self.mode_switch = SegmentedModeSwitch(
+            (
+                (KEYWORD_CATEGORY_LABELS[KEYWORD_RELATED_TARGET],
+                 KEYWORD_RELATED_TARGET),
+                (KEYWORD_CATEGORY_LABELS[KEYWORD_DIRECT_TARGET],
+                 KEYWORD_DIRECT_TARGET),
+            )
+        )
+        self.mode_switch.set_current_value(self.service)
+        self.mode_switch.changed.connect(self.mode_requested)
+        self.mode_switch.setToolTip(
+            "연관검색은 키워드와 연관성이 높은 조문을 추천하고, "
+            "직접검색은 키워드가 그대로 들어간 조문을 찾습니다."
+        )
 
         self.scope_combo = QComboBox()
         if self.is_related:
@@ -186,6 +221,7 @@ class AiLawSearchTab(QWidget):
         self.search_button.setFixedWidth(56)
         self.search_button.clicked.connect(self.start_search)
 
+        search_layout.addWidget(self.mode_switch, 0, Qt.AlignmentFlag.AlignVCenter)
         search_layout.addWidget(self.scope_combo)
         search_layout.addWidget(self.query_input, 1)
         search_layout.addWidget(self.search_button)
@@ -426,8 +462,13 @@ class AiLawSearchTab(QWidget):
         self._normal_splitter_sizes = [360, 1040]
         self.root_layout = root
 
-        status_layout = QHBoxLayout()
-        self.status_label = QLabel("키워드를 입력하고 검색 버튼을 누르세요.")
+        # 상태줄은 창 하나에 하나만 두는 것이 원칙이라, main_window가
+        # use_shared_status로 공용 하단바를 넘겨 준다. 이 화면만 따로 띄우는
+        # 경우(테스트 등)를 위해 자체 상태줄도 그대로 만들어 둔다.
+        self.status_row = QWidget()
+        status_layout = QHBoxLayout(self.status_row)
+        status_layout.setContentsMargins(0, 0, 0, 0)
+        self.status_label = QLabel(self.idle_status_text())
         self.status_label.setObjectName("mutedText")
         self.progress = QProgressBar()
         self.progress.setRange(0, 0)
@@ -442,7 +483,7 @@ class AiLawSearchTab(QWidget):
         status_layout.addWidget(self.status_label)
         status_layout.addStretch()
         status_layout.addWidget(self.progress)
-        root.addLayout(status_layout)
+        root.addWidget(self.status_row)
 
         self.reading_mode_shortcut = QShortcut(QKeySequence("F11"), self)
         self.reading_mode_shortcut.activated.connect(self._toggle_reading_mode)
@@ -605,14 +646,6 @@ class AiLawSearchTab(QWidget):
                 self._normal_window_margins = central_layout.getContentsMargins()
 
         self._reading_mode = expanded
-        self.description_row.setVisible(
-            not expanded
-            and not bool(
-                self.recent_search_manager.settings.value(
-                    self._description_settings_key, False, type=bool
-                )
-            )
-        )
         self.search_results_panel.setVisible(not expanded)
         self.status_label.setVisible(not expanded)
         self.progress.setVisible(

@@ -86,6 +86,15 @@ def _python_list_repr_items(text: str) -> list | None:
     return None
 
 
+# 법제처 본문의 개정 이력은 ``<개정 2009.7.16>``ㆍ``<신설 2016.1.19>``처럼
+# 꺾쇠로 온다. HTML 태그 제거에 함께 지워지지 않도록 이 표기만 골라낸다.
+# 안쪽에 꺾쇠가 없고 개정 관련 낱말이 든 것만 보므로 ``<p>``ㆍ``<img …>``
+# 같은 실제 태그는 걸리지 않는다.
+_AMENDMENT_NOTE_TAG_PATTERN = re.compile(
+    r"<[^<>]*(?:개정|신설|삭제|폐지|이동|제정)[^<>]*>"
+)
+
+
 def json_text(value: object) -> str:
     """JSON 필드의 content 래퍼와 검색 강조 태그를 일반 문자열로 정리."""
     if isinstance(value, list):
@@ -118,10 +127,22 @@ def json_text(value: object) -> str:
     )
     deleted_marker = "\ufff0ADMIN_RULE_DELETED\ufff1"
     text = re.sub(r"<\s*삭제\s*>", deleted_marker, text)
+    # ``<개정 2009.7.16, 2010.2.18>``처럼 꺾쇠로 적는 개정 이력은 HTML
+    # 태그가 아닌데도 아래 태그 제거에 통째로 지워졌다. 법제처 본문은 이
+    # 표기를 조ㆍ항 문장 끝에 두므로, 태그를 지우기 전에 빼돌렸다 되돌린다.
+    held_notes: list[str] = []
+
+    def hold_amendment_note(match: re.Match[str]) -> str:
+        held_notes.append(match.group(0))
+        return f"￰AMENDMENT_NOTE_{len(held_notes) - 1}￱"
+
+    text = _AMENDMENT_NOTE_TAG_PATTERN.sub(hold_amendment_note, text)
     text = re.sub(r"(?i)<br\s*/?>", "\n", text)
     text = re.sub(r"(?i)</(?:p|div|li|tr|h[1-6])>", "\n", text)
     text = re.sub(r"<[^>]+>", "", text)
     text = text.replace(deleted_marker, "<삭제>")
+    for index, note in enumerate(held_notes):
+        text = text.replace(f"￰AMENDMENT_NOTE_{index}￱", note)
     text = text.replace("　", "\n").replace("\r\n", "\n").replace("\r", "\n")
     lines = [re.sub(r"[ \t]+", " ", line).strip() for line in text.split("\n")]
     return "\n".join(line for line in lines if line).strip()

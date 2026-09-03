@@ -407,6 +407,37 @@ def law_reference_html_text(
     return "".join(parts)
 
 
+# 개정 이력 표기를 본문보다 한 단계 작고 연한 파란색으로 둔다. 본문
+# ``.content``가 14px이므로 13px가 한 단계 아래다. 인라인 px로 두면
+# ``scale_document_font_sizes``가 본문 글자 크기와 같은 비율로 함께 키운다.
+AMENDMENT_NOTE_STYLE = "font-size:13px; color:#6f9ec9;"
+
+# 본문 HTML은 이스케이프를 거쳐 ``<개정 …>``이 ``&lt;개정 …&gt;``으로 남는다.
+# 꺾쇠 표기는 안쪽에 개정 관련 낱말이 있으면 잡고, 대괄호 표기는 일반 인용
+# 대괄호까지 물들이지 않도록 여는 괄호 바로 뒤에 그 낱말이 오는 것만 잡는다.
+_HTML_AMENDMENT_ANGLE_PATTERN = re.compile(
+    r"&lt;(?:(?!&lt;|&gt;).)*?"
+    r"(?:개정|신설|삭제|폐지|이동|제정)"
+    r"(?:(?!&lt;|&gt;).)*?&gt;"
+)
+_HTML_AMENDMENT_BRACKET_PATTERN = re.compile(
+    r"\[(?:전문개정|본조신설|본조제목개정|제목개정|개정|신설|삭제|폐지|제정)"
+    r"(?:(?!\[|\]).)*?\]"
+)
+
+
+def style_amendment_notes(html: str) -> str:
+    """``<개정 2009. 7. 16.>``ㆍ``[전문개정 …]``에 작고 연한 파란색을 입힌다."""
+    if not html:
+        return html
+
+    def wrap(match: re.Match[str]) -> str:
+        return f'<span style="{AMENDMENT_NOTE_STYLE}">{match.group(0)}</span>'
+
+    html = _HTML_AMENDMENT_ANGLE_PATTERN.sub(wrap, html)
+    return _HTML_AMENDMENT_BRACKET_PATTERN.sub(wrap, html)
+
+
 def body_to_html(
     value: str,
     terms: tuple[str, ...] = (),
@@ -793,7 +824,7 @@ def body_to_html(
 
     flush_bullet()
     flush_paragraph()
-    return "".join(parts)
+    return style_amendment_notes("".join(parts))
 
 
 def law_headline_text(short_name: str, subtitle: str) -> str:

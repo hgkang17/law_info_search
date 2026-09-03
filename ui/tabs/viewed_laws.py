@@ -108,9 +108,6 @@ class ViewedLawsTab(QWidget):
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("저장된 내역 검색")
         self.search_input.setClearButtonEnabled(True)
-        self.open_button = QPushButton("선택 내역 열기")
-        self.open_button.setObjectName("primaryButton")
-        self.open_button.setEnabled(False)
         self.folder_button = QPushButton("저장 폴더 열기")
         self.folder_button.setObjectName("ghostButton")
         self.folder_button.setFixedWidth(176)
@@ -128,7 +125,6 @@ class ViewedLawsTab(QWidget):
             "저장 본문, 즐겨찾기, 검색목록 및 인용 조문 캐시를 모두 삭제합니다."
         )
         controls.addWidget(self.search_input, 1)
-        controls.addWidget(self.open_button)
         controls.addWidget(self.folder_button)
         controls.addWidget(self.clear_cache_button)
         root.addLayout(controls)
@@ -140,9 +136,6 @@ class ViewedLawsTab(QWidget):
             count_row.setContentsMargins(0, 0, 0, 0)
             count_row.addWidget(self.count_label)
             count_row.addStretch()
-            selector_label = QLabel("표시할 칸")
-            selector_label.setObjectName("favoriteCategorySelectorLabel")
-            count_row.addWidget(selector_label)
             visible_categories = self._load_visible_favorite_categories()
             for category, label in self.FAVORITE_CATEGORIES:
                 checkbox = QCheckBox(label.replace("\n", " "))
@@ -334,14 +327,21 @@ class ViewedLawsTab(QWidget):
             )
             root.addWidget(self.table, 1)
 
+        # 상태줄 실물은 창에 하나만 둔다. main_window가 use_shared_status로
+        # 공용 하단바를 넘겨 주면 이 줄은 숨는다.
+        self.status_row = QWidget()
+        status_layout = QHBoxLayout(self.status_row)
+        status_layout.setContentsMargins(0, 0, 0, 0)
         self.status_label = QLabel(
             "각 검색 화면에서 저장한 본문이 이 목록에 표시됩니다."
         )
         self.status_label.setObjectName("statusLabel")
-        root.addWidget(self.status_label)
+        status_layout.addWidget(self.status_label)
+        status_layout.addStretch()
+        root.addWidget(self.status_row)
+
 
         self.search_input.textChanged.connect(self._populate)
-        self.open_button.clicked.connect(self.open_selected)
         self.folder_button.clicked.connect(self.open_folder)
         self.clear_cache_button.clicked.connect(self._confirm_clear_all_caches)
         if self.table is not None:
@@ -352,6 +352,12 @@ class ViewedLawsTab(QWidget):
         self.law_cache.changed.connect(self.refresh)
         self.refresh()
 
+    def use_shared_status(self, bar) -> None:
+        """창 아래 공용 상태줄을 이 화면의 상태 자리로 삼는다."""
+        line = bar.line_for(self)
+        line.setText(self.status_label.text())
+        self.status_row.hide()
+        self.status_label = line
     def _load_visible_favorite_categories(self) -> set[str]:
         """지난에 선택한 즐겨찾기 카드. 저장값이 없으면 모두 보인다."""
         all_categories = {
@@ -927,12 +933,7 @@ class ViewedLawsTab(QWidget):
                 other_tree.clearSelection()
                 other_tree.setCurrentItem(None)
                 other_tree.blockSignals(False)
-        tree = self.favorite_tree
-        selected_items = tree.selectedItems() if tree is not None else []
-        item = selected_items[0] if len(selected_items) == 1 else None
-        kind = item.data(0, self.FAVORITE_KIND_ROLE) if item is not None else ""
         searching = bool(self.search_input.text().strip())
-        self.open_button.setEnabled(kind == "record")
         for button in self.favorite_add_buttons.values():
             button.setEnabled(not searching)
         # 즐겨찾기는 폴더를 열고 정리하는 화면이라 한 번 누르는 것만으로
@@ -1305,7 +1306,6 @@ class ViewedLawsTab(QWidget):
         if self.favorites_only:
             self._populate_favorite_tree(visible_records)
             self.count_label.setText(f"즐겨찾기 {len(visible_records)}건")
-            self.open_button.setEnabled(False)
             self._favorite_tree_selection_changed()
             return
 
@@ -1336,7 +1336,6 @@ class ViewedLawsTab(QWidget):
             self.table.setItem(row_index, 2, effective_item)
             self.table.setItem(row_index, 3, saved_item)
         self.count_label.setText(f"저장 내역 {len(visible_records)}건")
-        self.open_button.setEnabled(False)
         if visible_records:
             self.table.selectRow(0)
     def _restore_favorite_widths(self) -> None:
@@ -1393,9 +1392,6 @@ class ViewedLawsTab(QWidget):
             )
 
     def _selection_changed(self) -> None:
-        self.open_button.setEnabled(
-            self.table is not None and self.table.currentRow() >= 0
-        )
         # 저장 본문은 로컬 파일이라 즉시 열 수 있다. 안내 문구를 보여 주고
         # 더블클릭을 기다리는 대신, 고르는 즉시 본문을 띄운다.
         if not self._populating:

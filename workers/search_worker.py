@@ -7,6 +7,8 @@ from PySide6.QtWidgets import QWidget
 from models.law import (
     AI_RELATED_AGENCY,
     AI_SEARCH_AGENCY,
+    ANNEX_ALL_TARGET,
+    ANNEX_TARGETS,
     RESOURCE_ALL_TARGET,
     RESOURCE_CATEGORIES,
 )
@@ -362,6 +364,30 @@ class ResourceApiWorker(QThread):
                         "integrated_results": results,
                         "keyword_roots": keyword_roots,
                         "errors": errors,
+                    }
+                elif self.target == ANNEX_ALL_TARGET:
+                    # 별표ㆍ서식 전체는 법령ㆍ행정규칙ㆍ자치법규 세 API를
+                    # 차례로 부르고 합친다. 한쪽이 실패해도 나머지는 낸다.
+                    annex_results: dict[str, object] = {}
+                    annex_errors: list[str] = []
+                    for target in ANNEX_TARGETS:
+                        try:
+                            annex_results[target] = search_resource(
+                                self.oc,
+                                target,
+                                self.query,
+                                search_scope=self.search_scope,
+                                display=100,
+                            )
+                        except Exception as exc:
+                            annex_errors.append(
+                                f"{RESOURCE_CATEGORIES[target]['label']}: {exc}"
+                            )
+                    if not annex_results:
+                        raise RuntimeError("\n".join(annex_errors))
+                    result = {
+                        "annex_results": annex_results,
+                        "errors": annex_errors,
                     }
                 else:
                     result = search_resource(

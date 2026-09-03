@@ -127,6 +127,20 @@ class LawSearchTab(QWidget):
             value = default
         return clamp_detail_font_size(value)
 
+    def use_shared_status(self, bar) -> None:
+        """창 아래 공용 상태줄을 이 화면의 상태 자리로 삼는다.
+
+        화면 코드는 계속 ``self.status_label``ㆍ``self.progress``에 쓰지만,
+        실제 표시는 공용 하단바가 맡는다. 이 화면이 앞에 나올 때만 그 문구가
+        올라가므로 뒤에서 끝난 검색이 보고 있는 화면을 덮어쓰지 않는다.
+        """
+        line = bar.line_for(self)
+        line.setText(self.status_label.text())
+        self.status_row.hide()
+        self.status_label = line
+        self.progress = line
+        self._progress_opacity = line
+
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
@@ -393,7 +407,12 @@ class LawSearchTab(QWidget):
         self._normal_splitter_sizes = [360, 1040]
         self.root_layout = root
 
-        status_layout = QHBoxLayout()
+        # 상태줄은 창 하나에 하나만 두는 것이 원칙이라, main_window가
+        # use_shared_status로 공용 하단바를 넘겨 준다. 이 화면만 따로 띄우는
+        # 경우(테스트 등)를 위해 자체 상태줄도 그대로 만들어 둔다.
+        self.status_row = QWidget()
+        status_layout = QHBoxLayout(self.status_row)
+        status_layout.setContentsMargins(0, 0, 0, 0)
         self.status_label = QLabel("검색어를 입력하고 검색 버튼을 누르세요.")
         self.status_label.setObjectName("mutedText")
         self.progress = QProgressBar()
@@ -409,7 +428,7 @@ class LawSearchTab(QWidget):
         status_layout.addWidget(self.status_label)
         status_layout.addStretch()
         status_layout.addWidget(self.progress)
-        root.addLayout(status_layout)
+        root.addWidget(self.status_row)
 
         self.reading_mode_shortcut = QShortcut(QKeySequence("F11"), self)
         self.reading_mode_shortcut.activated.connect(self._toggle_reading_mode)

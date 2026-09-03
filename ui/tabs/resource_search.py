@@ -49,11 +49,17 @@ from ui.dialogs import (
     PdfPreviewPopup,
 )
 from models.law import (
+    ANNEX_ALL_TARGET,
+    ANNEX_TARGET_ITEMS,
+    ANNEX_TARGETS,
+    KEYWORD_CATEGORY_LABEL,
     KEYWORD_CATEGORY_LABELS,
     KEYWORD_DIRECT_TARGET,
     KEYWORD_RELATED_TARGET,
     RESOURCE_ALL_TARGET,
     RESOURCE_CATEGORIES,
+    SEARCH_SCOPE_ITEMS,
+    SEARCH_SCOPE_PLACEHOLDERS,
 )
 from storage.cache import LawDocumentCache, SearchResultCache
 from storage.recent import RecentSearchManager
@@ -368,9 +374,18 @@ class ResourceSearchTab(QWidget):
     def category(self) -> dict:
         if self.category_target == RESOURCE_ALL_TARGET:
             return {"label": "통합검색"}
+        if self.category_target == ANNEX_ALL_TARGET:
+            # 세 API를 함께 부르는 자리라 표 구성은 법령 별표와 같게 두고
+            # 이름만 전체로 보인다.
+            return dict(RESOURCE_CATEGORIES["licbyl"], label="별표·서식 전체")
         if self.category_target in KEYWORD_CATEGORY_LABELS:
             return {"label": KEYWORD_CATEGORY_LABELS[self.category_target]}
         return RESOURCE_CATEGORIES[self.category_target]
+
+    @property
+    def is_annex_category(self) -> bool:
+        """별표ㆍ서식 캡슐이 맡는 분류인지(전체 조회 포함)."""
+        return self.category_target in ANNEX_TARGETS + (ANNEX_ALL_TARGET,)
 
     @property
     def is_keyword_category(self) -> bool:
@@ -428,13 +443,52 @@ class ResourceSearchTab(QWidget):
         self.search_card.setVisible(not self.is_keyword_category)
 
     def select_category(self, target: str) -> bool:
-        """대상 이름으로 카테고리를 고른다. 없으면 그대로 두고 False."""
+        """대상 이름으로 카테고리를 고른다. 없으면 그대로 두고 False.
+
+        별표ㆍ서식과 지능형 법령검색은 캡슐 하나가 여러 대상을 맡으므로,
+        그 캡슐의 tabData를 요청받은 대상으로 바꾼 뒤 고른다.
+        """
         target = str(target or "").strip()
+        shared_index = -1
+        if target in ANNEX_TARGETS + (ANNEX_ALL_TARGET,):
+            shared_index = self._annex_tab_index
+        elif target in KEYWORD_CATEGORY_LABELS:
+            shared_index = self._keyword_tab_index
+        if shared_index >= 0:
+            already = self.category_tabs.currentIndex() == shared_index
+            self.category_tabs.setTabData(shared_index, target)
+            self._sync_shared_category_controls()
+            if already:
+                # 같은 캡슐 안에서 대상만 바뀌면 현재 index가 그대로라
+                # currentChanged가 오지 않는다. 화면 갱신을 직접 부른다.
+                self._category_changed()
+            else:
+                self.category_tabs.setCurrentIndex(shared_index)
+            return True
         for index in range(self.category_tabs.count()):
             if self.category_tabs.tabData(index) == target:
                 self.category_tabs.setCurrentIndex(index)
                 return True
         return False
+
+    def _sync_shared_category_controls(self) -> None:
+        """캡슐 하나가 여러 대상을 맡는 화면의 선택 위젯을 지금 대상에 맞춘다."""
+        target = self.category_tabs.tabData(self._annex_tab_index)
+        combo = self.annex_target
+        index = combo.findData(target)
+        if index >= 0 and index != combo.currentIndex():
+            combo.blockSignals(True)
+            combo.setCurrentIndex(index)
+            combo.blockSignals(False)
+
+    def _annex_target_changed(self, *_args: object) -> None:
+        """별표ㆍ서식 대상 콤보에서 고른 API로 카테고리를 갈아 끼운다."""
+        target = str(self.annex_target.currentData() or ANNEX_TARGETS[0])
+        if self.category_tabs.tabData(self._annex_tab_index) == target:
+            return
+        self.category_tabs.setTabData(self._annex_tab_index, target)
+        if self.category_tabs.currentIndex() == self._annex_tab_index:
+            self._category_changed()
 
     def search_resource_name(self, target: str, name: str) -> None:
         """Select a resource category and search its list by title."""
@@ -459,6 +513,22 @@ class ResourceSearchTab(QWidget):
             value = default
         return clamp_detail_font_size(value)
 
+    def use_shared_status(self, bar) -> None:
+        """창 아래 공용 상태줄을 이 화면의 상태 자리로 삼는다.
+
+        화면 코드는 계속 ``self.status_label``ㆍ``self.progress``에 쓰지만,
+        실제 표시는 공용 하단바가 맡는다. 이 화면이 앞에 나올 때만 그 문구가
+        올라가므로 뒤에서 끝난 검색이 보고 있는 화면을 덮어쓰지 않는다.
+        """
+        # 이 탭은 늘 화면에 있고 안쪽 스택만 바뀐다. 목록 화면이 다시
+        # 앞으로 나오는 것을 알아야 하므로 그 페이지를 지켜본다.
+        line = bar.line_for(self.resource_body)
+        line.setText(self.status_label.text())
+        self.status_row.hide()
+        self.status_label = line
+        self.progress = line
+        self._progress_opacity = line
+
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
@@ -466,29 +536,31 @@ class ResourceSearchTab(QWidget):
 
         self.root_layout = root
 
+        # 카테고리 바는 캡슐 하나에 분류 하나만 둔다. 지능형 법령검색과
+        # 별표ㆍ서식처럼 같은 성격의 API가 여럿인 분류는 캡슐을 나누지 않고
+        # 화면 안의 스위치ㆍ콤보로 고르게 한다. 어떤 API를 고른 상태인지는
+        # 그 캡슐의 tabData가 그대로 들고 있어서, 저장내역 복원처럼 대상
+        # 이름으로 화면을 되살리는 기존 흐름이 그대로 이어진다.
         self.category_tabs = PairedCategoryBar()
         self.category_tabs.setObjectName("resourceSubTabs")
         integrated_index = self.category_tabs.addTab("통합검색")
         self.category_tabs.setTabData(integrated_index, RESOURCE_ALL_TARGET)
-        default_category_index = integrated_index
-        related_index, direct_index = self.category_tabs.add_pair(
-            "연관검색", "직접검색"
+        self._keyword_tab_index = self.category_tabs.addTab(
+            KEYWORD_CATEGORY_LABEL
         )
-        self.category_tabs.setTabData(related_index, KEYWORD_RELATED_TARGET)
-        self.category_tabs.setTabData(direct_index, KEYWORD_DIRECT_TARGET)
-        category_items = list(RESOURCE_CATEGORIES.items())
-        for pair_start in range(0, len(category_items), 2):
-            (first_target, first_config), (second_target, second_config) = (
-                category_items[pair_start : pair_start + 2]
+        self.category_tabs.setTabData(
+            self._keyword_tab_index, KEYWORD_RELATED_TARGET
+        )
+        default_category_index = integrated_index
+        for target in ("law", "admrul", "ordin"):
+            index = self.category_tabs.addTab(
+                str(RESOURCE_CATEGORIES[target]["label"])
             )
-            first_index, second_index = self.category_tabs.add_pair(
-                str(first_config["label"]),
-                str(second_config.get("tab_label") or second_config["label"]),
-            )
-            self.category_tabs.setTabData(first_index, first_target)
-            self.category_tabs.setTabData(second_index, second_target)
-            if first_target == "law":
-                default_category_index = first_index
+            self.category_tabs.setTabData(index, target)
+            if target == "law":
+                default_category_index = index
+        self._annex_tab_index = self.category_tabs.addTab("별표·서식")
+        self.category_tabs.setTabData(self._annex_tab_index, ANNEX_TARGETS[0])
         self.category_tabs.add_stretch()
         self.category_tabs.setCurrentIndex(default_category_index)
         root.addWidget(self.category_tabs)
@@ -505,27 +577,43 @@ class ResourceSearchTab(QWidget):
         self.query_input.setClearButtonEnabled(True)
         self.query_input.returnPressed.connect(self.start_search)
 
-        self.annex_search_scope = QComboBox()
-        self.annex_search_scope.setObjectName("resourceSearchScope")
-        self.annex_search_scope.addItem("별표·서식명", 1)
-        self.annex_search_scope.addItem("해당 법령명", 2)
-        self.annex_search_scope.addItem("별표 본문", 3)
-        self.annex_search_scope.setCurrentIndex(0)
-        self.annex_search_scope.setFixedWidth(86)
-        self.annex_search_scope.setToolTip(
-            "법령 별표·서식 API 검색범위(search=1/2/3)를 선택합니다."
+        # 별표ㆍ서식은 캡슐 하나로 묶여 있으므로 어느 API를 부를지 여기서
+        # 고른다. 고른 값은 카테고리 바의 tabData로 그대로 옮겨 담는다.
+        self.annex_target = QComboBox()
+        self.annex_target.setObjectName("resourceAnnexTarget")
+        self.annex_target.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToContents
         )
-        self.annex_search_scope.currentIndexChanged.connect(
-            self._annex_search_scope_changed
+        self.annex_target.setMinimumWidth(78)
+        self.annex_target.setToolTip(
+            "별표·서식을 어느 자료에서 찾을지 고릅니다. 전체는 법령·행정규칙·"
+            "자치법규를 한 번에 조회합니다."
         )
-        self.annex_search_scope.hide()
+        for label, value in ANNEX_TARGET_ITEMS:
+            self.annex_target.addItem(label, value)
+        self.annex_target.currentIndexChanged.connect(
+            self._annex_target_changed
+        )
+        self.annex_target.hide()
+
+        self.search_scope = QComboBox()
+        self.search_scope.setObjectName("resourceSearchScope")
+        self.search_scope.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToContents
+        )
+        self.search_scope.setMinimumWidth(86)
+        self.search_scope.currentIndexChanged.connect(
+            self._search_scope_changed
+        )
+        self._sync_search_scope_items()
 
         self.search_button = QPushButton("검색")
         self.search_button.setObjectName("primaryButton")
         self.search_button.setFixedWidth(56)
         self.search_button.clicked.connect(self.start_search)
 
-        search_layout.addWidget(self.annex_search_scope)
+        search_layout.addWidget(self.annex_target)
+        search_layout.addWidget(self.search_scope)
         search_layout.addWidget(self.query_input, 1)
         search_layout.addWidget(self.search_button)
         self.recent_search_bar = RecentSearchBar(
@@ -946,7 +1034,12 @@ class ResourceSearchTab(QWidget):
         root.addWidget(self.content_stack, 1)
         body_layout.addWidget(splitter, 1)
 
-        status_layout = QHBoxLayout()
+        # 상태줄은 창 하나에 하나만 두는 것이 원칙이라, main_window가
+        # use_shared_status로 공용 하단바를 넘겨 준다. 이 화면만 따로 띄우는
+        # 경우(테스트 등)를 위해 자체 상태줄도 그대로 만들어 둔다.
+        self.status_row = QWidget()
+        status_layout = QHBoxLayout(self.status_row)
+        status_layout.setContentsMargins(0, 0, 0, 0)
         self.status_label = QLabel("검색 유형과 키워드를 선택해 주세요.")
         self.status_label.setObjectName("mutedText")
         self.progress = QProgressBar()
@@ -962,7 +1055,7 @@ class ResourceSearchTab(QWidget):
         status_layout.addWidget(self.status_label)
         status_layout.addStretch()
         status_layout.addWidget(self.progress)
-        body_layout.addLayout(status_layout)
+        body_layout.addWidget(self.status_row)
         self.category_tabs.currentChanged.connect(self._category_changed)
         self._reading_mode = False
         self._normal_splitter_sizes = [2000, 0]
@@ -5955,16 +6048,9 @@ class ResourceSearchTab(QWidget):
                 f"{self.category['label']} 화면으로 바꿨습니다."
             )
             return
-        is_annex_category = self.category_target in ("licbyl", "admbyl", "ordinbyl")
-        self.annex_search_scope.setVisible(is_annex_category)
-        if is_annex_category:
-            related_label = {
-                "licbyl": "해당 법령명",
-                "admbyl": "해당 행정규칙명",
-                "ordinbyl": "해당 자치법규명",
-            }[self.category_target]
-            self.annex_search_scope.setItemText(1, related_label)
-        self._annex_search_scope_changed()
+        self.annex_target.setVisible(self.is_annex_category)
+        self._sync_shared_category_controls()
+        self._sync_search_scope_items()
         self._prepare_preview_for_outer_search()
         self.result_rows.clear()
         self.result_table.setRowCount(0)
@@ -5973,7 +6059,11 @@ class ResourceSearchTab(QWidget):
         self.copy_button.setEnabled(False)
         self.detail_button.setEnabled(False)
         is_integrated = self.category_target == RESOURCE_ALL_TARGET
-        self.result_table.setColumnHidden(1, not is_integrated)
+        # 여러 자료가 섞여 나오는 화면에서만 '구분' 열을 보인다. 별표·서식
+        # 전체검색도 법령·행정규칙·자치법규가 함께 오므로 같이 보여 준다.
+        self.result_table.setColumnHidden(
+            1, not (is_integrated or self.category_target == ANNEX_ALL_TARGET)
+        )
         self.detail_button.setText("본문\n조회")
         if is_integrated:
             self.detail_button.setToolTip("선택한 항목을 엽니다.")
@@ -5989,22 +6079,41 @@ class ResourceSearchTab(QWidget):
             f"{self.category['label']} 검색 유형을 선택했습니다."
         )
 
-    def _annex_search_scope_changed(self, *_args: object) -> None:
-        if self.category_target not in ("licbyl", "admbyl", "ordinbyl"):
-            self.query_input.setPlaceholderText("검색할 키워드를 입력하세요")
-            return
-        related_name = {
-            "licbyl": "법령명",
-            "admbyl": "행정규칙명",
-            "ordinbyl": "자치법규명",
-        }[self.category_target]
-        scope = int(self.annex_search_scope.currentData() or 1)
-        placeholders = {
-            1: "검색할 별표·서식명을 입력하세요",
-            2: f"별표·서식을 찾을 {related_name}을 입력하세요",
-            3: "별표 본문에서 찾을 단어를 입력하세요",
-        }
-        self.query_input.setPlaceholderText(placeholders.get(scope, placeholders[1]))
+    def _sync_search_scope_items(self) -> None:
+        """지금 카테고리가 지원하는 검색범위로 콤보 항목을 갈아 끼운다.
+
+        법령ㆍ행정규칙ㆍ자치법규 목록 API는 ``search=1``이 이름, ``2``가
+        본문검색이다. 별표ㆍ서식은 여기에 ``2``(해당 법령명)와 ``3``(별표
+        본문)이 따로 있어 항목 구성이 다르다. 통합검색은 여러 대상을 한꺼번에
+        부르는데 대상마다 ``search=2``의 뜻이 달라서 범위를 고르게 두지 않는다.
+        """
+        items = SEARCH_SCOPE_ITEMS.get(self.category_target, ())
+        combo = self.search_scope
+        previous = combo.currentData() if combo.count() else None
+        combo.blockSignals(True)
+        combo.clear()
+        for label, value in items:
+            combo.addItem(label, value)
+        if items:
+            index = combo.findData(previous)
+            combo.setCurrentIndex(index if index >= 0 else 0)
+        combo.blockSignals(False)
+        combo.setVisible(bool(items))
+        self._search_scope_changed()
+
+    def current_search_scope(self) -> int:
+        """지금 고른 검색범위(API ``search`` 값). 못 고르는 화면은 1."""
+        if not self.search_scope.count():
+            return 1
+        return int(self.search_scope.currentData() or 1)
+
+    def _search_scope_changed(self, *_args: object) -> None:
+        placeholders = SEARCH_SCOPE_PLACEHOLDERS.get(self.category_target, {})
+        self.query_input.setPlaceholderText(
+            placeholders.get(
+                self.current_search_scope(), "검색할 키워드를 입력하세요"
+            )
+        )
 
     def _prepare_preview_for_outer_search(self) -> None:
         """본문 탭 상태를 보존하고 바깥 검색용 미리보기를 초기화."""
@@ -6050,11 +6159,7 @@ class ResourceSearchTab(QWidget):
         self.current_detail_text = ""
         self.copy_button.setEnabled(False)
         self.pending_row = None
-        search_scope = (
-            int(self.annex_search_scope.currentData() or 1)
-            if self.category_target in ("licbyl", "admbyl", "ordinbyl")
-            else 1
-        )
+        search_scope = self.current_search_scope()
         if not force_api:
             cached = self.search_result_cache.load(
                 self.category_target, query, search_scope
@@ -6096,7 +6201,7 @@ class ResourceSearchTab(QWidget):
         self.search_refresh_button.setEnabled(False)
         self.detail_button.setEnabled(False)
         self.query_input.setEnabled(False)
-        self.annex_search_scope.setEnabled(False)
+        self.search_scope.setEnabled(False)
         self.category_tabs.setEnabled(False)
         self.detail_search.setEnabled(False)
         self._progress_opacity.setOpacity(1.0)
@@ -6111,7 +6216,7 @@ class ResourceSearchTab(QWidget):
         self.search_button.setEnabled(True)
         self.search_refresh_button.setEnabled(True)
         self.query_input.setEnabled(True)
-        self.annex_search_scope.setEnabled(True)
+        self.search_scope.setEnabled(True)
         self.category_tabs.setEnabled(True)
         self.detail_search.setEnabled(True)
         self._progress_opacity.setOpacity(0.0)
@@ -6709,6 +6814,25 @@ class ResourceSearchTab(QWidget):
             except Exception as exc:
                 errors.append(f"연관검색ㆍ직접검색: {exc}")
             if not integrated_results and errors:
+                raise ValueError("\n".join(errors))
+        elif self.category_target == ANNEX_ALL_TARGET:
+            annex_results = payload.get("annex_results")
+            if not isinstance(annex_results, dict):
+                raise ValueError("별표·서식 전체검색 응답 형식이 올바르지 않습니다.")
+            errors.extend(str(error) for error in json_list(payload.get("errors")))
+            for target in ANNEX_TARGETS:
+                target_payload = annex_results.get(target)
+                if not isinstance(target_payload, dict):
+                    continue
+                try:
+                    target_rows, target_total = self._parse_resource_rows(
+                        target_payload, target
+                    )
+                    rows.extend(target_rows)
+                    total_count += target_total
+                except Exception as exc:
+                    errors.append(f"{RESOURCE_CATEGORIES[target]['label']}: {exc}")
+            if not rows and errors:
                 raise ValueError("\n".join(errors))
         else:
             rows, total_count = self._parse_resource_rows(

@@ -37,12 +37,14 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QDoubleSpinBox,
     QFrame,
+    QGraphicsOpacityEffect,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QLayout,
     QLineEdit,
     QListWidget,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -625,6 +627,188 @@ class PairedCategoryBar(QWidget):
             return
         self._current_index = index
         self.currentChanged.emit(index)
+
+
+class StatusLine:
+    """화면 하나가 쓰는 상태 문구 자리. 실제 표시는 공용 하단바가 한다.
+
+    화면마다 상태줄을 따로 두면 창 아래에 그 줄과 별개로 프로그램 정보
+    단추 줄이 하나 더 생겨 여백이 두 배가 된다. 그래서 실물 상태줄은 창에
+    하나만 두고, 각 화면은 이 자리를 자기 것처럼 쓴다. 문구는 화면별로
+    보관하다가 그 화면이 앞에 나올 때 하단바에 올린다. 뒤에서 끝난 검색이
+    지금 보는 화면의 문구를 덮어쓰지 않는다.
+
+    화면 코드가 쓰던 QLabel API(setText/text/setToolTip/setVisible)를 그대로
+    받아 주므로 호출부는 손대지 않는다.
+    """
+
+    def __init__(self, bar: "SharedStatusBar") -> None:
+        self._bar = bar
+        self._text = ""
+        self._tooltip = ""
+        self._visible = True
+        self._opacity = 0.0
+
+    # --- QLabel 대체 ------------------------------------------------
+    def setText(self, text: str) -> None:
+        self._text = str(text)
+        self._bar.refresh(self)
+
+    def text(self) -> str:
+        return self._text
+
+    def setToolTip(self, text: str) -> None:
+        self._tooltip = str(text)
+        self._bar.refresh(self)
+
+    def toolTip(self) -> str:
+        return self._tooltip
+
+    def setVisible(self, visible: bool) -> None:
+        self._visible = bool(visible)
+        self._bar.refresh(self)
+
+    def isVisible(self) -> bool:
+        return self._visible
+
+    def isHidden(self) -> bool:
+        return not self._visible
+
+    def setObjectName(self, name: str) -> None:
+        """공용 하단바가 자기 이름을 쓰므로 받기만 한다."""
+
+    # --- 진행 표시 --------------------------------------------------
+    def setOpacity(self, opacity: float) -> None:
+        self._opacity = float(opacity)
+        self._bar.refresh(self)
+
+    def opacity(self) -> float:
+        return self._opacity
+
+
+class SharedStatusBar(QFrame):
+    """창 아래에 하나만 두는 상태줄. 오른쪽에 프로그램 정보 단추가 함께 선다."""
+
+    HEIGHT = 26
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setObjectName("sharedStatusBar")
+        self.setFixedHeight(self.HEIGHT)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+        self.label = QLabel("")
+        self.label.setObjectName("mutedText")
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 0)
+        self.progress.setFixedSize(120, 8)
+        self.progress.setTextVisible(False)
+        # 껐다 켜면 상태줄 폭이 바뀌어 그 위 본문까지 흔들린다. 자리는 늘
+        # 차지하되 투명도만 조절한다.
+        self._opacity = QGraphicsOpacityEffect(self.progress)
+        self._opacity.setOpacity(0.0)
+        self.progress.setGraphicsEffect(self._opacity)
+        layout.addWidget(self.label, 1)
+        layout.addWidget(self.progress)
+        self._trailing = QHBoxLayout()
+        self._trailing.setContentsMargins(0, 0, 0, 0)
+        self._trailing.setSpacing(10)
+        layout.addLayout(self._trailing)
+        self._active: StatusLine | None = None
+        self._owners: dict[QWidget, StatusLine] = {}
+
+    def add_trailing_widget(self, widget: QWidget) -> None:
+        """상태 문구와 같은 줄, 오른쪽 끝에 세울 위젯(업데이트ㆍ정보 단추)."""
+        self._trailing.addWidget(widget)
+
+    def line_for(self, owner: QWidget) -> StatusLine:
+        """화면 하나가 쓸 자리를 내주고, 그 화면이 보일 때 앞으로 올린다."""
+        line = StatusLine(self)
+        owner.installEventFilter(self)
+        self._owners[owner] = line
+        if self._active is None:
+            self.set_active(line)
+        return line
+
+    def set_active(self, line: StatusLine) -> None:
+        self._active = line
+        self.refresh(line)
+
+    def refresh(self, line: StatusLine) -> None:
+        """지금 앞에 나온 화면의 문구만 실제 상태줄에 옮긴다."""
+        if line is not self._active:
+            return
+        self.label.setText(line.text())
+        self.label.setToolTip(line.toolTip())
+        self.label.setVisible(line.isVisible())
+        self.progress.setVisible(line.isVisible())
+        self._opacity.setOpacity(line.opacity())
+
+    def eventFilter(self, watched, event) -> bool:
+        if event.type() == QEvent.Type.Show:
+            line = self._owners.get(watched)
+            if line is not None:
+                self.set_active(line)
+        return super().eventFilter(watched, event)
+
+
+class SegmentedModeSwitch(QFrame):
+    """검색줄 안에서 모드를 고르는 작은 캡슐형 스위치.
+
+    카테고리 바의 짝 캡슐과 같은 모양이되, 검색어 칸ㆍ콤보와 한 줄에 서도록
+    높이를 낮춘 것이다. 고른 값은 ``changed``로 알린다.
+    """
+
+    changed = Signal(str)
+
+    # 검색줄의 콤보ㆍ입력칸과 같은 높이. 버튼 자체 높이는 스타일시트가
+    # 정한다. 파이썬에서 setFixedHeight로 잡으면 스타일시트의 여백 규칙과
+    # 부딪혀 버튼이 캡슐 밖으로 밀려 나온다.
+    HEIGHT = 40
+
+    def __init__(self, items: tuple[tuple[str, str], ...], parent=None) -> None:
+        super().__init__(parent)
+        self.setObjectName("modeSwitchFrame")
+        self.setFixedHeight(self.HEIGHT)
+        self.setSizePolicy(
+            QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed
+        )
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(3, 3, 3, 3)
+        layout.setSpacing(2)
+        self._values: list[str] = []
+        self._buttons: list[QPushButton] = []
+        self._group = QButtonGroup(self)
+        self._group.setExclusive(True)
+        for label, value in items:
+            button = QPushButton(label, self)
+            button.setObjectName("modeSwitchButton")
+            button.setCheckable(True)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            self._group.addButton(button, len(self._buttons))
+            self._values.append(value)
+            self._buttons.append(button)
+            layout.addWidget(button)
+        if self._buttons:
+            self._buttons[0].setChecked(True)
+        self._group.idClicked.connect(self._clicked)
+
+    def _clicked(self, index: int) -> None:
+        if 0 <= index < len(self._values):
+            self.changed.emit(self._values[index])
+
+    def current_value(self) -> str:
+        for index, button in enumerate(self._buttons):
+            if button.isChecked():
+                return self._values[index]
+        return ""
+
+    def set_current_value(self, value: str) -> None:
+        """신호를 내지 않고 표시 상태만 맞춘다."""
+        if value not in self._values:
+            return
+        self._buttons[self._values.index(value)].setChecked(True)
 
 
 class GroupedNavigationList(QListWidget):
@@ -2097,15 +2281,18 @@ class ReferenceHistoryChip(QFrame):
 
 
 class ReferenceHistoryBar(QScrollArea):
-    """조회한 조문·3단비교 기록을 여러 줄로 보여 주는 하단 바.
+    """조회한 조문·3단비교 기록을 한 줄로 보여 주는 하단 바.
 
-    QTabBar와 달리 줄바꿈이 되므로 법령명을 줄이지 않아도 되고,
-    높이를 고정해 두어 항목이 늘어도 본문 크기가 흔들리지 않는다.
+    상단 ``열린 본문`` 탭과 같은 조작감으로 맞춰 한 줄만 쓴다. 항목이
+    넘치면 줄을 늘리는 대신 휠로 좌우로 밀어 본다. 높이가 늘 같아
+    항목이 늘어도 본문 크기가 흔들리지 않는다.
     """
 
     ROW_HEIGHT = 24
     ROW_SPACING = 4
-    VISIBLE_ROWS = 2
+    CHIP_HEIGHT = 30
+    # 휠 한 칸(120)에 옮길 거리. 칩 하나가 대략 이 정도 폭이다.
+    WHEEL_STEP = 60
 
     tabBarClicked = Signal(int)
     tabCloseRequested = Signal(int)
@@ -2115,25 +2302,31 @@ class ReferenceHistoryBar(QScrollArea):
         self.setObjectName("referenceHistoryBar")
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
+        # 스크롤바를 띄우면 그만큼 칩이 가려진다. 상단 탭처럼 막대 없이
+        # 휠로만 옮긴다.
         self.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
         self.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
         container = QWidget()
         container.setObjectName("referenceHistoryContent")
-        self._flow = FlowLayout(container, margin=2, spacing=self.ROW_SPACING)
+        self._row = QHBoxLayout(container)
+        self._row.setContentsMargins(2, 2, 2, 2)
+        self._row.setSpacing(self.ROW_SPACING)
+        # 칩이 몇 개 없을 때 남는 자리를 칩이 나눠 갖지 않도록 끝을 민다.
+        self._row.addStretch(1)
         self.setWidget(container)
         self._container = container
         self._chips: list[ReferenceHistoryChip] = []
         self._data: list[str] = []
         self._current_index = -1
         self._dragging_chip: ReferenceHistoryChip | None = None
-        self.setFixedHeight(
-            self.VISIBLE_ROWS * self.ROW_HEIGHT
-            + (self.VISIBLE_ROWS - 1) * self.ROW_SPACING
-            + 8
+        self.setFixedHeight(self.CHIP_HEIGHT + 8)
+        self.setToolTip(
+            "클릭하면 그 조문으로 이동하고, 끌어서 순서를 바꿀 수 있습니다. "
+            "항목이 많으면 휠로 좌우로 넘깁니다."
         )
 
     # --- QTabBar와 같은 이름의 조작부 -------------------------------
@@ -2148,7 +2341,8 @@ class ReferenceHistoryBar(QScrollArea):
         chip.drag_finished.connect(self._chip_drag_finished)
         self._chips.append(chip)
         self._data.append("")
-        self._flow.addWidget(chip)
+        # 마지막 자리(끝을 미는 여백) 앞에 넣는다.
+        self._row.insertWidget(self._row.count() - 1, chip)
         chip.show()
         self._refresh_layout()
         return len(self._chips) - 1
@@ -2158,7 +2352,7 @@ class ReferenceHistoryBar(QScrollArea):
             return
         chip = self._chips.pop(index)
         self._data.pop(index)
-        self._flow.removeWidget(chip)
+        self._row.removeWidget(chip)
         chip.setParent(None)
         chip.deleteLater()
         if self._current_index >= len(self._chips):
@@ -2176,7 +2370,7 @@ class ReferenceHistoryBar(QScrollArea):
         self._data.insert(target, data)
         if self._current_index == source:
             self._current_index = target
-        self._rebuild_flow()
+        self._rebuild_row()
 
     def tabText(self, index: int) -> str:
         if 0 <= index < len(self._chips):
@@ -2203,6 +2397,10 @@ class ReferenceHistoryBar(QScrollArea):
         self._current_index = index
         for position, chip in enumerate(self._chips):
             chip.set_selected(position == index)
+        # 한 줄이라 고른 칩이 화면 밖에 있을 수 있다. 끄는 중에는 칩이
+        # 마우스를 따라가는 중이라 건드리지 않는다.
+        if self._dragging_chip is None:
+            self.ensure_visible(index)
 
     # --- 내부 동작 --------------------------------------------------
     def _chip_activated(self, chip: ReferenceHistoryChip) -> None:
@@ -2268,29 +2466,40 @@ class ReferenceHistoryBar(QScrollArea):
     def _chip_drag_finished(self, chip: ReferenceHistoryChip) -> None:
         chip.set_dragging(False)
         self._dragging_chip = None
-        self._rebuild_flow()
+        self._rebuild_row()
 
-    def _rebuild_flow(self) -> None:
-        while self._flow.count():
-            self._flow.takeAt(0)
+    def _rebuild_row(self) -> None:
+        while self._row.count():
+            self._row.takeAt(0)
         for chip in self._chips:
-            self._flow.addWidget(chip)
-        self._flow.activate()
+            self._row.addWidget(chip)
+        self._row.addStretch(1)
+        self._row.activate()
         self._refresh_layout()
         if self._dragging_chip is not None:
             self._dragging_chip.raise_()
 
     def _refresh_layout(self) -> None:
         self.setCurrentIndex(self._current_index)
-        self._update_content_height()
 
-    def _update_content_height(self) -> None:
-        width = max(1, self.viewport().width())
-        self._container.setMinimumHeight(self._flow.heightForWidth(width))
+    def wheelEvent(self, event) -> None:
+        """세로 휠도 좌우 이동으로 쓴다. 한 줄이라 위아래로 갈 곳이 없다."""
+        angle = event.angleDelta()
+        delta = angle.y() or angle.x()
+        if delta:
+            scroll_bar = self.horizontalScrollBar()
+            scroll_bar.setValue(
+                scroll_bar.value() - round(delta / 120 * self.WHEEL_STEP)
+            )
+            event.accept()
+            return
+        super().wheelEvent(event)
 
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        self._update_content_height()
+    def ensure_visible(self, index: int) -> None:
+        """고른 칩이 화면 밖에 있으면 보이는 자리까지 끌어온다."""
+        if 0 <= index < len(self._chips):
+            chip = self._chips[index]
+            self.ensureWidgetVisible(chip, self.ROW_SPACING, 0)
 
 
 class PopupDragBar(QWidget):

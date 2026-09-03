@@ -63,6 +63,7 @@ from ui.theme import (
 from ui.widgets import (
     CornerCloseTabBar,
     GroupedNavigationList,
+    SharedStatusBar,
     TabClickActivator,
     TabStripScrollArea,
     close_hovered_reference_popup,
@@ -545,6 +546,10 @@ class LawSearchWindow(QMainWindow):
         # 키워드검색 탭은 링크만 넘겨 같은 화면을 재사용한다.
         self.ai_search_tab.reference_tab = self.resource_tab
         self.ai_related_tab.reference_tab = self.resource_tab
+        # 검색줄의 모드 스위치는 카테고리 바의 캡슐 하나를 다른 API로
+        # 갈아 끼우는 것이므로, 전환은 법령검색 탭에 맡긴다.
+        for tab in (self.ai_search_tab, self.ai_related_tab):
+            tab.mode_requested.connect(self.resource_tab.select_category)
         self.ai_tabs.addWidget(self.ai_related_tab)
         self.ai_tabs.addWidget(self.ai_search_tab)
         ai_layout.addWidget(self.ai_tabs)
@@ -709,13 +714,24 @@ class LawSearchWindow(QMainWindow):
         )
         self.update_button.clicked.connect(self._manual_check_for_updates)
 
-        footer_layout = QHBoxLayout()
-        footer_layout.setContentsMargins(0, 0, 0, 0)
-        footer_layout.setSpacing(10)
-        footer_layout.addStretch(1)
-        footer_layout.addWidget(self.update_button)
-        footer_layout.addWidget(self.about_button)
-        root.addLayout(footer_layout)
+        # 화면마다 있던 상태줄을 창 아래 한 줄로 모으고, 그 오른쪽 끝에
+        # 오픈소스 고지 단추를 세운다. 예전에는 상태줄 아래에 단추 줄이
+        # 하나 더 있어서 본문 아래 여백이 두 줄로 남았다.
+        self.status_bar = SharedStatusBar()
+        self.status_bar.add_trailing_widget(self.update_button)
+        self.status_bar.add_trailing_widget(self.about_button)
+        root.addWidget(self.status_bar)
+        for tab in (
+            self.resource_tab,
+            self.ai_search_tab,
+            self.ai_related_tab,
+            self.central_tab,
+            self.expc_tab,
+            self.prec_tab,
+            self.favorites_tab,
+            self.viewed_laws_tab,
+        ):
+            tab.use_shared_status(self.status_bar)
 
         self._bind_open_document_tracking()
         self._refresh_open_documents()
@@ -1311,6 +1327,9 @@ class LawSearchWindow(QMainWindow):
         self.ai_tabs.setCurrentWidget(
             self.ai_related_tab if target == "ai_related" else self.ai_search_tab
         )
+        # 두 화면이 각자 스위치를 갖고 있으므로 고른 모드를 함께 맞춘다.
+        for tab in (self.ai_related_tab, self.ai_search_tab):
+            tab.mode_switch.set_current_value(target)
 
     def _show_keyword_category(self, target: str) -> None:
         """법령검색 탭으로 옮기고 연관검색ㆍ직접검색 카테고리를 고른다."""
@@ -2436,13 +2455,6 @@ class LawSearchWindow(QMainWindow):
             QWidget#favoriteCards {
                 background: transparent;
             }
-            QLabel#favoriteCategorySelectorLabel {
-                background: transparent;
-                color: #68788b;
-                padding: 0 3px 0 0;
-                font-size: 8.5pt;
-                font-weight: 600;
-            }
             QCheckBox#favoriteCategoryCheck {
                 background: transparent;
                 color: #40566b;
@@ -2698,6 +2710,36 @@ class LawSearchWindow(QMainWindow):
             }
             QPushButton#resourceSubTabSingle:pressed,
             QPushButton#resourceSubTabPaired:pressed {
+                background: #14689f;
+                color: white;
+            }
+            /* 검색줄 안의 모드 스위치. 카테고리 캡슐과 같은 모양이되
+               검색어 칸ㆍ콤보와 한 줄에 서도록 한 치수 작게 둔다. */
+            QFrame#modeSwitchFrame {
+                background: #e9eff5;
+                border: 1px solid #d4e0ea;
+                border-radius: 8px;
+            }
+            QPushButton#modeSwitchButton {
+                min-width: 62px;
+                min-height: 32px;
+                max-height: 32px;
+                background: transparent;
+                color: #40566b;
+                border: none;
+                border-radius: 6px;
+                padding: 0 10px;
+                font-weight: 600;
+            }
+            QPushButton#modeSwitchButton:checked {
+                background: #1976b8;
+                color: white;
+            }
+            QPushButton#modeSwitchButton:hover:!checked {
+                background: #dce7f0;
+                color: #155f94;
+            }
+            QPushButton#modeSwitchButton:pressed {
                 background: #14689f;
                 color: white;
             }
@@ -3649,12 +3691,14 @@ class LawSearchWindow(QMainWindow):
             QTabWidget#aiSubTabs QTabBar::tab:selected,
             QPushButton#resourceSubTabSingle:checked,
             QPushButton#resourceSubTabPaired:checked,
+            QPushButton#modeSwitchButton:checked,
             QPushButton#colorModeButton:checked {
                 background: #087e8b;
                 border-color: #087e8b;
             }
             QFrame#resourceSubTabFrame,
-            QFrame#resourceSubTabSingleFrame {
+            QFrame#resourceSubTabSingleFrame,
+            QFrame#modeSwitchFrame {
                 border-radius: 4px;
                 background: #e5ecef;
             }

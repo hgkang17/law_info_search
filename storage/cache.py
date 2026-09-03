@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from collections import OrderedDict
@@ -24,16 +23,59 @@ class SearchResultCache:
             self.directory.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
             self.last_error = str(exc)
+        self.migrate_to_named_files()
 
     @staticmethod
     def _normalized_query(query: str) -> str:
         return " ".join(str(query).split()).casefold()
 
     def path_for(self, target: str, query: str, search_scope: int) -> Path:
-        normalized = self._normalized_query(query)
-        digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:20]
+        """검색 조건 하나가 쓰는 파일. 검색어를 그대로 이름에 남긴다.
+
+        예전에는 검색어를 SHA256으로 줄여 ``admrul_1_5f95aba9…``처럼 남겨서
+        폴더를 열어도 무엇을 찾아 둔 것인지 알 수 없었다. 긴 검색어는 잘라
+        쓰므로 서로 다른 검색어가 같은 파일을 가리킬 수 있는데, ``load``가
+        파일 안의 검색어를 다시 확인하므로 그때는 캐시를 쓰지 않고 새로
+        조회한다.
+        """
         safe_target = re.sub(r"[^0-9A-Za-z_-]+", "_", str(target))
-        return self.directory / f"{safe_target}_{int(search_scope)}_{digest}.json"
+        name = re.sub(
+            r"[^0-9A-Za-z가-힣·ㆍ()._ -]+",
+            "_",
+            " ".join(str(query).split()),
+        ).strip()[:60]
+        stem = f"{safe_target}_{int(search_scope)}_{name or '검색어없음'}"
+        return self.directory / f"{stem}.json"
+
+    def migrate_to_named_files(self) -> int:
+        """해시 이름으로 저장해 둔 예전 목록 캐시를 검색어 이름으로 옮긴다."""
+        moved = 0
+        try:
+            paths = sorted(self.directory.glob("*.json"))
+        except OSError as exc:
+            self.last_error = str(exc)
+            return 0
+        for path in paths:
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, json.JSONDecodeError):
+                continue
+            if not isinstance(record, dict) or record.get("schema") != 1:
+                continue
+            scope = record.get("search_scope")
+            target = self.path_for(
+                str(record.get("target") or ""),
+                str(record.get("query") or ""),
+                1 if scope is None else int(scope),
+            )
+            if target == path or target.exists():
+                continue
+            try:
+                path.rename(target)
+                moved += 1
+            except OSError as exc:
+                self.last_error = str(exc)
+        return moved
 
     def load(
         self, target: str, query: str, search_scope: int
@@ -126,6 +168,7 @@ class LawDocumentCache(QObject):
             self.directory.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
             self.last_error = str(exc)
+        self.migrate_to_named_files()
 
     @staticmethod
     def _timestamp() -> str:
@@ -133,18 +176,112 @@ class LawDocumentCache(QObject):
 
     @staticmethod
     def _cache_key(row: dict[str, object]) -> str:
+        """저장 파일 이름. 사람이 읽는 제목을 앞에 두고 식별자를 뒤에 붙인다.
+
+        예전에는 ``law_009419``처럼 번호만 남아서 폴더를 열어도 무엇이 담긴
+        파일인지 알 수 없었다. 이제 ``국토의 계획 및 이용에 관한 법률
+        시행령_law_009419``처럼 제목을 앞세운다. 조문을 저장한 것이면
+        ``국토기본법 제6조 …_ai_related_009293_000600``이 된다.
+
+        제목만 쓰면 같은 이름의 다른 판이나 동명 자치법규가 서로 덮어쓰므로
+        분류ㆍ식별번호ㆍ조문코드를 뒤에 남긴다. 이 값이 곧 파일명이라 규칙이
+        달라지면 저장한 자료를 못 찾는다. 바꿀 때는 반드시
+        ``migrate_to_named_files``로 기존 파일을 함께 옮긴다.
+        """
         target = str(row.get("target") or "law")
-        identifier = str(
-            row.get("id")
-            or row.get("source_id")
-            or row.get("name")
-            or "document"
-        )
-        provision = str(row.get("jo_code") or row.get("provision") or "")
-        if provision:
-            identifier = f"{identifier}_{provision}"
-        safe_identifier = re.sub(r"[^0-9A-Za-z가-힣._-]+", "_", identifier)
-        return f"{target}_{safe_identifier[:80]}"
+        identifier = str(row.get("id") or row.get("source_id") or "")
+        # 법령ㆍ행정규칙은 name에, 해석례ㆍ질의회신ㆍ판례는 title에 제목이 있다.
+        title = " ".join(
+            part
+            for part in (
+                str(row.get("name") or row.get("title") or ""),
+                str(row.get("provision") or ""),
+            )
+            if part.strip()
+        ).strip()
+        parts = [title or identifier or "문서", target]
+        if identifier:
+            parts.append(identifier)
+        jo_code = str(row.get("jo_code") or "")
+        if jo_code and jo_code != identifier:
+            parts.append(jo_code)
+        # 제목이 길어도 경로 상한에 걸리지 않게 자른다. 뒤에 붙는 식별자는
+        # 그대로 두므로 잘린 제목이 겹쳐도 서로 다른 파일이 된다.
+        parts[0] = parts[0][:80]
+        return re.sub(r"[^0-9A-Za-z가-힣·ㆍ()._ -]+", "_", "_".join(parts)).strip()
+
+    # 파일 이름 규칙을 바꾼 뒤 한 번만 도는 이전 작업의 표식.
+    NAMING_MARKER = "_이름규칙.json"
+    NAMING_VERSION = 2
+
+    def migrate_to_named_files(self) -> int:
+        """번호만 있던 예전 파일을 제목이 앞에 오는 이름으로 옮긴다.
+
+        이 폴더에는 캐시뿐 아니라 사용자가 붙인 메모와 즐겨찾기 구성이 함께
+        들어 있어 지우고 다시 받을 수 없다. 그래서 규칙이 바뀌면 파일을
+        지우지 않고 이름만 바꾼다. 실패한 파일은 옛 이름 그대로 두고 넘어가,
+        다음 실행에서 다시 시도한다.
+        """
+        marker = self.directory / self.NAMING_MARKER
+        try:
+            done = json.loads(marker.read_text(encoding="utf-8"))
+            if int(done.get("version", 0)) >= self.NAMING_VERSION:
+                return 0
+        except (OSError, ValueError, TypeError, AttributeError):
+            pass
+
+        moved = 0
+        try:
+            paths = sorted(self.directory.glob("*.json"))
+        except OSError as exc:
+            self.last_error = str(exc)
+            return 0
+        for path in paths:
+            if path.name.startswith("_"):
+                continue
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, json.JSONDecodeError):
+                continue
+            row = record.get("row") if isinstance(record, dict) else None
+            if not isinstance(row, dict):
+                continue
+            key = self._cache_key(row)
+            if not key or key == path.stem:
+                continue
+            target = self.directory / f"{key}.json"
+            if target.exists():
+                # 같은 자료가 이미 새 이름으로 있으면 옛 파일을 그대로 둔다.
+                # 사용자가 붙인 메모가 어느 쪽에 있는지 알 수 없어서다.
+                continue
+            try:
+                if isinstance(record, dict) and "key" in record:
+                    record["key"] = key
+                    path.write_text(
+                        json.dumps(record, ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
+                path.rename(target)
+                moved += 1
+            except OSError as exc:
+                self.last_error = str(exc)
+                continue
+        try:
+            marker.write_text(
+                json.dumps(
+                    {"version": self.NAMING_VERSION, "moved": moved},
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
+        if moved:
+            # 색인은 파일 이름을 키로 삼으므로 통째로 다시 만들게 한다.
+            self._list_index.clear()
+            self._list_index_loaded = False
+            self.changed.emit()
+        return moved
 
     def path_for_row(self, row: dict[str, object]) -> Path:
         return self.directory / f"{self._cache_key(row)}.json"
@@ -173,7 +310,7 @@ class LawDocumentCache(QObject):
             existing_keys = {
                 path.stem
                 for path in self.directory.glob("*.json")
-                if path.name != self.LIST_INDEX_NAME
+                if not path.name.startswith("_")
             }
         except OSError as exc:
             self.last_error = str(exc)
@@ -1020,7 +1157,7 @@ class LawDocumentCache(QObject):
             paths = [
                 path
                 for path in self.directory.glob("*.json")
-                if path.name != self.LIST_INDEX_NAME
+                if not path.name.startswith("_")
             ]
         except OSError as exc:
             self.last_error = str(exc)
@@ -1080,7 +1217,7 @@ class LawDocumentCache(QObject):
             paths = [
                 path
                 for path in self.directory.glob("*.json")
-                if path.name != self.LIST_INDEX_NAME
+                if not path.name.startswith("_")
             ]
         except OSError as exc:
             self.last_error = str(exc)

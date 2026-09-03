@@ -31,8 +31,14 @@ import 하지 않는다.
 옵션
     --oc <인증키>   기본값은 환경변수 LAW_API_OC, 없으면 DEFAULT_OC("HGKANG17")
     --type <형식>   JSON(기본) / XML / HTML
-    --out <파일>    raw / call 결과를 파일로 저장
+    --out <파일>    raw / call 결과를 파일로 저장 (--out auto = 아래 자동 이름)
     --full          응답을 자르지 않고 전부 출력
+
+저장 위치ㆍ이름
+    결과 파일은 언제나 스크립트 옆의 '가이드_조회결과' 폴더 안에 만든다
+    (절대경로를 직접 준 경우만 그 경로를 그대로 쓴다).
+    대화형에서 y 를 치면 응답에서 뽑은 이름(법령명ㆍ행정규칙명ㆍ별표명 등)을
+    파일명으로 쓰고, 이름을 못 찾으면 htmlName_시각 으로 떨어진다.
 
 준비물
     pip install requests
@@ -68,6 +74,26 @@ GUIDE_LIMIT = 109
 # 인증키(OC). 법제처에 등록한 계정 아이디이며, --oc 나 환경변수 LAW_API_OC 로
 # 덮어쓸 수 있다.
 DEFAULT_OC = "HGKANG17"
+
+# 결과 파일을 모아 두는 폴더. 실행 위치와 무관하게 스크립트 옆에 만든다.
+RESULT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "가이드_조회결과")
+
+# 응답에서 파일명으로 쓸 '이름'을 찾을 때 볼 필드. 앞쪽이 우선이다.
+# (법령 본문은 법령명_한글, 3단비교는 법령명, 행정규칙은 행정규칙명,
+#  별표서식은 별표명 식으로 API마다 필드가 다르다.)
+NAME_KEYS = (
+    "별표명", "별표서식명", "서식명",
+    "법령명_한글", "법령명한글", "법령명", "법령명칭",
+    "행정규칙명", "자치법규명", "조약명",
+    "사건명", "안건명", "제목", "질의요지",
+    "관련법령명",
+)
+
+# 목록 조회 응답이면 '외 N건'을 붙이려고 총 건수도 같이 본다.
+COUNT_KEYS = ("totalCnt", "totalCount")
+
+# type=HTML 응답의 <title>은 늘 이 사이트 이름이라 파일명으로 쓰지 않는다.
+SITE_TITLES = ("국가법령통합관리시스템", "국가법령정보")
 
 
 # ---------------------------------------------------------------- 공통 유틸
@@ -412,28 +438,134 @@ def resolve_by_name(request_url, extra, oc):
 EXT_BY_TYPE = {"JSON": "json", "XML": "xml", "HTML": "html"}
 
 
-def save_text(text, path):
+def _collect_fields(node, found, wanted, depth=0):
+    """JSON 트리를 훑어 wanted 에 든 필드의 첫 값을 모은다."""
+    if depth > 12:
+        return
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key in wanted and not isinstance(value, (dict, list)):
+                text = str(value).strip()
+                if text:
+                    found.setdefault(key, text)
+            elif isinstance(value, (dict, list)):
+                _collect_fields(value, found, wanted, depth + 1)
+    elif isinstance(node, list):
+        # 목록 응답은 첫 몇 건만 봐도 이름을 찾기에 충분하다.
+        for item in node[:5]:
+            _collect_fields(item, found, wanted, depth + 1)
+
+
+def guess_result_name(text, out_type):
+    """응답에서 법령명ㆍ행정규칙명ㆍ별표명 같은 '이름'을 뽑는다. 못 찾으면 None."""
+    if not text:
+        return None
+    stripped = text.lstrip()
+    wanted = set(NAME_KEYS) | set(COUNT_KEYS)
+    found = {}
+
+    if stripped.startswith(("{", "[")):
+        try:
+            _collect_fields(json.loads(text), found, wanted)
+        except ValueError:
+            return None
+    elif stripped.startswith("<?xml") or (out_type or "").upper() == "XML":
+        try:
+            root = ET.fromstring(text)
+        except ET.ParseError:
+            return None
+        for node in root.iter():
+            if node.tag in wanted and (node.text or "").strip():
+                found.setdefault(node.tag, node.text.strip())
+    else:
+        # type=HTML 응답은 iframe 껍데기라 <title> 이 사이트 이름으로만 온다.
+        # 그런 제목은 파일명으로 쓸 수 없으니 버리고 폴백 이름을 쓰게 둔다.
+        match = re.search(r"(?is)<title[^>]*>(.*?)</title>", text)
+        title = _strip_tags(match.group(1)) if match else ""
+        if not title or any(word in title for word in SITE_TITLES):
+            return None
+        return title
+
+    name = next((found[key] for key in NAME_KEYS if found.get(key)), None)
+    if not name:
+        return None
+    for key in COUNT_KEYS:
+        if str(found.get(key, "")).isdigit() and int(found[key]) > 1:
+            return "{} 외 {}건".format(name, int(found[key]) - 1)
+    return name
+
+
+def _clean_filename(name):
+    """파일명에 못 쓰는 글자를 걷어내고 길이를 자른다."""
+    name = re.sub(r'[\/:*?"<>|]', " ", name or "")
+    name = re.sub(r"\s+", " ", name).strip(" .")
+    return name[:80]
+
+
+def _result_path(path):
+    """결과 파일은 언제나 '가이드_조회결과' 폴더 안에 만든다.
+
+    절대경로를 직접 준 경우만 그 경로를 존중하고, 그 밖에는 파일명만 떼어 쓴다.
+    """
+    path = os.path.expanduser(path.strip().strip('"'))
+    if os.path.isabs(path):
+        return path
+    return os.path.join(RESULT_DIR, os.path.basename(path))
+
+
+def _unique_path(path):
+    """같은 이름이 있으면 ' (2)', ' (3)' 을 붙여 덮어쓰지 않는다."""
+    if not os.path.exists(path):
+        return path
+    stem, ext = os.path.splitext(path)
+    for number in range(2, 1000):
+        candidate = "{} ({}){}".format(stem, number, ext)
+        if not os.path.exists(candidate):
+            return candidate
+    return path
+
+
+def save_text(text, path, keep_existing=False):
     """응답을 통째로(화면과 달리 자르지 않고) 파일에 쓴다."""
+    path = _result_path(path)
+    folder = os.path.dirname(path)
+    if folder:
+        os.makedirs(folder, exist_ok=True)
+    if keep_existing:
+        path = _unique_path(path)
     with open(path, "w", encoding="utf-8") as fp:
         fp.write(text)
     print("저장: {} ({:,}자)".format(os.path.abspath(path), len(text)))
+
+
+def auto_filename(text, name, out_type):
+    """응답에서 뽑은 이름으로 파일명을 만든다. 못 뽑으면 htmlName_시각."""
+    ext = EXT_BY_TYPE.get((out_type or "").upper(), "txt")
+    guessed = _clean_filename(guess_result_name(text, out_type))
+    if guessed:
+        return "{}.{}".format(guessed, ext)
+    return "{}_{}.{}".format(name or "response", time.strftime("%Y%m%d_%H%M%S"), ext)
 
 
 def offer_save(text, name, out_type):
     """화면에는 앞부분만 나오므로, 전체를 파일로 받아 갈지 물어본다."""
     if not text:
         return
-    answer = ask("파일로 저장 (엔터=안 함, y=자동 이름, 파일명 직접 입력, ESC=취소): ")
+    suggested = auto_filename(text, name, out_type)
+    print("저장 폴더: {}".format(RESULT_DIR))
+    answer = ask("파일로 저장 [{}] (엔터=안 함, y=이 이름, 파일명 직접 입력, ESC=취소): "
+                 .format(suggested))
     if answer is None:
         return
     answer = answer.strip()
     if not answer:
         return
     if answer.lower() in ("y", "yes"):
-        answer = "{}_{}.{}".format(name or "response", time.strftime("%Y%m%d_%H%M%S"),
-                                   EXT_BY_TYPE.get(out_type.upper(), "txt"))
+        answer = suggested
+    elif not os.path.splitext(answer)[1]:
+        answer = "{}.{}".format(answer, EXT_BY_TYPE.get((out_type or "").upper(), "txt"))
     try:
-        save_text(text, answer)
+        save_text(text, answer, keep_existing=True)
     except OSError as exc:
         print("저장 실패: {}".format(exc))
 
@@ -530,6 +662,9 @@ def call_api(request_url, extra, oc, out_type, out_path=None, full=False):
         print(_cut(text, None if full else PREVIEW_LIMIT))
 
     if out_path:
+        # --out auto 면 응답에서 뽑은 이름(법령명ㆍ별표명 등)으로 저장한다.
+        if out_path.strip().lower() == "auto":
+            out_path = auto_filename(text, None, out_type)
         save_text(text, out_path)
     return text
 
@@ -752,9 +887,7 @@ def main(argv):
 
         if command == "raw":
             if out_path:
-                with open(out_path, "w", encoding="utf-8") as fp:
-                    fp.write(page)
-                print("저장: {} ({:,}자)".format(out_path, len(page)))
+                save_text(page, out_path)
             else:
                 print(_cut(page, None if full else PREVIEW_LIMIT))
             return 0
