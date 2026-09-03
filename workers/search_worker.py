@@ -13,6 +13,7 @@ from models.law import (
 from molit_cgm_expc_api import (
     AgencyConfig,
     attach_admin_rule_images,
+    attach_law_images,
     get_detail,
     get_historical_law,
     get_law_article,
@@ -259,6 +260,7 @@ class RelatedArticleWorker(QThread):
                 if not item_id or not jo:
                     raise ValueError("법령 ID 또는 조문 번호가 없습니다.")
                 payload = get_law_article(self.oc, item_id, jo)
+                attach_law_images(payload)
                 target = "law"
             self.succeeded.emit(
                 self.operation,
@@ -390,6 +392,8 @@ class ResourceApiWorker(QThread):
                 )
                 if self.detail_target == "admrul":
                     attach_admin_rule_images(result)
+                elif self.detail_target in ("law", "eflaw"):
+                    attach_law_images(result)
             elif self.operation == "law_reference_detail":
                 named_row = None
                 if self.law_name:
@@ -450,6 +454,7 @@ class ResourceApiWorker(QThread):
                     ho=self.ho,
                     mok=self.mok,
                 )
+                attach_law_images(payload)
                 mode = "article" if self.jo else "full"
                 result = {
                     "payload": payload,

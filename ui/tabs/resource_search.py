@@ -73,6 +73,7 @@ from molit_cgm_expc_api import (
     ADMIN_RULE_IMAGES_KEY,
     AGENCY_BY_TARGET,
     _find_text,
+    law_payload_images_need_refresh,
 )
 from utils.annex_notation import annex_hint_in_query, annex_related_law_name, row_matches_annex_hint
 from utils.annex_parse import parse_annex_bytes
@@ -97,6 +98,7 @@ from utils.parsing import (
     json_list,
     json_text,
     law_article_note,
+    law_text,
     normalize_amendment_note_dates,
     law_unit_code,
     normalize_admin_rule_text,
@@ -274,6 +276,11 @@ class ResourceSearchTab(QWidget):
         # 끝나기를 기다리는 (row, 조, 항, 호, 목, 이름).
         self._pending_article_favorite: tuple[
             dict[str, object], str, str, str, str, str
+        ] | None = None
+        # 이미지 처리 전 저장된 조문 즐겨찾기는 전문을 한 번 갱신한 뒤
+        # 사용자가 고른 조항호목 화면으로 곧바로 되돌아간다.
+        self._pending_cached_article_open: tuple[
+            dict[str, object], dict[str, object]
         ] | None = None
         self._article_favorite_waiting_for_worker = False
         self._reference_popup_states: dict[str, dict[str, object]] = {}
@@ -6158,6 +6165,15 @@ class ResourceSearchTab(QWidget):
                 self._show_three_stage_comparison(payload)
             else:
                 self._show_detail(payload)
+                if (
+                    operation == "resource_detail"
+                    and self._pending_cached_article_open is not None
+                ):
+                    pending_row, pending_unit = self._pending_cached_article_open
+                    self._pending_cached_article_open = None
+                    refreshed = self.law_cache.load_for_row(pending_row)
+                    if isinstance(refreshed, dict):
+                        self.open_cached_favorite_article(refreshed, pending_unit)
         except Exception as exc:
             self._worker_failed(operation, str(exc))
 
@@ -6199,6 +6215,7 @@ class ResourceSearchTab(QWidget):
             self.three_stage_popup.set_error(error)
             return
         if operation == "resource_detail":
+            self._pending_cached_article_open = None
             self._refresh_cache_checkmarks()
             if (
                 self._pending_article_favorite is not None
@@ -6295,6 +6312,7 @@ class ResourceSearchTab(QWidget):
                     current_law_name=title,
                     current_law_id=str(source_row.get("id") or ""),
                     use_api_links=True,
+                    embedded_images=self._admin_rule_images(payload),
                 )
                 + "</div>"
             )
@@ -7410,9 +7428,14 @@ class ResourceSearchTab(QWidget):
         if str(row.get("target") or "") == "law" and not force_api:
             cached_record = self.law_cache.load_for_row(row)
             if cached_record is not None:
-                self.open_cached_law(cached_record, clear_highlights=False)
-                self._schedule_keyword_article_scroll(row)
-                return True
+                cached_payload = cached_record.get("payload")
+                # 구버전 저장본은 법령 img 태그를 텍스트로만 바꿔 저장했다.
+                # 이미지가 실제로 있는 문서만 최초 재열람 때 백그라운드에서
+                # 한 번 새로 받아 이후에는 내장 이미지까지 로컬에서 연다.
+                if not law_payload_images_need_refresh(cached_payload):
+                    self.open_cached_law(cached_record, clear_highlights=False)
+                    self._schedule_keyword_article_scroll(row)
+                    return True
         elif not force_api:
             cached_snapshot = self.law_cache.load_snapshot(row)
             if (
@@ -7741,7 +7764,7 @@ class ResourceSearchTab(QWidget):
             administrative_rule=target == "admrul",
             embedded_images=(
                 self._admin_rule_images(payload)
-                if target == "admrul"
+                if target in ("admrul", "law")
                 else None
             ),
             law_annexes=(
@@ -7977,11 +8000,17 @@ class ResourceSearchTab(QWidget):
         *,
         clear_highlights: bool = True,
     ) -> None:
-        """열람내역의 로컬 JSON을 API 호출 없이 본문 탭으로 엶."""
+        """열람내역의 로컬 JSON을 연다. 구버전 이미지 문서만 한 번 갱신."""
         row = record.get("row")
         payload = record.get("payload")
         if not isinstance(row, dict) or not isinstance(payload, dict):
             raise ValueError("저장된 법령 파일에 본문 정보가 없습니다.")
+        if (
+            law_payload_images_need_refresh(payload)
+            and not (self.worker and self.worker.isRunning())
+            and self._request_resource_detail(dict(row))
+        ):
+            return
         self.pending_row = dict(row)
         legacy_three_stage = record.get("three_stage_payload")
         if isinstance(legacy_three_stage, dict):
@@ -8073,6 +8102,14 @@ class ResourceSearchTab(QWidget):
         payload = record.get("payload")
         if not isinstance(source_row, dict) or not isinstance(payload, dict):
             raise ValueError("저장된 법령 본문을 찾지 못했습니다.")
+        if (
+            law_payload_images_need_refresh(payload)
+            and not (self.worker and self.worker.isRunning())
+        ):
+            self._pending_cached_article_open = (dict(source_row), dict(unit))
+            if self._request_resource_detail(dict(source_row)):
+                return
+            self._pending_cached_article_open = None
         jo = str(unit.get("jo") or "")
         hang = str(unit.get("hang") or "")
         ho = str(unit.get("ho") or "")
@@ -8112,6 +8149,7 @@ class ResourceSearchTab(QWidget):
             build_toc=True,
             short_name=short_name,
             subtitle=subtitle,
+            embedded_images=self._admin_rule_images(payload),
         )
         self.status_label.setText(
             f"{tab_row['name']} 저장 본문 열기 완료 · API 호출 없음"
@@ -8211,7 +8249,7 @@ class ResourceSearchTab(QWidget):
         for unit in json_list(units):
             if not isinstance(unit, dict):
                 continue
-            content = json_text(unit.get("조문내용"))
+            content = law_text(unit.get("조문내용"))
             if content:
                 body_parts.append(normalize_amendment_note_dates(content))
             for paragraph in json_list(unit.get("항")):
@@ -8284,7 +8322,7 @@ class ResourceSearchTab(QWidget):
     def _append_law_children(self, node: object, output: list[str]) -> None:
         if not isinstance(node, dict):
             return
-        content = json_text(
+        content = law_text(
             node.get("항내용") or node.get("호내용") or node.get("목내용")
         )
         if content:
@@ -8337,7 +8375,7 @@ class ResourceSearchTab(QWidget):
 
     @staticmethod
     def _admin_rule_images(source: object) -> dict[str, str]:
-        """API payload 또는 저장본에서 검증된 내장 이미지만 꺼낸다."""
+        """법령·행정규칙 payload 또는 저장본의 검증된 이미지만 꺼낸다."""
         if not isinstance(source, dict):
             return {}
         raw = source.get(ADMIN_RULE_IMAGES_KEY)
@@ -8609,11 +8647,7 @@ class ResourceSearchTab(QWidget):
                 (
                     "",
                     f"[{label}]",
-                    (
-                        admin_rule_plain_text(value)
-                        if administrative_rule
-                        else value
-                    ),
+                    admin_rule_plain_text(value),
                 )
             )
         self._append_law_annex_section(

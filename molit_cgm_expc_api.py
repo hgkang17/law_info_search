@@ -114,7 +114,15 @@ _RETRY_BASE_DELAY = 0.3
 _ADMIN_RULE_IMAGE_PATTERN = re.compile(
     r"(?is)<img\b[^>]*\bid\s*=\s*[\"']?(\d+)[\"']?[^>]*>\s*(?:</img\s*>)?"
 )
+# 법령 본문은 행정규칙과 달리 다운로드 주소를 ``src``에 직접 넣고,
+# 닫는 ``</img>`` 사이에는 텍스트 대체용 선문자 표를 함께 싣기도 한다.
+# 예: ``<img src="...flDownload.do?flSeq=22909013">┌─…┘</img>``
+_LAW_IMAGE_TAG_PATTERN = re.compile(r"(?is)<img\b(?P<attrs>[^>]*)>")
+_LAW_IMAGE_FLSEQ_PATTERN = re.compile(r"(?i)\bflSeq\s*=\s*(\d+)")
+_LAW_IMAGE_ID_PATTERN = re.compile(r"(?i)\bid\s*=\s*[\"']?(\d+)")
 ADMIN_RULE_IMAGES_KEY = "_law_go_kr_images"
+LAW_IMAGES_VERSION_KEY = "_law_go_kr_law_images_version"
+LAW_IMAGES_VERSION = 1
 _MAX_ADMIN_RULE_IMAGE_BYTES = 10 * 1024 * 1024
 
 
@@ -412,36 +420,29 @@ def get_resource_detail(
     return resp.json()
 
 
-def attach_admin_rule_images(payload: dict) -> dict:
-    """행정규칙 본문의 이미지 ID를 검증된 data URI로 붙인다.
+def _nested_text_values(value: object):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, list):
+        for item in value:
+            yield from _nested_text_values(item)
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _nested_text_values(item)
 
-    화면 렌더링용 조회에서만 호출한다. 이미지 하나가 일시적으로 실패해도
-    본문 전체를 막지 않고, 받은 이미지만 붙여 텍스트는 계속 표시한다.
-    """
-    service = payload.get("AdmRulService")
-    if not isinstance(service, dict):
-        return payload
 
-    def text_values(value: object):
-        if isinstance(value, str):
-            yield value
-        elif isinstance(value, list):
-            for item in value:
-                yield from text_values(item)
-        elif isinstance(value, dict):
-            for item in value.values():
-                yield from text_values(item)
+def _law_image_id_from_attrs(attrs: str) -> str:
+    decoded = html.unescape(str(attrs or ""))
+    match = _LAW_IMAGE_FLSEQ_PATTERN.search(decoded)
+    if match is None:
+        match = _LAW_IMAGE_ID_PATTERN.search(decoded)
+    return match.group(1) if match is not None else ""
 
-    image_ids: list[str] = []
-    for field in ("조문내용", "조문", "부칙"):
-        for value in text_values(service.get(field)):
-            for image_id in _ADMIN_RULE_IMAGE_PATTERN.findall(
-                html.unescape(value)
-            ):
-                if image_id not in image_ids:
-                    image_ids.append(image_id)
-    if not image_ids:
-        return payload
+
+def _download_law_images(image_ids: Iterable[str]) -> dict[str, str]:
+    unique_ids = list(dict.fromkeys(str(image_id) for image_id in image_ids))
+    if not unique_ids:
+        return {}
 
     def download(image_id: str) -> tuple[str, str]:
         response = _request(
@@ -460,11 +461,11 @@ def attach_admin_rule_images(payload: dict) -> dict:
         return image_id, f"data:{mime_type};base64,{encoded}"
 
     embedded: dict[str, str] = {}
-    worker_count = min(4, len(image_ids))
+    worker_count = min(4, len(unique_ids))
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
         futures = {
             executor.submit(download, image_id): image_id
-            for image_id in image_ids
+            for image_id in unique_ids
         }
         for future in as_completed(futures):
             try:
@@ -472,8 +473,79 @@ def attach_admin_rule_images(payload: dict) -> dict:
             except (OSError, ValueError, requests.RequestException):
                 continue
             embedded[image_id] = data_uri
+    return embedded
+
+
+def attach_admin_rule_images(payload: dict) -> dict:
+    """행정규칙 본문의 이미지 ID를 검증된 data URI로 붙인다.
+
+    화면 렌더링용 조회에서만 호출한다. 이미지 하나가 일시적으로 실패해도
+    본문 전체를 막지 않고, 받은 이미지만 붙여 텍스트는 계속 표시한다.
+    """
+    service = payload.get("AdmRulService")
+    if not isinstance(service, dict):
+        return payload
+
+    image_ids: list[str] = []
+    for field in ("조문내용", "조문", "부칙"):
+        for value in _nested_text_values(service.get(field)):
+            for image_id in _ADMIN_RULE_IMAGE_PATTERN.findall(
+                html.unescape(value)
+            ):
+                if image_id not in image_ids:
+                    image_ids.append(image_id)
+    if not image_ids:
+        return payload
+
+    embedded = _download_law_images(image_ids)
     if embedded:
         payload[ADMIN_RULE_IMAGES_KEY] = embedded
+    return payload
+
+
+def law_payload_image_ids(payload: object) -> list[str]:
+    """법령 조문에 든 ``img`` 태그의 flSeq/id를 문서 순서대로 반환."""
+    if not isinstance(payload, dict):
+        return []
+    law = payload.get("법령")
+    if not isinstance(law, dict):
+        return []
+    image_ids: list[str] = []
+    for value in _nested_text_values(law.get("조문")):
+        decoded = html.unescape(value)
+        for match in _LAW_IMAGE_TAG_PATTERN.finditer(decoded):
+            image_id = _law_image_id_from_attrs(match.group("attrs"))
+            if image_id and image_id not in image_ids:
+                image_ids.append(image_id)
+    return image_ids
+
+
+def law_payload_images_need_refresh(payload: object) -> bool:
+    """이미지 있는 구버전 법령 저장본을 API에서 한 번 갱신해야 하는지."""
+    if not isinstance(payload, dict) or not law_payload_image_ids(payload):
+        return False
+    try:
+        version = int(payload.get(LAW_IMAGES_VERSION_KEY) or 0)
+    except (TypeError, ValueError):
+        version = 0
+    return version < LAW_IMAGES_VERSION
+
+
+def attach_law_images(payload: dict) -> dict:
+    """법령 조문의 원문 표·도면 이미지를 검증된 data URI로 붙인다.
+
+    다운로드 실패는 본문 조회를 막지 않는다. 처리 버전은 성공 여부와
+    무관하게 기록해 구버전 캐시가 열릴 때 한 번만 자동 갱신되게 한다.
+    """
+    image_ids = law_payload_image_ids(payload)
+    embedded = _download_law_images(image_ids)
+    if embedded:
+        existing = payload.get(ADMIN_RULE_IMAGES_KEY)
+        merged = dict(existing) if isinstance(existing, dict) else {}
+        merged.update(embedded)
+        payload[ADMIN_RULE_IMAGES_KEY] = merged
+    if image_ids:
+        payload[LAW_IMAGES_VERSION_KEY] = LAW_IMAGES_VERSION
     return payload
 
 

@@ -131,6 +131,57 @@ ADMIN_RULE_IMAGE_MARKER_PATTERN = re.compile(r"\[\[LAW_IMAGE:(\d+)\]\]")
 _ADMIN_RULE_IMAGE_TAG_PATTERN = re.compile(
     r"(?is)<img\b[^>]*\bid\s*=\s*[\"']?(\d+)[\"']?[^>]*>\s*(?:</img\s*>)?"
 )
+_LAW_IMAGE_CONTAINER_PATTERN = re.compile(
+    r"(?is)<img\b(?P<attrs>[^>]*)>(?P<fallback>.*?)</img\s*>"
+)
+_LAW_IMAGE_OPEN_PATTERN = re.compile(r"(?is)<img\b(?P<attrs>[^>]*)/?>")
+_LAW_IMAGE_FLSEQ_PATTERN = re.compile(r"(?i)\bflSeq\s*=\s*(\d+)")
+_LAW_IMAGE_ID_ATTR_PATTERN = re.compile(r"(?i)\bid\s*=\s*[\"']?(\d+)")
+
+
+def _law_image_id(attrs: str) -> str:
+    match = _LAW_IMAGE_FLSEQ_PATTERN.search(attrs)
+    if match is None:
+        match = _LAW_IMAGE_ID_ATTR_PATTERN.search(attrs)
+    return match.group(1) if match is not None else ""
+
+
+def law_text(value: object) -> str:
+    """법령 본문 이미지는 위치만 남기고 선문자 대체표는 제거한다.
+
+    법제처 법령 JSON은 ``img`` 태그의 ``src``에 flSeq를 넣으면서 태그
+    안쪽에 ``┌─│└``로 그린 대체표를 함께 주는 사례가 있다. 다운로드할
+    이미지 번호를 확인한 경우에만 그 대체표 전체를 이미지 토큰 하나로
+    바꾼다. 번호 없는 태그의 안쪽 텍스트는 정보 유실을 막기 위해 보존한다.
+    """
+    if isinstance(value, list):
+        parts = [law_text(item) for item in value]
+        return "\n".join(part for part in parts if part)
+    if isinstance(value, dict):
+        inner = value.get("content", "")
+        if isinstance(inner, (list, dict)):
+            return law_text(inner)
+        value = inner
+    text = str(value or "")
+    for _ in range(2):
+        decoded = unescape(text)
+        if decoded == text:
+            break
+        text = decoded
+
+    def replace_container(match: re.Match[str]) -> str:
+        image_id = _law_image_id(match.group("attrs"))
+        if image_id:
+            return f"\n[[LAW_IMAGE:{image_id}]]\n"
+        return match.group("fallback")
+
+    def replace_open_tag(match: re.Match[str]) -> str:
+        image_id = _law_image_id(match.group("attrs"))
+        return f"\n[[LAW_IMAGE:{image_id}]]\n" if image_id else ""
+
+    text = _LAW_IMAGE_CONTAINER_PATTERN.sub(replace_container, text)
+    text = _LAW_IMAGE_OPEN_PATTERN.sub(replace_open_tag, text)
+    return json_text(text)
 
 
 def admin_rule_text(value: object) -> str:
@@ -1575,7 +1626,7 @@ def _collect_article_children(node: object, output: list[str]) -> None:
     """항 아래의 호ㆍ목까지 파고들어 본문을 모은다."""
     if not isinstance(node, dict):
         return
-    content = json_text(
+    content = law_text(
         node.get("항내용") or node.get("호내용") or node.get("목내용")
     )
     if content:
@@ -1640,7 +1691,7 @@ def law_article_text(units: object) -> str:
     for unit in json_list(units):
         if not isinstance(unit, dict):
             continue
-        content = json_text(unit.get("조문내용"))
+        content = law_text(unit.get("조문내용"))
         if content:
             parts.append(normalize_amendment_note_dates(content))
         for paragraph in json_list(unit.get("항")):
