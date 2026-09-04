@@ -2007,6 +2007,11 @@ class DetailSearchBar(QWidget):
 class RecentSearchChip(QWidget):
     """텍스트 중앙 정렬을 유지한 채 ×를 오른쪽에 겹쳐 놓는 최근 검색 칩."""
 
+    # 검색어 버튼 QSS의 22px 내용 높이에 위아래 1px 테두리가 더해진
+    # 실제 높이. 부모도 같은 높이여야 아래 테두리가 잘리지 않는다.
+    HEIGHT = 24
+    REMOVE_BUTTON_SIZE = 16
+
     def __init__(self, query: str, on_select, on_remove, parent=None) -> None:
         super().__init__(parent)
         self.query_button = QPushButton(" ".join(query.split()), self)
@@ -2017,7 +2022,9 @@ class RecentSearchChip(QWidget):
         self.remove_button.setObjectName("recentSearchRemove")
         apply_close_icon(self.remove_button, 9)
         self.remove_button.setFlat(True)
-        self.remove_button.setFixedSize(16, 16)
+        self.remove_button.setFixedSize(
+            self.REMOVE_BUTTON_SIZE, self.REMOVE_BUTTON_SIZE
+        )
         self.remove_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.remove_button.setToolTip(f"최근 검색어에서 '{query}'를 지웁니다.")
         self.remove_button.setAccessibleName(f"{query} 최근 검색어 삭제")
@@ -2025,7 +2032,7 @@ class RecentSearchChip(QWidget):
         self.remove_button.hide()
         self.setMouseTracking(True)
         self.query_button.setMouseTracking(True)
-        self.setFixedHeight(22)
+        self.setFixedHeight(self.HEIGHT)
 
     def resizeEvent(self, event) -> None:
         self.query_button.setGeometry(self.rect())
@@ -2158,10 +2165,17 @@ class RecentSearchBar(QWidget):
             width = button.width()
             if width < 16:
                 continue
+            option = QStyleOptionButton()
+            button.initStyleOption(option)
+            text_rect = button.style().subElementRect(
+                QStyle.SubElement.SE_PushButtonContents,
+                option,
+                button,
+            )
             elided = button.fontMetrics().elidedText(
                 " ".join(query.split()),
                 Qt.TextElideMode.ElideRight,
-                max(1, width - 8),
+                max(1, text_rect.width()),
             )
             if button.text() != elided:
                 button.setText(elided)

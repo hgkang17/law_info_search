@@ -3196,6 +3196,10 @@ class LawSearchWindow(QMainWindow):
             }
             /* 검색어 하나만 지우는 표시. 칩 바로 오른쪽에 조용히 붙는다. */
             QPushButton#recentSearchRemove {
+                min-width: 16px;
+                max-width: 16px;
+                min-height: 16px;
+                max-height: 16px;
                 background: transparent;
                 border: none;
                 padding: 0;
@@ -3212,9 +3216,9 @@ class LawSearchWindow(QMainWindow):
                 color: #526176;
                 border: 1px solid #d5dee8;
                 border-radius: 6px;
-                /* 오른쪽에 지우기(×)가 겹쳐 놓이므로 그만큼 자리를 비운다.
-                   비워 두지 않으면 검색어가 × 밑으로 들어가 잘려 보인다. */
-                padding: 0 20px 0 6px;
+                /* ×는 오른쪽에 겹쳐 놓되 좌우 여백을 같게 둬 검색어가
+                   칩의 수평 중심에서 왼쪽으로 밀리지 않게 한다. */
+                padding: 0 20px;
                 font-size: 8pt;
                 font-weight: 400;
             }
