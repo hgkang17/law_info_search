@@ -4,6 +4,7 @@ import pytest
 from PySide6.QtWidgets import QApplication
 
 from ui.theme import apply_detail_font_family
+from utils.constants import DETAIL_FONT_CSS_FAMILY
 from ui.widgets import (
     DETAIL_FONT_CONTROL_WIDTH,
     DETAIL_FONT_FAMILY_WIDTH,
@@ -72,10 +73,16 @@ def test_saved_detail_font_size_is_clamped_without_changing_its_precision() -> N
     assert clamp_detail_font_size(11.7) == 11.7
 
 
-def test_legacy_saved_body_fonts_are_normalized_to_malgun_gothic() -> None:
-    html = '<div style="font-family:\'Gulim\',\'굴림\';">본문</div>'
+def test_saved_body_fonts_are_normalized_to_the_detail_font() -> None:
+    """저장해 둔 본문의 글꼴을 지금 본문 글꼴로 맞춘다.
+
+    어떤 글꼴로 통일할지는 DETAIL_FONT_CSS_FAMILY 하나가 정한다. 맑은
+    고딕으로 옮겼다가 굴림으로 되돌린 적이 있어, 특정 글꼴 이름을 테스트에
+    박아 두지 않고 그 상수를 기준으로 견준다.
+    """
+    html = "<div style=\"font-family:'Pretendard','없는글꼴';\">본문</div>"
 
     normalized = apply_detail_font_family(html)
 
-    assert "font-family:'Malgun Gothic'" in normalized
-    assert "font-family:'Gulim'" not in normalized
+    assert f"font-family:{DETAIL_FONT_CSS_FAMILY}" in normalized
+    assert "Pretendard" not in normalized

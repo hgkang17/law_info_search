@@ -7,7 +7,7 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PySide6.QtCore import QSettings, Qt
+from PySide6.QtCore import QSettings, QUrl, Qt
 from PySide6.QtWidgets import QApplication
 
 from storage.cache import LawDocumentCache
@@ -248,5 +248,99 @@ def test_resource_category_switch_restores_search_list_state(
         assert tab.query_input.text() == "도시계획"
         assert tab.result_table.rowCount() == 1
         assert tab.result_count.text() == "1건"
+    finally:
+        tab.close()
+
+
+def test_saved_law_keeps_annex_list_clickable_after_reopen(
+    qt_app, tmp_path, monkeypatch
+) -> None:
+    """저장 본문을 다시 열어도 별표 제목이 눌리는지 확인한다.
+
+    저장 본문은 그려 둔 HTML을 그대로 되살리므로 `_set_detail_document`를
+    거치지 않는다. 그 안에서만 채우던 `_annex_section_entries`가 비어 있으면
+    화면에는 별표 목록이 보이는데 눌러도 아무 일이 없다.
+    """
+    settings = QSettings(
+        str(tmp_path / "saved-annex.ini"), QSettings.Format.IniFormat
+    )
+    tab = ResourceSearchTab(
+        lambda: "",
+        RecentSearchManager(settings),
+        LawDocumentCache(tmp_path / "saved"),
+    )
+    try:
+        monkeypatch.setattr(tab, "_start_annex_download", lambda *_args: None)
+        row = {
+            "target": "law",
+            "id": "000001",
+            "label": "법령",
+            "name": "표시 시험법 시행령",
+        }
+        # 실제 저장본처럼 "그려 둔 HTML" 스냅샷을 함께 넣는다. 이것이
+        # 있어야 open_cached_law가 복원 경로(_restore_cached_law_render)를
+        # 타고, 그때 _set_detail_document를 건너뛴다.
+        tab.pending_row = dict(row)
+        tab._show_detail(_payload(), save_cache=False)
+        qt_app.processEvents()
+        assert tab._annex_section_entries, "첫 조회에서 별표 목록이 비었다"
+        record = {"row": row, "payload": _payload(), "name": row["name"]}
+        record.update(tab._active_law_render_snapshot())
+
+        # 다른 문서를 보다 돌아온 상황을 만든다.
+        tab._annex_section_entries = []
+
+        tab.open_cached_law(record)
+        qt_app.processEvents()
+
+        assert tab._annex_section_entries, "저장 본문에 별표 목록이 복원되지 않았다"
+
+        tab._detail_link_clicked(QUrl("annex:0"))
+        qt_app.processEvents()
+        assert not tab.inline_annex_preview.isHidden()
+    finally:
+        tab.close()
+
+
+def test_annex_list_survives_switching_document_tabs(
+    qt_app, tmp_path, monkeypatch
+) -> None:
+    """다른 본문 탭을 다녀와도 별표 제목이 계속 눌려야 한다.
+
+    별표 목록은 화면 하나에 전역으로 두면 안 된다. 탭마다 다른 목록이라
+    문서 상태에 함께 담아 두고 탭을 되살릴 때 같이 복원한다.
+    """
+    settings = QSettings(
+        str(tmp_path / "tab-annex.ini"), QSettings.Format.IniFormat
+    )
+    tab = ResourceSearchTab(
+        lambda: "",
+        RecentSearchManager(settings),
+        LawDocumentCache(tmp_path / "saved"),
+    )
+    try:
+        monkeypatch.setattr(tab, "_start_annex_download", lambda *_args: None)
+        row = {
+            "target": "law",
+            "id": "000001",
+            "label": "법령",
+            "name": "표시 시험법 시행령",
+        }
+        tab.pending_row = dict(row)
+        tab._show_detail(_payload(), save_cache=False)
+        qt_app.processEvents()
+        key = tab._active_document_key
+        assert tab._annex_section_entries
+
+        # 별표가 없는 다른 문서로 옮겼다가 돌아온다.
+        tab._save_active_document_state()
+        tab._annex_section_entries = []
+        tab._restore_document_state(key)
+        qt_app.processEvents()
+
+        assert tab._annex_section_entries, "탭을 되살릴 때 별표 목록이 비었다"
+        tab._detail_link_clicked(QUrl("annex:0"))
+        qt_app.processEvents()
+        assert not tab.inline_annex_preview.isHidden()
     finally:
         tab.close()

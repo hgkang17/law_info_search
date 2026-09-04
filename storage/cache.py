@@ -1461,6 +1461,129 @@ class LawDocumentCache(QObject):
         )
         return entries
 
+    def all_project_favorite_entries(self) -> list[dict[str, object]]:
+        """어느 프로젝트에 담겼든 즐겨찾기를 전부 한 번씩 돌려준다.
+
+        프로젝트를 새로 만들면 즐겨찾기를 처음부터 다시 찾아 담아야 했다.
+        이미 담아 둔 것을 한자리에 모아 두고 거기서 끌어다 쓰라고 두는
+        공통 목록이 이 값을 쓴다. 같은 항목이 여러 프로젝트에 있어도
+        목록에는 한 번만 나오게 하고, 어디에 들어 있는지를
+        ``favorite_project_ids``로 함께 알려 준다.
+        """
+        entries: list[dict[str, object]] = []
+        for record in self.list_entries():
+            memberships = self._favorite_memberships(record)
+            articles = self._article_favorites(record, all_projects=True)
+            if not memberships and not articles:
+                continue
+            projected = dict(record)
+            projected["favorite"] = bool(memberships)
+            projected["favorite_project_ids"] = [
+                str(item.get("id") or "") for item in memberships
+            ]
+            for article in articles:
+                article["favorite_project_ids"] = [
+                    str(item.get("id") or "")
+                    for item in article.get("favorite_projects", [])
+                    if isinstance(item, dict)
+                ]
+                article.pop("favorite_projects", None)
+            projected["favorite_articles"] = articles
+            entries.append(projected)
+        entries.sort(key=lambda item: str(item.get("name") or ""))
+        return entries
+
+    def add_favorite_to_project(
+        self,
+        row: dict[str, object],
+        project_id: str,
+        *,
+        jo: str = "",
+        hang: str = "",
+        ho: str = "",
+        mok: str = "",
+    ) -> bool:
+        """이미 걸어 둔 즐겨찾기를 다른 프로젝트에도 함께 담는다.
+
+        옮기는 것이 아니라 소속을 하나 더하는 것이다. 원래 프로젝트에서도
+        그대로 남는다. ``jo``를 주면 그 조ㆍ항ㆍ호ㆍ목만, 주지 않으면 문서
+        자체를 담는다.
+        """
+        self.last_error = ""
+        project_id = str(project_id or "").strip()
+        if not project_id:
+            self.last_error = "프로젝트를 찾지 못했습니다."
+            return False
+        path = self.path_for_row(row)
+        try:
+            if not path.is_file():
+                raise ValueError("저장된 본문이 없습니다.")
+            record = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(record, dict):
+                raise ValueError("저장 파일 형식이 올바르지 않습니다.")
+            if jo:
+                entries = self._article_favorites(record, all_projects=True)
+                target = next(
+                    (
+                        entry
+                        for entry in entries
+                        if (
+                            entry["jo"],
+                            entry["hang"],
+                            entry["ho"],
+                            entry["mok"],
+                        )
+                        == (jo, hang, ho, mok)
+                    ),
+                    None,
+                )
+                if target is None:
+                    raise ValueError("그 조문은 즐겨찾기에 없습니다.")
+                memberships = [
+                    dict(item)
+                    for item in target.get("favorite_projects", [])
+                    if isinstance(item, dict)
+                ]
+                if any(
+                    str(item.get("id") or "") == project_id
+                    for item in memberships
+                ):
+                    return True
+                memberships.append({"id": project_id})
+                target["favorite_projects"] = memberships
+                record["favorite_articles"] = entries
+                # 조문이 보이려면 그 법령도 같은 프로젝트에 있어야 한다.
+                document_memberships = self._favorite_memberships(record)
+                if not any(
+                    str(item.get("id") or "") == project_id
+                    for item in document_memberships
+                ):
+                    document_memberships.append({"id": project_id})
+                    record["favorite_projects"] = document_memberships
+                    record["favorite"] = True
+            else:
+                memberships = self._favorite_memberships(record)
+                if any(
+                    str(item.get("id") or "") == project_id
+                    for item in memberships
+                ):
+                    return True
+                memberships.append({"id": project_id})
+                record["favorite_projects"] = memberships
+                record["favorite"] = True
+            temporary_path = path.with_suffix(".json.tmp")
+            temporary_path.write_text(
+                json.dumps(record, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            temporary_path.replace(path)
+            self._snapshot_memory.pop(path, None)
+        except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            self.last_error = str(exc)
+            return False
+        self.changed.emit()
+        return True
+
     def favorite_entries(self) -> list[dict[str, object]]:
         """즐겨찾기만 골라 저장해 둔 순서대로 돌려준다."""
         entries = [

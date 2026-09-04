@@ -382,3 +382,56 @@ def test_new_article_column_is_enabled_for_old_visibility_settings(
         settings.value(tab.FAVORITE_VISIBLE_CATEGORIES_VERSION_KEY, 0)
     ) == tab.FAVORITE_VISIBLE_CATEGORIES_VERSION
     tab.close()
+
+
+def test_common_list_shows_every_project_favorite_once(tmp_path) -> None:
+    """공통 목록은 어느 프로젝트에 담겼든 한 번씩만 보여 준다.
+
+    프로젝트를 새로 만들면 즐겨찾기를 처음부터 다시 찾아 담아야 했다.
+    이미 담아 둔 것을 한자리에 모아 두고 거기서 끌어다 쓰라고 둔 목록이다.
+    """
+    cache = _cache(tmp_path)
+    assert cache.set_favorite(ROW, True)
+    assert cache.set_article_favorite(ROW, "25", "제25조", True)
+    cache.set_active_favorite_project("project-b")
+    assert cache.set_favorite(ROW, True)
+
+    entries = cache.all_project_favorite_entries()
+
+    assert len(entries) == 1, "같은 문서가 프로젝트 수만큼 나오면 안 된다"
+    entry = entries[0]
+    assert set(entry["favorite_project_ids"]) == {"default", "project-b"}
+    articles = entry["favorite_articles"]
+    assert len(articles) == 1
+    assert articles[0]["favorite_project_ids"] == ["default"]
+
+
+def test_dragging_from_the_common_list_copies_instead_of_moving(
+    tmp_path,
+) -> None:
+    """공통 목록에서 끌어다 담아도 원래 프로젝트에서 사라지지 않는다."""
+    cache = _cache(tmp_path)
+    assert cache.set_favorite(ROW, True)
+    assert cache.set_article_favorite(ROW, "25", "제25조", True)
+
+    assert cache.add_favorite_to_project(ROW, "project-b", jo="25")
+
+    cache.set_active_favorite_project("project-b")
+    assert cache.is_article_favorite(ROW, "25")
+    # 조문이 보이려면 그 법령도 같은 프로젝트에 있어야 한다.
+    assert cache.is_favorite(ROW)
+
+    cache.set_active_favorite_project("default")
+    assert cache.is_article_favorite(ROW, "25"), "원래 프로젝트에서 사라졌다"
+
+
+def test_adding_a_document_to_a_project_is_idempotent(tmp_path) -> None:
+    """같은 프로젝트에 두 번 담아도 소속이 겹쳐 쌓이지 않는다."""
+    cache = _cache(tmp_path)
+    assert cache.set_favorite(ROW, True)
+
+    assert cache.add_favorite_to_project(ROW, "project-b")
+    assert cache.add_favorite_to_project(ROW, "project-b")
+
+    entry = cache.all_project_favorite_entries()[0]
+    assert entry["favorite_project_ids"].count("project-b") == 1

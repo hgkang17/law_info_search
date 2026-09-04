@@ -154,12 +154,18 @@ def register_bundled_pretendard_fonts() -> bool:
 
 def ui_font(
     point_size: float | None = None,
-    weight: QFont.Weight = QFont.Weight.Medium,
+    weight: QFont.Weight = QFont.Weight.Normal,
 ) -> QFont:
     """화면 UI에 쓰는 글꼴 한 벌.
 
     글꼴을 새로 만드는 자리마다 이름만 적어 두면 대체 글꼴과 힌팅이 환경
     따라 흔들린다. 화면 글꼴은 모두 이 함수를 거치게 해서 한곳에서 바꾼다.
+
+    **중간 굵기를 주지 않는다.** 맑은 고딕은 Windows에 Semilight(290)ㆍ
+    Regular(400)ㆍBold(700) 세 벌뿐이라, Medium(500)이나 DemiBold(600)을
+    지정해도 실제 글꼴 파일이 없어 Regular로 그려진다. 값을 올려도 화면이
+    그대로여서 굵기를 계속 올리다 시간을 버리기 쉽다. 굵게 보여야 하는
+    자리는 Bold(700)를 쓴다.
     """
     font = QFont(FONT_FAMILY)
     font.setFamilies(list(UI_FONT_FAMILIES))

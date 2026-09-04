@@ -1581,6 +1581,14 @@ class LawSearchWindow(QMainWindow):
     def _apply_style(self) -> None:
         self.setFont(ui_font())
         style_sheet = """
+            /* 글자 굵기에 대하여.
+               화면 글꼴인 맑은 고딕은 Windows에 Semilight(290)ㆍ
+               Regular(400)ㆍBold(700) 세 벌뿐이다. 그래서 아래에 적힌
+               font-weight 500ㆍ600은 실제 글꼴 파일이 없어 모두 Regular로
+               그려진다. 값을 올려도 화면이 그대로여서 굵기를 계속 올리다
+               시간을 버리기 쉽다. 정말 굵게 보여야 하는 자리는 700을 쓴다.
+               (Pretendard처럼 9단계를 가진 글꼴로 돌아가면 그때는 중간
+               굵기가 실제로 먹는다. fonts/에 파일이 남아 있다.) */
             /* 스크롤바는 본문을 가리지 않도록 얇은 막대 하나로만 둔다.
                트랙과 화살표 없이 손잡이만 보이고, 올렸을 때만 진해진다. */
             QScrollBar:vertical {
@@ -1626,6 +1634,13 @@ class LawSearchWindow(QMainWindow):
                 width: 12px;
                 margin: 2px;
                 background: transparent;
+            }
+            QComboBox QAbstractItemView QScrollBar::handle:vertical,
+            QMenu QScrollBar::handle:vertical {
+                min-height: 28px;
+                background: #c8d1da;
+                border: none;
+                border-radius: 6px;
             }
 
             /* 목록의 ⋯ 버튼에서 열리는 메뉴를 하나의 작은 팝업으로 통일. */
@@ -2822,11 +2837,12 @@ class LawSearchWindow(QMainWindow):
             }
             QPushButton#restoreViewButton {
                 /* 전역 QPushButton의 min-height:38px, padding:0 14px를
-                   덮어써야 ◀ 아이콘이 잘리지 않는다. */
-                min-width: 30px;
-                max-width: 30px;
-                min-height: 30px;
-                max-height: 30px;
+                   덮어써야 ◀ 아이콘이 잘리지 않는다. 값은 위젯 쪽
+                   DETAIL_HEADER_CONTROL_HEIGHT(30px)와 같게 둔다. */
+                min-width: 28px;
+                max-width: 28px;
+                min-height: 28px;
+                max-height: 28px;
                 padding: 0;
                 margin: 0;
                 background: #f3f3f2;
@@ -2918,17 +2934,21 @@ class LawSearchWindow(QMainWindow):
                 font-size: 13px;
                 font-weight: 400;
             }
-            /* 본문을 굴려도 남는 붙박이 제목 줄(법령명ㆍ약칭ㆍ시행일). */
+            /* 본문을 굴려도 남는 붙박이 제목 줄(법령명ㆍ약칭ㆍ시행일).
+               왼쪽 "조문 검색" 머리와 한 덩어리로 이어 보이도록 같은
+               바탕색을 깔고 모서리를 굴리지 않는다. 아래 선 하나만 두어
+               본문과 갈라 준다. */
             QLabel#pinnedDocumentHeadline {
-                background: transparent;
+                background: __WB_CANVAS__;
                 border: none;
+                border-bottom: 1px solid __WB_BORDER__;
                 border-radius: 0;
                 color: #173b63;
                 /* 본문 머리글을 그대로 옮긴 줄이라 본문과 같은 글꼴을 쓴다. */
                 font-family: "Malgun Gothic", "맑은 고딕";
                 font-size: 13px;
                 font-weight: 400;
-                padding: 5px 8px;
+                padding: 6px 8px;
             }
             QLabel#countBadge {
                 background: #e8f1fb;
@@ -3008,6 +3028,11 @@ class LawSearchWindow(QMainWindow):
                 subcontrol-origin: border;
                 subcontrol-position: top right;
                 width: 16px;
+                /* 높이를 적지 않으면 Qt가 두 버튼이 들어갈 자리를 스스로
+                   넉넉히 잡아 칸의 최소 높이를 38px까지 올린다. 그러면
+                   위에 적은 max-height 28px이 무시되고(최소가 최대보다
+                   커진다) 옆의 글꼴 칸보다 8px 높아진다. */
+                height: 14px;
                 background: #f4f7fa;
                 border-left: 1px solid #cfd8e3;
                 border-bottom: 1px solid #dbe3eb;
@@ -3018,6 +3043,7 @@ class LawSearchWindow(QMainWindow):
                 subcontrol-origin: border;
                 subcontrol-position: bottom right;
                 width: 16px;
+                height: 14px;
                 background: #f4f7fa;
                 border-left: 1px solid #cfd8e3;
                 border-top: 1px solid #dbe3eb;
@@ -3044,6 +3070,18 @@ class LawSearchWindow(QMainWindow):
             QDoubleSpinBox#fontSizeSpin:focus,
             QSpinBox#pdfZoomSpin:focus {
                 border: 2px solid #2679bd;
+            }
+            /* 숫자 칸 안에는 QLineEdit이 들어 있어서 아래 전역 QLineEdit
+               규칙의 min-height 38px을 그대로 받는다. 그러면 칸 자체의
+               max-height 28px보다 커져 옆의 글꼴 칸보다 높아진다. 안쪽
+               입력칸은 높이 제약을 풀어 바깥 칸이 정한 높이를 따르게 한다. */
+            QDoubleSpinBox#fontSizeSpin QLineEdit,
+            QSpinBox#pdfZoomSpin QLineEdit {
+                min-height: 0;
+                border: none;
+                border-radius: 0;
+                padding: 0;
+                background: transparent;
             }
             QLabel#mutedText {
                 background: transparent;
@@ -3174,7 +3212,9 @@ class LawSearchWindow(QMainWindow):
                 color: #526176;
                 border: 1px solid #d5dee8;
                 border-radius: 6px;
-                padding: 0 4px;
+                /* 오른쪽에 지우기(×)가 겹쳐 놓이므로 그만큼 자리를 비운다.
+                   비워 두지 않으면 검색어가 × 밑으로 들어가 잘려 보인다. */
+                padding: 0 20px 0 6px;
                 font-size: 8pt;
                 font-weight: 400;
             }
@@ -3422,10 +3462,16 @@ class LawSearchWindow(QMainWindow):
             QWidget#articleTocPanel {
                 background: transparent;
             }
+            /* 오른쪽 법령명 줄과 한 덩어리로 보이게 같은 바탕ㆍ같은 글꼴
+               규격을 쓴다. 굵기를 주면 옆 칸과 어긋나 보인다. */
             QLabel#tocSearchLabel {
-                background: transparent;
+                background: __WB_CANVAS__;
                 color: #445268;
-                font-weight: 600;
+                font-family: "Malgun Gothic", "맑은 고딕";
+                font-size: 13px;
+                font-weight: 400;
+                border-bottom: 1px solid __WB_BORDER__;
+                padding: 6px 8px;
             }
             QLineEdit#tocSearchInput {
                 min-height: 30px;
@@ -4021,10 +4067,12 @@ class LawSearchWindow(QMainWindow):
             }
             QLabel#pageHeadingLabel {
                 background: transparent;
-                color: #1f57c8;
+                /* 법령검색 화면과 같은 기본 회색으로 둔다. 파란 굵은 글씨는
+                   고른 항목을 나타내는 표시라 화면 이름에는 쓰지 않는다. */
+                color: #4e5158;
                 font-family: "Malgun Gothic";
                 font-size: 10pt;
-                font-weight: 600;
+                font-weight: 400;
             }
             QPushButton#categoryTrackButton {
                 background: transparent;
@@ -4363,7 +4411,8 @@ class LawSearchWindow(QMainWindow):
                 color: #6f7279;
                 text-decoration: none;
             }
-            QPushButton#updateLinkButton { font-weight: 600; }
+            /* 오른쪽 끝 보조 링크라 굵게 두지 않는다. */
+            QPushButton#updateLinkButton { font-weight: 400; }
             QPushButton#aboutLinkButton:hover,
             QPushButton#updateLinkButton:hover { color: #1f57c8; }
             QMenu {
@@ -4376,8 +4425,14 @@ class LawSearchWindow(QMainWindow):
                 background: #eeeeed;
                 color: #242529;
             }
+            /* 색만 덮어쓰면 앞에서 준 둥근 모서리가 남지만, 규칙이
+               흩어져 있으면 다음에 손볼 때 놓치기 쉬워 함께 적어 둔다. */
             QScrollBar::handle:vertical,
-            QScrollBar::handle:horizontal { background: #c7c8ca; }
+            QScrollBar::handle:horizontal {
+                background: #c7c8ca;
+                border: none;
+                border-radius: 6px;
+            }
             QScrollBar::handle:vertical:hover,
             QScrollBar::handle:horizontal:hover { background: #9ea0a4; }
             QProgressBar { background: #e1e2e3; }

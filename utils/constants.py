@@ -14,17 +14,19 @@ UI_FONT_PIXEL_SIZE = 14
 # 스타일시트에 그대로 넣을 수 있는 형태.
 UI_FONT_CSS_FAMILY = '"Malgun Gothic", "맑은 고딕"' 
 # 본문(법령ㆍ행정규칙 조문) 글꼴. 화면 UI 글꼴과 따로 두어 여기만 바꾸면
-# 본문 전체가 함께 바뀐다. 법령과 수립지침류를 맑은 고딕으로 통일한다.
-DETAIL_FONT_FAMILY = "Malgun Gothic"
+# 본문 전체가 함께 바뀐다. 맑은 고딕으로 옮겼다가 실제 화면을 보고 굴림
+# 10pt로 되돌렸다. 본문 위 글꼴 칸에서 사용자가 다른 글꼴을 고를 수 있고,
+# 고른 값은 설정에 남는다.
+DETAIL_FONT_FAMILY = "Gulim"
 # 본문 HTML(QTextDocument)용 글꼴 목록. 글꼴이 없는 환경을 위해 대체 글꼴을
 # 함께 적는다. 위 DETAIL_FONT_FAMILY와 같은 글꼴을 첫머리에 둔다.
-DETAIL_FONT_CSS_FAMILY = "'Malgun Gothic', '맑은 고딕', 'Gulim', '굴림'"
+DETAIL_FONT_CSS_FAMILY = "'Gulim', '굴림', 'Malgun Gothic', '맑은 고딕'"
 # 위 목록과 같은 차례를 QFont에도 그대로 준다. 목록을 지정하지 않으면
 # 위젯이 앱 기본 글꼴의 목록을 상속해 본문 글꼴이 화면 UI 글꼴로 덮인다.
-DETAIL_FONT_FAMILIES = ("Malgun Gothic", "맑은 고딕", "Gulim", "굴림")
+DETAIL_FONT_FAMILIES = ("Gulim", "굴림", "Malgun Gothic", "맑은 고딕")
 # 본문을 처음 열 때의 글자 크기(pt). 사용자가 본문 위에서 조절하면 그 값이
 # 설정에 남아 다음부터는 그쪽을 쓴다.
-DEFAULT_DETAIL_FONT_POINT = 9.5
+DEFAULT_DETAIL_FONT_POINT = 10.0
 
 APP_TITLE = "국가법령정보 통합검색"
 APP_VERSION = "1.3.3"

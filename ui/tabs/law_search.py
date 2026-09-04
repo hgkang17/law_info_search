@@ -57,7 +57,11 @@ from storage.paths import (
 from workers.search_worker import (
     ApiWorker,
 )
-from utils.constants import DEFAULT_DETAIL_FONT_POINT, FONT_FAMILY
+from utils.constants import (
+    DEFAULT_DETAIL_FONT_POINT,
+    DETAIL_FONT_FAMILY,
+    FONT_FAMILY,
+)
 from utils.formatting import (
     body_to_html,
     detail_document_header,
@@ -81,6 +85,10 @@ from molit_cgm_expc_api import (
     _find_text,
 )
 from ui.dialogs import _position_dialog_beside
+
+
+# 화면 이름 띠의 높이. 법령검색 화면의 검색칸 시작 자리와 맞춘 값이다.
+PAGE_HEADING_HEIGHT = 50
 
 
 class LawSearchTab(QWidget):
@@ -117,9 +125,9 @@ class LawSearchTab(QWidget):
         )
         self.detail_font_family = str(
             self.recent_search_manager.settings.value(
-                f"{service}_detail_font_family", "Malgun Gothic"
+                f"{service}_detail_font_family", DETAIL_FONT_FAMILY
             )
-            or "Malgun Gothic"
+            or DETAIL_FONT_FAMILY
         )
         self._reading_mode = False
         self._normal_window_margins: tuple[int, int, int, int] | None = None
@@ -166,7 +174,10 @@ class LawSearchTab(QWidget):
         }
         self.page_heading = QFrame()
         self.page_heading.setObjectName("pageHeadingTrack")
-        self.page_heading.setFixedHeight(52)
+        # 법령검색 화면에서 검색칸이 시작하는 자리(64px)와 같아지도록 잡은
+        # 값이다. 여기가 어긋나면 화면을 오갈 때 검색칸이 위아래로 흔들린다.
+        # 값을 바꿀 때는 tests/test_search_row_alignment.py를 함께 본다.
+        self.page_heading.setFixedHeight(PAGE_HEADING_HEIGHT)
         page_heading_layout = QHBoxLayout(self.page_heading)
         page_heading_layout.setContentsMargins(12, 0, 12, 0)
         self.page_heading_label = QLabel(page_names.get(self.service, self.service))
@@ -720,7 +731,7 @@ class LawSearchTab(QWidget):
             settings.sync()
 
     def _set_detail_font_family(self, font: QFont) -> None:
-        family = str(font.family() or "Malgun Gothic")
+        family = str(font.family() or DETAIL_FONT_FAMILY)
         if family == self.detail_font_family:
             return
         self.detail_font_family = family
@@ -783,15 +794,16 @@ class LawSearchTab(QWidget):
             self.detail_search.end_document_change()
 
     def _selected_detail_cursor(self) -> QTextCursor | None:
+        """본문에서 드래그해 둔 구간을 돌려준다. 없으면 아무 일도 하지 않는다.
+
+        색을 먼저 골라 두고 그 다음 글자를 드래그하는 순서로도 쓸 수 있어야
+        한다. 예전에는 선택이 없으면 대화상자를 띄워 그 순서를 막았다.
+        고르기만 한 것으로는 아무 일도 일어나지 않으면 그만이라, 굳이
+        알림을 띄우지 않는다.
+        """
         cursor = self.detail_view.textCursor()
         if cursor.hasSelection():
             return cursor
-        QMessageBox.information(
-            self,
-            "본문 선택",
-            "색상을 적용할 본문 구간을 먼저 드래그해 선택해 주세요.",
-        )
-        self.detail_view.setFocus()
         return None
 
     def _apply_palette_color(

@@ -25,6 +25,7 @@ from ui.theme import (
 )
 from ui.widgets import (
     CenteredCheckDelegate,
+    THREE_STAGE_BUTTON_WIDTH,
     DETAIL_DOCUMENT_MARGIN,
     DropdownComboBox,
     DeferredWrapTextBrowser,
@@ -98,7 +99,7 @@ from molit_cgm_expc_api import (
 from utils.annex_notation import annex_hint_in_query, annex_related_law_name, row_matches_annex_hint
 from utils.annex_parse import parse_annex_bytes
 from utils.law_download import download_law_file
-from utils.constants import DEFAULT_DETAIL_FONT_POINT
+from utils.constants import DEFAULT_DETAIL_FONT_POINT, DETAIL_FONT_FAMILY
 from utils.formatting import (
     body_to_html,
     detail_document_header,
@@ -346,9 +347,9 @@ class ResourceSearchTab(QWidget):
         )
         self.detail_font_family = str(
             self.recent_search_manager.settings.value(
-                "resource_detail_font_family", "Malgun Gothic"
+                "resource_detail_font_family", DETAIL_FONT_FAMILY
             )
-            or "Malgun Gothic"
+            or DETAIL_FONT_FAMILY
         )
         self._sort_column = -1
         self._sort_ascending = True
@@ -1385,7 +1386,7 @@ class ResourceSearchTab(QWidget):
             settings.sync()
 
     def _set_detail_font_family(self, font: QFont) -> None:
-        family = str(font.family() or "Malgun Gothic")
+        family = str(font.family() or DETAIL_FONT_FAMILY)
         if family == self.detail_font_family:
             return
         self.detail_font_family = family
@@ -1414,9 +1415,15 @@ class ResourceSearchTab(QWidget):
             "toc_query": "",
             "scroll": 0,
             "font_size": self.detail_font_size,
+            # 크기와 함께 글꼴도 기억한다. 그려 둔 문서를 그대로 되살릴 때
+            # 지금 설정과 같은지 견주는 데 쓴다.
+            "font_family": self.detail_font_family,
             "memos": [],
             "base_foregrounds": [],
             "three_stage_articles": [],
+            # 별표 목록은 화면 하나가 아니라 탭마다 다르다. 함께 저장해
+            # 두지 않으면 다른 탭을 다녀온 뒤 별표를 눌러도 반응이 없다.
+            "annex_entries": [],
             "render_highlight_terms": [],
             "document": None,
             # 탭의 별표(즐겨찾기)를 켜고 끄려면 어떤 문서인지 알아야 한다.
@@ -1506,6 +1513,11 @@ class ResourceSearchTab(QWidget):
         source_font_size: float = 10,
     ) -> None:
         self._ensure_active_text_document()
+        # 창 크기 조절 때문에 미뤄 둔 줄바꿈이 남아 있으면 이전 폭이 고정된
+        # 채로 새 내용이 배치된다. 갈아 끼우기 전에 끝내 둔다.
+        settle = getattr(self.detail_view, "settle_wrap_now", None)
+        if callable(settle):
+            settle()
         previous_text = self.detail_view.toPlainText()
         previous_base_foregrounds = capture_base_foreground_spans(
             self.detail_view.document()
@@ -1541,6 +1553,10 @@ class ResourceSearchTab(QWidget):
                 pass
         finally:
             self.detail_search.end_document_change()
+        # 글자 크기ㆍ글꼴을 바꾼 직후, 문서는 새로 배치됐는데 화면은 이전
+        # 그림이 남아 본문이 빈 것처럼 보이는 일이 있었다(창을 최소화했다
+        # 키우면 그제야 제자리를 찾았다). 배치가 끝난 뒤 한 번 다시 그린다.
+        self.detail_view.viewport().update()
 
     def _save_active_document_state(self) -> None:
         if self._restoring_document:
@@ -1574,6 +1590,7 @@ class ResourceSearchTab(QWidget):
                 # 보던 조문 근처가 펼쳐져 있었다.
                 "toc_scroll": self.toc_tree.verticalScrollBar().value(),
                 "font_size": self.detail_font_size,
+                "font_family": self.detail_font_family,
                 "memos": [dict(memo) for memo in self._visible_memos],
                 "base_foregrounds": base_foregrounds,
                 "three_stage_articles": [
@@ -1581,6 +1598,9 @@ class ResourceSearchTab(QWidget):
                     for article in self._current_three_stage_articles
                 ],
                 "render_highlight_terms": list(self.highlight_terms),
+                "annex_entries": [
+                    dict(entry) for entry in self._annex_section_entries
+                ],
                 "prefer_source_html": False,
             }
         )
@@ -1682,11 +1702,30 @@ class ResourceSearchTab(QWidget):
         self._clear_three_stage_buttons()
         self._current_three_stage_articles = []
 
+    def _document_matches_font(self, state: dict[str, object]) -> bool:
+        """그려 둔 문서가 지금 글자 크기ㆍ글꼴 설정과 같은지 본다."""
+        try:
+            saved_size = float(state.get("font_size") or 0.0)
+        except (TypeError, ValueError):
+            return False
+        if abs(saved_size - float(self.detail_font_size)) >= 0.01:
+            return False
+        saved_family = str(state.get("font_family") or "")
+        # 예전 판이 남긴 상태에는 글꼴 이름이 없다. 그때는 크기만 견준다.
+        return not saved_family or saved_family == self.detail_font_family
+
     def _restore_document_state(self, key: str) -> None:
         state = self._document_states.get(key, self._empty_document_state())
         # 탭마다 머리글이 다르므로 본문보다 먼저 바꿔 둔다. 저장된 값이
         # 없으면(법령이 아닌 문서) 감춰서 앞 탭 머리글이 남지 않게 한다.
         self._show_pinned_headline(str(state.get("headline") or ""))
+        # 별표 목록도 탭마다 다르다. 되살리지 않으면 다른 탭을 다녀온 뒤
+        # 별표를 눌러도 반응이 없다.
+        self._annex_section_entries = [
+            dict(entry)
+            for entry in (state.get("annex_entries") or [])
+            if isinstance(entry, dict)
+        ]
         self._restoring_document = True
         # 탭을 바꿀 때마다 detail_view 하나에 새 문서 HTML을 다시
         # 불러오는데, 최종 폭이 자리 잡기 전에 한 번 그려졌다가 폭이
@@ -1697,6 +1736,12 @@ class ResourceSearchTab(QWidget):
         try:
             cached_document = state.get("document")
             has_rendered_document = isinstance(cached_document, QTextDocument)
+            # 글자 크기ㆍ글꼴은 화면 전체에 하나로 두는데, 바꿀 때는 그때
+            # 보고 있던 문서만 다시 그린다. 그려 둔 다른 탭 문서를 그대로
+            # 되살리면 조절칸은 새 값을 보여 주면서 글자는 옛 크기 그대로인
+            # 어긋남이 생긴다. 설정과 다르면 아래 HTML 경로로 다시 그린다.
+            if has_rendered_document and not self._document_matches_font(state):
+                has_rendered_document = False
             if has_rendered_document:
                 self._set_active_text_document(cached_document)
             else:
@@ -2312,8 +2357,9 @@ class ResourceSearchTab(QWidget):
 
         root_frame = self.detail_view.document().rootFrame()
         frame_format = root_frame.frameFormat()
-        # 조문 첫 줄의 오른쪽 끝에 버튼 자리를 따로 확보한다.
-        frame_format.setRightMargin(64.0)
+        # 조문 첫 줄의 오른쪽 끝에 버튼 자리를 따로 확보한다. 버튼 너비를
+        # 줄이면 이 여백도 함께 줄여야 본문 오른쪽에 빈 칸이 남지 않는다.
+        frame_format.setRightMargin(float(THREE_STAGE_BUTTON_WIDTH + 24))
         root_frame.setFrameFormat(frame_format)
 
         viewport = self.detail_view.viewport()
@@ -2336,8 +2382,9 @@ class ResourceSearchTab(QWidget):
 
             button = QPushButton("3단", viewport)
             button.setObjectName("threeStageArticleButton")
-            # 글자 크기는 유지하고 버튼 안쪽 여백만 줄인다.
-            button.setFixedSize(56, 24)
+            # 글자 크기는 유지하고 버튼 안쪽 여백만 줄인다. 글자가
+            # "3단비교"에서 "3단"으로 짧아진 만큼 너비도 함께 줄인다.
+            button.setFixedSize(THREE_STAGE_BUTTON_WIDTH, 24)
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.setToolTip(
                 f"{article['label']}의 법률·시행령·시행규칙을 3단으로 비교합니다."
@@ -6087,15 +6134,16 @@ class ResourceSearchTab(QWidget):
         popup.move(x, y)
 
     def _selected_detail_cursor(self) -> QTextCursor | None:
+        """본문에서 드래그해 둔 구간을 돌려준다. 없으면 아무 일도 하지 않는다.
+
+        색을 먼저 골라 두고 그 다음 글자를 드래그하는 순서로도 쓸 수 있어야
+        한다. 예전에는 선택이 없으면 대화상자를 띄워 그 순서를 막았다.
+        고르기만 한 것으로는 아무 일도 일어나지 않으면 그만이라, 굳이
+        알림을 띄우지 않는다.
+        """
         cursor = self.detail_view.textCursor()
         if cursor.hasSelection():
             return cursor
-        QMessageBox.information(
-            self,
-            "본문 선택",
-            "색상을 적용할 본문 구간을 먼저 드래그해 선택해 주세요.",
-        )
-        self.detail_view.setFocus()
         return None
 
     def _apply_palette_color(
@@ -8625,6 +8673,11 @@ class ResourceSearchTab(QWidget):
             )
         if clear_highlights:
             self.highlight_terms = ()
+        # 저장 본문은 아래에서 그려 둔 HTML을 그대로 되살리므로
+        # _set_detail_document를 거치지 않는다. 별표 목록은 그 안에서만
+        # 채워지기 때문에, 여기서 원문으로 다시 만들어 두지 않으면 화면에는
+        # 별표가 보이는데 눌러도 아무 일이 없다.
+        self._annex_section_entries = list(self._law_annex_entries(payload))
         key = f"{row['target']}:{row['id'] or row['name']}"
         state = self._document_states.get(key)
         rendered_plain_text = record.get("rendered_plain_text")
@@ -9385,7 +9438,7 @@ class ResourceSearchTab(QWidget):
                 )
             html_parts.append(
                 '<div class="annex-item" style="margin:0; padding:10px 0; '
-                'line-height:1.55; font-family:\'Malgun Gothic\',\'맑은 고딕\'; '
+                'line-height:1.75; font-family:\'Malgun Gothic\',\'맑은 고딕\'; '
                 'font-size:9.5pt; font-weight:400; color:#242529;">'
                 f"{title_html}"
                 + (f"&nbsp;&nbsp;{icon_html}" if icon_html else "")
@@ -9436,7 +9489,12 @@ class ResourceSearchTab(QWidget):
         self.copy_button.setEnabled(bool(self.current_detail_text))
 
     def _apply_annex_text_font(self) -> None:
-        """본문 하단 별표 제목에만 맑은 고딕과 무힌팅을 적용한다."""
+        """본문 하단 별표 제목의 글꼴ㆍ힌팅ㆍ밑줄을 손본다.
+
+        제목이 링크라 Qt가 밑줄을 그어 버린다. HTML에 적은
+        ``text-decoration:none``으로는 지워지지 않아 여기서 글자 서식으로
+        직접 끈다. 색은 그대로 두어 누를 수 있는 자리임은 남긴다.
+        """
         document = self.detail_view.document()
         for entry in self._annex_section_entries:
             shown = self._annex_display_title(entry)
@@ -9445,6 +9503,10 @@ class ResourceSearchTab(QWidget):
                 continue
             character_format = QTextCharFormat()
             character_format.setFontFamilies(["Malgun Gothic", "맑은 고딕"])
+            character_format.setFontUnderline(False)
+            character_format.setUnderlineStyle(
+                QTextCharFormat.UnderlineStyle.NoUnderline
+            )
             setter = getattr(character_format, "setFontHintingPreference", None)
             if callable(setter):
                 setter(QFont.HintingPreference.PreferNoHinting)

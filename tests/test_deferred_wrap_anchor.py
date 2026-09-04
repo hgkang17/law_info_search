@@ -5,7 +5,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QPoint
 from PySide6.QtGui import QTextCursor, QTextDocument
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QTextEdit
 
 from ui.widgets import DETAIL_DOCUMENT_MARGIN, DeferredWrapTextBrowser
 
@@ -70,4 +70,31 @@ def test_replacing_document_resets_margin_unless_it_is_set_again() -> None:
     # ResourceSearchTab._set_active_text_document이 하는 보정과 같다.
     plain.setDocumentMargin(DETAIL_DOCUMENT_MARGIN)
     assert browser.document().documentMargin() == DETAIL_DOCUMENT_MARGIN
+    browser.deleteLater()
+
+
+def test_settle_wrap_now_restores_widget_width_before_new_content() -> None:
+    """내용을 갈아 끼우기 전에 미뤄 둔 줄바꿈을 끝낸다.
+
+    지연 줄바꿈이 남은 채 새 문서를 넣으면 이전 폭이 고정된 채 배치되고,
+    뒤늦게 도착한 타이머가 이전 문서 기준 스크롤을 되살리려 든다. 글자
+    크기를 바꾼 직후 본문이 빈 것처럼 보이던 원인이다.
+    """
+    app = QApplication.instance() or QApplication([])
+    browser = DeferredWrapTextBrowser()
+    browser.resize(400, 300)
+    browser.setPlainText("본문 " * 200)
+    app.processEvents()
+
+    # 창 크기 조절 중인 상태를 흉내 낸다.
+    browser._wrap_deferred = True
+    browser._resize_anchor_position = 5
+    browser.setLineWrapMode(QTextEdit.LineWrapMode.FixedPixelWidth)
+    browser.setLineWrapColumnOrWidth(120)
+
+    browser.settle_wrap_now()
+
+    assert browser._wrap_deferred is False
+    assert browser.lineWrapMode() == QTextEdit.LineWrapMode.WidgetWidth
+    assert browser._resize_anchor_position == -1
     browser.deleteLater()

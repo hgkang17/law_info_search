@@ -17,7 +17,7 @@ from storage.paths import (
 )
 from PySide6.QtCore import QSettings, QSize, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QIcon, QKeySequence, QShortcut
-from PySide6.QtWidgets import QAbstractItemView, QCheckBox, QFrame, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMenu, QMessageBox, QPushButton, QSplitter, QStyle, QTableWidget, QTableWidgetItem, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QCheckBox, QFrame, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMenu, QMessageBox, QPushButton, QSplitter, QStyle, QTabBar, QTableWidget, QTableWidgetItem, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 import json
 import re
 import uuid
@@ -35,7 +35,6 @@ class ViewedLawsTab(QWidget):
         ("law", "법령검색"),
         ("article", "조항호목"),
         ("annex", "별표·서식"),
-        ("keyword", "키워드검색"),
         ("central", "중앙부처\n질의회신"),
         ("expc", "법령해석례"),
         ("prec", "판례검색"),
@@ -89,10 +88,18 @@ class ViewedLawsTab(QWidget):
         heading = QFrame()
         heading.setObjectName("card")
         heading_layout = QVBoxLayout(heading)
-        heading_layout.setContentsMargins(18, 14, 18, 14)
+        # 즐겨찾기 화면은 제목ㆍ설명을 감추므로 위아래 여백을 줄여 그
+        # 자리가 빈 띠로 남지 않게 한다.
+        heading_layout.setContentsMargins(
+            18, 4 if favorites_only else 14, 18, 4 if favorites_only else 14
+        )
         heading_layout.setSpacing(5)
         title = QLabel("즐겨찾기" if favorites_only else "저장내역")
         title.setObjectName("sectionTitle")
+        # 즐겨찾기 화면은 왼쪽 메뉴에 이미 같은 이름이 서 있어서 제목을
+        # 한 번 더 두면 같은 말이 두 번 나온다. 저장내역은 그 아래 설명이
+        # 함께 서므로 제목을 남긴다.
+        title.setVisible(not favorites_only)
         description = QLabel(
             "프로젝트마다 법령·조항호목·별표서식을 독립적으로 모을 수 있고, "
             "같은 항목을 여러 프로젝트에 중복 등록할 수 있습니다."
@@ -115,24 +122,26 @@ class ViewedLawsTab(QWidget):
         heading_layout.addWidget(self.path_label)
         root.addWidget(heading)
 
-        self.project_combo: DropdownComboBox | None = None
+        self.project_tabs: QTabBar | None = None
         if favorites_only:
             project_row = QHBoxLayout()
             project_row.setSpacing(7)
-            project_label = QLabel("프로젝트")
-            project_label.setObjectName("favoriteProjectLabel")
-            self.project_combo = DropdownComboBox()
-            self.project_combo.setObjectName("favoriteProjectCombo")
-            self.project_combo.setMinimumWidth(210)
+            # 프로젝트는 자주 오가는 자리라 펼쳐서 고르는 콤보보다 탭이 낫다.
+            # 목록이 잘릴 일도 없고, 공통 목록에서 끌어다 탭 위에 떨어뜨려
+            # 그 프로젝트로 담는 길도 열린다.
+            self.project_tabs = QTabBar()
+            self.project_tabs.setObjectName("favoriteProjectTabs")
+            self.project_tabs.setExpanding(False)
+            self.project_tabs.setDrawBase(False)
+            self.project_tabs.setUsesScrollButtons(True)
+            self.project_tabs.setElideMode(Qt.TextElideMode.ElideRight)
+            self.project_tabs.setAcceptDrops(True)
             for project in self.favorite_projects:
-                self.project_combo.addItem(
-                    str(project["name"]), str(project["id"])
-                )
-            active_index = self.project_combo.findData(
-                self.active_favorite_project
-            )
-            self.project_combo.setCurrentIndex(max(0, active_index))
-            self.project_combo.currentIndexChanged.connect(
+                index = self.project_tabs.addTab(str(project["name"]))
+                self.project_tabs.setTabData(index, str(project["id"]))
+            active_index = self._project_tab_index(self.active_favorite_project)
+            self.project_tabs.setCurrentIndex(max(0, active_index))
+            self.project_tabs.currentChanged.connect(
                 self._favorite_project_changed
             )
             self.project_add_button = QPushButton("새 프로젝트")
@@ -147,8 +156,8 @@ class ViewedLawsTab(QWidget):
             self.project_add_button.clicked.connect(self._create_favorite_project)
             self.project_rename_button.clicked.connect(self._rename_favorite_project)
             self.project_delete_button.clicked.connect(self._delete_favorite_project)
-            project_row.addWidget(project_label)
-            project_row.addWidget(self.project_combo)
+            project_row.addWidget(self.project_tabs, 0, Qt.AlignmentFlag.AlignVCenter)
+            project_row.addSpacing(6)
             project_row.addWidget(self.project_add_button)
             project_row.addWidget(self.project_rename_button)
             project_row.addWidget(self.project_delete_button)
@@ -468,10 +477,30 @@ class ViewedLawsTab(QWidget):
         )
         self.settings.sync()
 
+    def _project_tab_index(self, project_id: str) -> int:
+        """프로젝트 id가 몇 번째 탭인지. 없으면 -1."""
+        if self.project_tabs is None:
+            return -1
+        for index in range(self.project_tabs.count()):
+            if str(self.project_tabs.tabData(index) or "") == str(project_id):
+                return index
+        return -1
+
+    def _current_project_id(self) -> str:
+        if self.project_tabs is None:
+            return "default"
+        data = self.project_tabs.tabData(self.project_tabs.currentIndex())
+        return str(data or "default")
+
+    def _current_project_name(self) -> str:
+        if self.project_tabs is None:
+            return ""
+        return self.project_tabs.tabText(self.project_tabs.currentIndex())
+
     def _favorite_project_changed(self, _index: int = -1) -> None:
-        if self.project_combo is None:
+        if self.project_tabs is None:
             return
-        project_id = str(self.project_combo.currentData() or "default")
+        project_id = self._current_project_id()
         if project_id == self.active_favorite_project:
             return
         if self.favorite_trees:
@@ -482,7 +511,7 @@ class ViewedLawsTab(QWidget):
         self.favorite_folders = self._load_favorite_folders()
         self.refresh()
         self.status_label.setText(
-            f"'{self.project_combo.currentText()}' 프로젝트를 열었습니다."
+            f"'{self._current_project_name()}' 프로젝트를 열었습니다."
         )
 
     def _create_favorite_project(self) -> None:
@@ -494,17 +523,16 @@ class ViewedLawsTab(QWidget):
             return
         project_id = uuid.uuid4().hex
         self.favorite_projects.append({"id": project_id, "name": name})
-        self.project_combo.addItem(name, project_id)
+        index = self.project_tabs.addTab(name)
+        self.project_tabs.setTabData(index, project_id)
         self._save_favorite_projects()
-        self.project_combo.setCurrentIndex(
-            self.project_combo.findData(project_id)
-        )
+        self.project_tabs.setCurrentIndex(index)
 
     def _rename_favorite_project(self) -> None:
-        if self.project_combo is None:
+        if self.project_tabs is None:
             return
-        project_id = str(self.project_combo.currentData() or "")
-        current = self.project_combo.currentText()
+        project_id = self._current_project_id()
+        current = self._current_project_name()
         name, accepted = QInputDialog.getText(
             self,
             "즐겨찾기 프로젝트 이름 변경",
@@ -518,19 +546,19 @@ class ViewedLawsTab(QWidget):
             if project["id"] == project_id:
                 project["name"] = name
                 break
-        self.project_combo.setItemText(self.project_combo.currentIndex(), name)
+        self.project_tabs.setTabText(self.project_tabs.currentIndex(), name)
         self._save_favorite_projects()
 
     def _delete_favorite_project(self) -> None:
-        if self.project_combo is None:
+        if self.project_tabs is None:
             return
-        project_id = str(self.project_combo.currentData() or "")
+        project_id = self._current_project_id()
         if project_id == "default":
             QMessageBox.information(
                 self, "프로젝트 삭제", "기본 프로젝트는 삭제할 수 없습니다."
             )
             return
-        name = self.project_combo.currentText()
+        name = self._current_project_name()
         answer = QMessageBox.question(
             self,
             "즐겨찾기 프로젝트 삭제",
@@ -545,13 +573,13 @@ class ViewedLawsTab(QWidget):
             for project in self.favorite_projects
             if project["id"] != project_id
         ]
-        index = self.project_combo.findData(project_id)
+        index = self._project_tab_index(project_id)
         if index >= 0:
-            self.project_combo.removeItem(index)
+            self.project_tabs.removeTab(index)
         self.active_favorite_project = "default"
         self._save_favorite_projects()
-        self.project_combo.setCurrentIndex(
-            self.project_combo.findData("default")
+        self.project_tabs.setCurrentIndex(
+            max(0, self._project_tab_index("default"))
         )
 
     def _favorite_folder_settings_key(self) -> str:
@@ -702,7 +730,10 @@ class ViewedLawsTab(QWidget):
         if target in ("licbyl", "admbyl", "ordinbyl") or "별표서식" in item_kind:
             return "annex"
         if target in ("ai_search", "ai_related"):
-            return "keyword"
+            # 지능형 검색 결과의 법령 조문은 이제 법령검색 화면과 같은
+            # 조문 즐겨찾기로 들어간다. 예전 판이 남긴 저장본만 여기로
+            # 오므로 법령 칸에 함께 둔다.
+            return "law"
         if target == "expc":
             return "expc"
         if target == "prec":

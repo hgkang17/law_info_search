@@ -62,7 +62,7 @@ from workers.search_worker import (
     ApiWorker,
     RelatedArticleWorker,
 )
-from utils.constants import DEFAULT_DETAIL_FONT_POINT
+from utils.constants import DEFAULT_DETAIL_FONT_POINT, DETAIL_FONT_FAMILY
 from utils.formatting import (
     body_to_html,
     detail_document_header,
@@ -126,9 +126,9 @@ class AiLawSearchTab(QWidget):
         )
         self.detail_font_family = str(
             self.recent_search_manager.settings.value(
-                f"{service}_detail_font_family", "Malgun Gothic"
+                f"{service}_detail_font_family", DETAIL_FONT_FAMILY
             )
-            or "Malgun Gothic"
+            or DETAIL_FONT_FAMILY
         )
         self._reading_mode = False
         self._sort_column = -1
@@ -293,6 +293,9 @@ class AiLawSearchTab(QWidget):
             self._toggle_favorite_at_row,
             self._is_favorite_at_row,
             self.result_table,
+            # 법령 조문만 조문 즐겨찾기에 얹을 수 있다. 행정규칙 조문과
+            # 별표ㆍ서식 줄에는 별을 그리지 않는다.
+            supports_callback=self._row_supports_favorite,
         )
         self.name_delegate = SearchHighlightDelegate(self.result_table)
         self.save_check_delegate = CenteredCheckDelegate(self.result_table)
@@ -770,7 +773,7 @@ class AiLawSearchTab(QWidget):
             settings.sync()
 
     def _set_detail_font_family(self, font: QFont) -> None:
-        family = str(font.family() or "Malgun Gothic")
+        family = str(font.family() or DETAIL_FONT_FAMILY)
         if family == self.detail_font_family:
             return
         self.detail_font_family = family
@@ -828,15 +831,16 @@ class AiLawSearchTab(QWidget):
             self.detail_search.end_document_change()
 
     def _selected_detail_cursor(self) -> QTextCursor | None:
+        """본문에서 드래그해 둔 구간을 돌려준다. 없으면 아무 일도 하지 않는다.
+
+        색을 먼저 골라 두고 그 다음 글자를 드래그하는 순서로도 쓸 수 있어야
+        한다. 예전에는 선택이 없으면 대화상자를 띄워 그 순서를 막았다.
+        고르기만 한 것으로는 아무 일도 일어나지 않으면 그만이라, 굳이
+        알림을 띄우지 않는다.
+        """
         cursor = self.detail_view.textCursor()
         if cursor.hasSelection():
             return cursor
-        QMessageBox.information(
-            self,
-            "본문 선택",
-            "색상을 적용할 본문 구간을 먼저 드래그해 선택해 주세요.",
-        )
-        self.detail_view.setFocus()
         return None
 
     def _apply_palette_color(
@@ -1643,34 +1647,66 @@ class AiLawSearchTab(QWidget):
         item.setFlags(flags)
         return item
 
+    @staticmethod
+    def _article_favorite_target(row: dict[str, object]) -> dict[str, str] | None:
+        """이 결과 행을 조문 즐겨찾기로 걸 수 있으면 필요한 값을 돌려준다.
+
+        지능형 검색이 주는 법령ID와 여섯 자리 조문코드는 조항호목 API가
+        받는 값과 같은 체계다. 그래서 법령 조문은 법령검색 화면의 조문
+        즐겨찾기에 그대로 얹을 수 있다. 행정규칙 조문과 별표ㆍ서식은
+        그렇지 않아 대상이 아니다(행정규칙은 조항호목 API 자체가 없고,
+        별표ㆍ서식은 걸어 둘 조문 번호가 없다).
+        """
+        if str(row.get("kind") or "").startswith("행정규칙"):
+            return None
+        law_id = str(row.get("source_id") or "").strip()
+        jo = str(row.get("jo_code") or "").strip()
+        if not law_id or not jo:
+            return None
+        return {
+            "law_id": law_id,
+            "jo": jo,
+            "law_name": str(row.get("name") or "법령"),
+            "label": str(row.get("provision") or "").strip(),
+        }
+
     def _is_favorite_at_row(self, row_index: int) -> bool:
         if not (0 <= row_index < len(self.result_rows)):
             return False
-        return self.law_cache.is_favorite(self.result_rows[row_index])
+        target = self._article_favorite_target(self.result_rows[row_index])
+        if target is None:
+            return False
+        return bool(
+            self._resource_action(
+                "is_article_favorite_by_id", target["law_id"], target["jo"]
+            )
+        )
+
+    def _row_supports_favorite(self, row_index: int) -> bool:
+        """별을 그릴 행인지. 법령 조문이 아니면 아예 그리지 않는다."""
+        if not (0 <= row_index < len(self.result_rows)):
+            return False
+        return self._article_favorite_target(self.result_rows[row_index]) is not None
 
     def _toggle_favorite_at_row(self, row_index: int) -> None:
         if not (0 <= row_index < len(self.result_rows)):
             return
-        row = self.result_rows[row_index]
-        wants_favorite = not self.law_cache.is_favorite(row)
-        if wants_favorite and not self.law_cache.has_snapshot(row):
-            self._pending_favorite_row = row
-            self.result_table.selectRow(row_index)
-            if self.is_related and not row.get("content"):
-                self._request_related_article(row_index, row)
-            else:
-                self._show_selected_result(force_live=True)
+        target = self._article_favorite_target(self.result_rows[row_index])
+        if target is None:
             return
-        if self.law_cache.set_favorite(row, wants_favorite):
-            self.status_label.setText(
-                "즐겨찾기에 추가했습니다."
-                if wants_favorite
-                else "즐겨찾기에서 뺐습니다."
-            )
-        else:
-            self.status_label.setText(
-                f"즐겨찾기 설정에 실패했습니다: {self.law_cache.last_error}"
-            )
+        label = " ".join(
+            part for part in (target["law_name"], target["label"]) if part
+        )
+        if self._is_favorite_at_row(row_index):
+            self.status_label.setText(f"{label}은(는) 이미 즐겨찾기에 있습니다.")
+            return
+        self._resource_action(
+            "add_article_favorite_by_id",
+            target["law_id"],
+            target["jo"],
+            label,
+            target["law_name"],
+        )
         self.result_table.viewport().update()
 
     def _refresh_snapshot_checks(self) -> None:

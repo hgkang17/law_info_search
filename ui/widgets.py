@@ -79,6 +79,7 @@ from PySide6.QtWidgets import (
 )
 from storage.recent import RecentSearchManager
 from ui.assets import CLOSE_MARK_ICON_PATH
+from utils.constants import DETAIL_FONT_FAMILY
 from utils.formatting import hwp_friendly_clipboard_html
 from utils.parsing import whitespace_flexible_pattern
 
@@ -461,7 +462,10 @@ def build_restore_view_button(owner) -> QPushButton:
     """크게 보기에서 원래 화면으로 돌아가는 왼쪽 ◀ 버튼."""
     button = QPushButton()
     button.setObjectName("restoreViewButton")
-    button.setFixedSize(30, 30)
+    # 같은 줄의 글꼴 칸ㆍ글자 크기 칸ㆍ메모 단추와 높이를 맞춘다.
+    button.setFixedSize(
+        DETAIL_HEADER_CONTROL_HEIGHT, DETAIL_HEADER_CONTROL_HEIGHT
+    )
     button.setIcon(
         button.style().standardIcon(QStyle.StandardPixmap.SP_ArrowBack)
     )
@@ -486,6 +490,14 @@ DETAIL_FONT_SIZE_MAX = 18.0
 DETAIL_FONT_SIZE_STEP = 0.5
 DETAIL_FONT_CONTROL_WIDTH = 80
 DETAIL_FONT_FAMILY_WIDTH = 126
+# 본문 머리줄의 글꼴 칸ㆍ글자 크기 칸 높이. 스타일시트의 max-height만으로는
+# 맞지 않는다. QDoubleSpinBox는 위아래 버튼 때문에 Qt가 잡는 최소 높이가
+# 38px이라 max-height 30px보다 커지고, 그러면 Qt는 최소 높이를 따른다.
+# 두 칸의 높이를 코드에서 직접 같게 고정한다.
+DETAIL_HEADER_CONTROL_HEIGHT = 30
+# 조문 첫 줄 오른쪽에 얹는 3단비교 버튼 너비. 본문 문서의 오른쪽 여백을
+# 이 값에 맞춰 잡으므로 한곳에서 관리한다.
+THREE_STAGE_BUTTON_WIDTH = 40
 # 본문 표시 영역과 글자 사이 여백. Qt 기본값(4px)보다 넓게 둔다.
 DETAIL_DOCUMENT_MARGIN = 12.0
 
@@ -511,7 +523,7 @@ class DetailHeaderControls:
 
 
 def build_detail_header_controls(
-    font_size: float, font_family: str = "Malgun Gothic"
+    font_size: float, font_family: str = DETAIL_FONT_FAMILY
 ) -> DetailHeaderControls:
     """검색 화면마다 같은 규격으로 쓰는 본문 머리글 조절부를 만든다."""
     title = DoubleClickLabel("본문")
@@ -522,9 +534,10 @@ def build_detail_header_controls(
     font_combo.setObjectName("detailFontCombo")
     font_combo.setToolTip("본문에 사용할 글꼴을 선택합니다.")
     font_combo.setFixedWidth(DETAIL_FONT_FAMILY_WIDTH)
+    font_combo.setFixedHeight(DETAIL_HEADER_CONTROL_HEIGHT)
     font_combo.setCurrentFont(QFont(font_family))
 
-    font_spin = QDoubleSpinBox()
+    font_spin = CompactDoubleSpinBox()
     font_spin.setObjectName("fontSizeSpin")
     font_spin.setToolTip(
         "본문 글자 크기 · 위아래 버튼으로 0.5pt씩 조절"
@@ -535,8 +548,43 @@ def build_detail_header_controls(
     font_spin.setSuffix("pt")
     font_spin.setValue(font_size)
     font_spin.setFixedWidth(DETAIL_FONT_CONTROL_WIDTH)
+    font_spin.setFixedHeight(DETAIL_HEADER_CONTROL_HEIGHT)
 
     return DetailHeaderControls(title, font_combo, font_spin)
+
+
+class CompactDoubleSpinBox(QDoubleSpinBox):
+    """본문 머리줄에 들어가는 낮은 숫자 칸.
+
+    창 스타일시트에는 입력칸을 위한 ``QLineEdit { min-height: 38px }``가
+    있는데, 숫자 칸은 안에 QLineEdit을 품고 있어 그 최소 높이를 함께 받는다.
+    그래서 ``QDoubleSpinBox#fontSizeSpin``에 적어 둔 max-height 28px과
+    위젯에 준 고정 높이가 모두 밀리고(최소가 최대보다 커진다) 옆의 글꼴
+    칸보다 8px 높아졌다. 위젯 자기 스타일시트는 창 스타일시트보다 세므로
+    높이만 여기서 직접 못박는다. 색ㆍ테두리는 창 스타일시트를 그대로 쓴다.
+    """
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        # 스타일시트 높이는 테두리를 뺀 안쪽 높이다. 창 스타일시트가 이
+        # 칸에 1px 테두리를 두르므로 위아래 2px을 뺀 값을 적어야 위젯이
+        # 실제로 DETAIL_HEADER_CONTROL_HEIGHT가 된다.
+        inner = DETAIL_HEADER_CONTROL_HEIGHT - 2
+        self.setStyleSheet(
+            "QDoubleSpinBox {"
+            f" min-height: {inner}px;"
+            f" max-height: {inner}px; }}"
+        )
+
+    def sizeHint(self):  # noqa: N802 (Qt 규약)
+        hint = super().sizeHint()
+        hint.setHeight(DETAIL_HEADER_CONTROL_HEIGHT)
+        return hint
+
+    def minimumSizeHint(self):  # noqa: N802 (Qt 규약)
+        hint = super().minimumSizeHint()
+        hint.setHeight(DETAIL_HEADER_CONTROL_HEIGHT)
+        return hint
 
 
 @dataclass(frozen=True, slots=True)
@@ -692,6 +740,10 @@ class CategoryTabButton(QPushButton):
         painter.drawControl(QStyle.ControlElement.CE_PushButton, option)
 
         title_font = QFont(self.font())
+        # 통합검색ㆍ지능형 캡슐은 스타일시트가 :checked에서 굵게 그려 주는데,
+        # 부제가 있는 이 캡슐만 직접 그리느라 그 규칙을 받지 못했다. 고른
+        # 표시가 분류마다 달라 보이지 않게 여기서 함께 굵게 한다.
+        title_font.setBold(True)
         subtitle_font = QFont(self.font())
         subtitle_font.setPointSizeF(
             max(6.0, title_font.pointSizeF() - self.SUBTITLE_POINT_DROP)
@@ -884,9 +936,9 @@ class StatusLine:
 class SharedStatusBar(QFrame):
     """창 아래에 하나만 두는 상태줄. 오른쪽에 프로그램 정보 단추가 함께 선다."""
 
-    # 글자 한 줄이 들어갈 만큼만 둔다. 창 맨 아래라 여백이 남으면 그대로
-    # 빈 띠로 보인다.
-    HEIGHT = 18
+    # 글자 한 줄에 위아래 1px 여백을 더한 높이. 18px로 두면 글자가 띠에
+    # 꽉 차서 안쪽 여백을 준 것이 화면에 드러나지 않았다.
+    HEIGHT = 20
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -1009,6 +1061,15 @@ class DropdownComboBox(QComboBox):
         rows = sum(max(28, view.sizeHintForRow(row)) for row in range(visible))
         if rows:
             container.setFixedHeight(rows + self.POPUP_CHROME)
+            # POPUP_CHROME은 목록에 준 여백만 센 값이라, 목록을 감싼 틀과
+            # 목록 자신의 테두리까지 합치면 늘 모자랐다(항목 둘일 때 12px).
+            # 스타일이 바뀌어도 맞도록 실제로 글자가 그려지는 영역을 재서
+            # 모자란 만큼 더 준다.
+            for _ in range(3):
+                deficit = rows - view.viewport().height()
+                if deficit <= 0:
+                    break
+                container.setFixedHeight(container.height() + deficit)
         view.setVerticalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
             if self.count() <= self.maxVisibleItems()
@@ -1270,6 +1331,18 @@ class DeferredWrapTextBrowser(QTextBrowser):
                 self._wrap_timer.start(self.WRAP_SETTLE_MS)
         return super().viewportEvent(event)
 
+    def settle_wrap_now(self) -> None:
+        """내용을 갈아 끼우기 전에 미뤄 둔 줄바꿈을 지금 끝낸다.
+
+        지연 줄바꿈은 창 크기를 조절하는 동안만 쓰는 임시 상태다. 그 상태로
+        새 문서를 넣으면 이전 폭이 고정된 채 배치되고, 뒤늦게 도착한
+        타이머가 이전 문서 기준의 스크롤 자리를 되살리려 든다. 글자 크기를
+        바꾼 직후 본문이 빈 것처럼 보이던 원인이다.
+        """
+        self._wrap_timer.stop()
+        self._resize_anchor_position = -1
+        self._finish_deferred_wrap()
+
     def _finish_deferred_wrap(self) -> None:
         if not self._wrap_deferred:
             return
@@ -1436,11 +1509,20 @@ class FavoriteTitleDelegate(SearchHighlightDelegate):
         parent=None,
         *,
         star_only: bool = False,
+        supports_callback=None,
     ) -> None:
         super().__init__(parent)
         self._toggle_callback = toggle_callback
         self._is_favorite_callback = is_favorite_callback
         self._star_only = star_only
+        # 줄마다 별을 걸 수 있는지 다를 때 쓴다. 돌려주는 값이 거짓이면
+        # 그 줄에는 별을 아예 그리지 않고 누르는 자리도 두지 않는다.
+        self._supports_callback = supports_callback
+
+    def _supports_favorite(self, row: int) -> bool:
+        if self._supports_callback is None:
+            return True
+        return bool(self._supports_callback(row))
 
     def _star_rect(self, option: QStyleOptionViewItem) -> QRect:
         if self._star_only:
@@ -1453,6 +1535,14 @@ class FavoriteTitleDelegate(SearchHighlightDelegate):
         )
 
     def paint(self, painter, option, index) -> None:
+        if not self._supports_favorite(index.row()):
+            # 별을 걸 수 없는 줄은 별 자리도 비우지 않고 글자를 왼쪽부터
+            # 그린다. 빈 별이 보이면 눌러도 되는 것처럼 보인다.
+            if not self._star_only:
+                super().paint(painter, option, index)
+            else:
+                QStyledItemDelegate.paint(self, painter, option, index)
+            return
         is_favorite = bool(self._is_favorite_callback(index.row()))
         star_rect = self._star_rect(option)
         if self._star_only:
@@ -1472,11 +1562,15 @@ class FavoriteTitleDelegate(SearchHighlightDelegate):
 
     def editorEvent(self, event, model, option, index) -> bool:
         if event.type() == QEvent.Type.MouseButtonRelease:
+            if not self._supports_favorite(index.row()):
+                return False
             star_rect = self._star_rect(option)
             if star_rect.contains(event.position().toPoint()):
                 self._toggle_callback(index.row())
                 return True
         return False
+
+
 class FavoriteTreeItemDelegate(QStyledItemDelegate):
     """Paint selection inside the item's own rect, excluding tree branches.
 
@@ -1894,7 +1988,9 @@ class RecentSearchChip(QWidget):
 class RecentSearchBar(QWidget):
     """최근 검색어를 한 줄에 최대 10개까지 표시하고 다시 입력하거나 초기화함."""
 
-    QUERY_BUTTON_MAX_WIDTH = 104
+    # 오른쪽 ×가 차지하는 자리(약 20px)를 감안한 폭. 예전 104px에서는
+    # 글자 자리가 그만큼 좁아져 두세 글자만 넘어도 잘렸다.
+    QUERY_BUTTON_MAX_WIDTH = 124
 
     def __init__(
         self,
@@ -3002,7 +3098,11 @@ class CornerCloseTabBar(QTabBar):
         return QPoint(rect.right() - self.INSET, rect.top() + self.INSET)
 
     def close_spot_at(self, point: QPoint) -> int:
-        """그 자리가 어느 탭의 닫기 × 인지. 아니면 -1."""
+        """그 자리가 어느 탭의 닫기 × 인지. 아니면 -1.
+
+        누르면 실제로 닫히는 자리라서 × 둘레로만 좁게 잡는다. 표시만
+        하는 범위는 ``close_hover_at``이 따로 넓게 본다.
+        """
         index = self.tabAt(point)
         if index < 0 or not self._is_closable(index):
             return -1
@@ -3013,6 +3113,22 @@ class CornerCloseTabBar(QTabBar):
             and abs(point.y() - center.y()) <= half
         )
         return index if inside else -1
+
+    def close_hover_at(self, point: QPoint) -> int:
+        """× 를 보여 줄 자리인지. 탭 오른쪽 1/4 안이면 보여 준다.
+
+        × 바로 위까지 마우스를 옮겨야 나타나면 탭을 닫으려다 자리를 찾아
+        헤매게 된다. 보이는 범위만 넓히고, 실제로 닫히는 자리는
+        ``close_spot_at``이 정한 × 둘레 그대로 둔다.
+        """
+        index = self.tabAt(point)
+        if index < 0 or not self._is_closable(index):
+            return -1
+        rect = self.tabRect(index)
+        if rect.isEmpty():
+            return -1
+        threshold = rect.right() - rect.width() // 4
+        return index if point.x() >= threshold else -1
 
     # --- 그리기 ----------------------------------------------------
     def paintEvent(self, event) -> None:  # noqa: N802 (Qt 규약)
@@ -3046,7 +3162,7 @@ class CornerCloseTabBar(QTabBar):
             self.update()
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802 (Qt 규약)
-        self._set_hover(self.close_spot_at(event.position().toPoint()))
+        self._set_hover(self.close_hover_at(event.position().toPoint()))
         super().mouseMoveEvent(event)
 
     def leaveEvent(self, event) -> None:  # noqa: N802 (Qt 규약)

@@ -54,10 +54,10 @@ REPEAL_NOTICE_LABEL = "현행여부"
 
 DETAIL_DOCUMENT_STYLE = (
     "<style>"
-    # 줄간격은 법제처 본문(130%)에 가깝게 둔다. 예전 175%는 한 항 안의
-    # 줄까지 성글게 벌어져 조문 한 덩이가 눈에 잘 안 들어왔다.
-    "body { font-family:" + DETAIL_FONT_CSS_FAMILY + "; font-weight:400; color:#202124; "
-    "line-height:1.75; }"
+    # 줄간격은 body가 아니라 실제 글이 담기는 .content에 준다. Qt는 body에
+    # 적은 line-height를 자식에게 물려주지 않아서, 여기 값을 아무리 올려도
+    # 본문 줄 간격은 그대로였다(1.75든 2.2든 문서 높이가 같았다).
+    "body { font-family:" + DETAIL_FONT_CSS_FAMILY + "; font-weight:400; color:#202124; }"
     # 제목은 본문과 같은 맑은 고딕 계열을 쓰되 크기와 색으로 위계를 둔다.
     # 획이 뭉쳐 큰 글자에서 읽기 나쁘다.
     "h1 { font-family:" + UI_FONT_CSS_FAMILY + "; font-size:21px; font-weight:700; "
@@ -68,7 +68,7 @@ DETAIL_DOCUMENT_STYLE = (
     # 약칭은 제목 글자 크기(21px)의 절반으로 둔다.
     ".doc-short-name { font-size:9px; font-weight:400; color:#3d4c60; }"
     ".meta { background:#f3f7fb; border:1px solid #cfdcea; "
-    "border-radius:8px; padding:14px 18px; margin-bottom:28px; }"
+    "border-radius:8px; padding:14px 18px; margin-bottom:38px; }"
     ".meta table { width:100%; border-collapse:collapse; table-layout:fixed; }"
     ".meta td { width:33.33%; color:#172033; font-weight:400; "
     "vertical-align:top; padding:7px 14px 7px 0; white-space:normal; }"
@@ -82,7 +82,13 @@ DETAIL_DOCUMENT_STYLE = (
     # 화면 설정값(기본 9.5pt)과 같은 단위를 써야 법령과 수립지침류의
     # 실제 글자 크기가 같다. 14px은 약 10.5pt라 같은 9.5 설정에서도
     # 법령 쪽만 더 크게 보였다.
-    ".content { font-family:" + DETAIL_FONT_CSS_FAMILY + "; font-weight:400; font-size:9.5pt; }"
+    # 글자 크기는 여기 적지 않는다. 적어 두면 사용자가 조절칸에서 정한 값과
+    # 무관하게 늘 그 크기로 그려져, 다른 경로로 그리는 수립지침류와 같은
+    # 설정에서도 크기가 달라 보였다. 문서 기본 글꼴(setDefaultFont)이
+    # 조절칸 값을 그대로 들고 있으므로 그것을 따르게 둔다.
+    # 한 문단이 여러 줄로 접힐 때의 줄 간격. 여기 준 값만 실제로 먹는다.
+    ".content { font-family:" + DETAIL_FONT_CSS_FAMILY + "; font-weight:400; "
+    "line-height:1.75; }"
     ".paragraph { margin:0 0 12px 0; }"
     ".bullet { margin:0 0 7px 0; border-collapse:collapse; }"
     ".bullet-marker { font-weight:400; padding:0; }"
