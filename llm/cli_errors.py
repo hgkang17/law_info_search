@@ -57,6 +57,18 @@ _MESSAGE_RULES: tuple[tuple[str, str], ...] = (
         "요청한 모델을 쓸 수 없습니다. 모델 이름과 계정 권한을 확인하세요.",
     ),
     (
+        r"bad request|invalid request|malformed request|\b400\b",
+        "요청 형식이 올바르지 않습니다. 입력 내용이나 CLI 설정을 확인하세요.",
+    ),
+    (
+        r"request timeout|gateway timeout|\b408\b|\b504\b",
+        "서버 응답 시간이 초과됐습니다. 잠시 뒤 다시 시도하세요.",
+    ),
+    (
+        r"payload too large|request entity too large|\b413\b",
+        "보낸 내용이 너무 큽니다. 첨부나 대화 내용을 줄여 다시 시도하세요.",
+    ),
+    (
         r"context (length|window)|too long|maximum.*tokens|prompt is too long",
         "대화가 너무 길어 한도를 넘었습니다. 새 대화를 시작하거나 질문을 "
         "줄여 주세요.",
@@ -143,8 +155,8 @@ def describe_failure(returncode: object = None, stderr: str = "") -> str:
 
 
 def with_explanation(message: str, returncode: object = None, stderr: str = "") -> str:
-    """원래 메시지 뒤에 한글 설명을 덧붙인다. 없으면 그대로 돌려준다."""
+    """알아본 오류는 한글 안내를 먼저 보여 주고 원문은 세부 정보로 둔다."""
     explanation = describe_failure(returncode, stderr)
     if not explanation:
         return message
-    return f"{message}\n\n{explanation}"
+    return f"{explanation}\n\n세부 정보: {message}"

@@ -25,20 +25,22 @@ from ui.theme import (
 )
 from ui.widgets import (
     CenteredCheckDelegate,
+    DETAIL_DOCUMENT_MARGIN,
     DropdownComboBox,
     DeferredWrapTextBrowser,
     DetailSearchBar,
+    CornerCloseTabBar,
     FavoriteTitleDelegate,
     MemoMarkerBar,
     PairedCategoryBar,
     RecentSearchBar,
     ReferenceHistoryBar,
     ResultHeaderView,
+    ResultOverlayLabel,
     SearchHighlightDelegate,
     StableHorizontalTableWidget,
     TabStripScrollArea,
     batch_table_updates,
-    apply_close_icon,
     build_detail_header_controls,
     build_restore_view_button,
     build_search_result_head,
@@ -53,6 +55,7 @@ from ui.widgets import (
     restore_text_view_scroll,
 )
 from ui.dialogs import (
+    InlinePdfPreviewPanel,
     LawReferencePopup,
     MemoNoteDialog,
     PdfPreviewPopup,
@@ -304,6 +307,7 @@ class ResourceSearchTab(QWidget):
         self._annex_previews: dict[str, dict[str, object]] = {}
         self._annex_section_entries: list[dict[str, str]] = []
         self._annex_preview_workers: dict[str, object] = {}
+        self._active_annex_preview_key = ""
         self._pending_favorite_row: dict[str, object] | None = None
         # 크게 보기에서 대화 패널을 열어 둔 채로 나왔는지. 다시 들어갈 때
         # 그대로 되살린다.
@@ -340,9 +344,17 @@ class ResourceSearchTab(QWidget):
         self.detail_font_size = self._saved_font_size(
             "resource_detail_font_size", DEFAULT_DETAIL_FONT_POINT
         )
+        self.detail_font_family = str(
+            self.recent_search_manager.settings.value(
+                "resource_detail_font_family", "Malgun Gothic"
+            )
+            or "Malgun Gothic"
+        )
         self._sort_column = -1
         self._sort_ascending = True
         self._build_ui()
+        self._resource_category_states: dict[str, dict[str, object]] = {}
+        self._active_resource_category = self.category_target
         install_text_color_shortcuts(self)
         self.law_cache.changed.connect(self._refresh_cache_checkmarks)
         # 즐겨찾기 탭에서 별을 풀어도 열려 있는 본문 탭의 별표가 따라간다.
@@ -446,10 +458,8 @@ class ResourceSearchTab(QWidget):
         self._sync_detail_button_visibility()
 
     def _sync_detail_button_visibility(self) -> None:
-        """여러 유형이 섞인 통합검색에서만 공용 열기 단추를 보인다."""
-        self.detail_button.setVisible(
-            self.category_target == RESOURCE_ALL_TARGET
-        )
+        """목록은 더블클릭으로 열므로 남아 있던 통합검색 열기 단추를 숨긴다."""
+        self.detail_button.hide()
 
     def attach_keyword_page(self, widget) -> None:
         """키워드검색 화면을 카테고리 바 아래 스택에 끼운다.
@@ -672,16 +682,7 @@ class ResourceSearchTab(QWidget):
         self.result_table.setAccessibleName("검색 결과 표")
         # 결과가 0건이면 빈 표만 남아 검색이 된 것인지 알기 어렵다. 아래
         # 상태줄 안내는 그대로 두고, 표 한가운데에도 같은 뜻을 띄운다.
-        self.result_empty_label = QLabel(
-            "검색 결과가 없습니다.", self.result_table.viewport()
-        )
-        self.result_empty_label.setObjectName("resultEmptyNotice")
-        self.result_empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.result_empty_label.setAttribute(
-            Qt.WidgetAttribute.WA_TransparentForMouseEvents
-        )
-        self.result_empty_label.hide()
-        self.result_table.viewport().installEventFilter(self)
+        self.result_empty_label = ResultOverlayLabel(self.result_table.viewport())
         self.result_table.setHorizontalHeader(
             ResultHeaderView(Qt.Orientation.Horizontal, self.result_table)
         )
@@ -763,7 +764,9 @@ class ResourceSearchTab(QWidget):
         detail_head = QHBoxLayout()
         detail_head.setContentsMargins(0, 0, 0, 0)
         detail_head.setSpacing(5)
-        detail_controls = build_detail_header_controls(self.detail_font_size)
+        detail_controls = build_detail_header_controls(
+            self.detail_font_size, self.detail_font_family
+        )
         detail_title = detail_controls.title
         self.detail_title_label = detail_title
         self.expand_detail_button = QPushButton("크게\n보기")
@@ -793,9 +796,11 @@ class ResourceSearchTab(QWidget):
         self.color_reset_button = palette_toolbar.color_reset_button
         self.all_color_reset_button = palette_toolbar.all_color_reset_button
         self.memo_button = palette_toolbar.memo_button
-        detail_font_label = detail_controls.font_label
-        self.detail_font_label = detail_font_label
+        self.detail_font_combo = detail_controls.font_combo
         self.detail_font_spin = detail_controls.font_spin
+        self.detail_font_combo.currentFontChanged.connect(
+            self._set_detail_font_family
+        )
         self.restore_view_button = build_restore_view_button(self)
         self.toc_toggle_button = QPushButton("목차")
         self.toc_toggle_button.setObjectName("tocToggleButton")
@@ -841,7 +846,8 @@ class ResourceSearchTab(QWidget):
         detail_head.addWidget(self.restore_view_button)
         detail_head.addWidget(self.toc_toggle_button)
         detail_head.addWidget(detail_title)
-        detail_head.addWidget(detail_font_label)
+        detail_head.addSpacing(8)
+        detail_head.addWidget(self.detail_font_combo)
         detail_head.addWidget(self.detail_font_spin)
         detail_head.addSpacing(8)
         detail_head.addWidget(self.color_tools)
@@ -851,12 +857,12 @@ class ResourceSearchTab(QWidget):
         detail_head.addStretch()
         detail_head.addWidget(self.expand_detail_button)
 
-        # 여러 유형이 섞인 통합검색만 결과 제목줄에 공용 열기 단추를 둔다.
-        # 단일 유형은 결과 더블클릭이나 별표 원문 링크로 열 수 있다.
+        # 예전 통합검색의 공용 열기 단추 자리는 호환을 위해 객체만 두고,
+        # 실제 화면에서는 숨긴다. 모든 목록은 더블클릭으로 본문을 연다.
         result_head.layout.addWidget(self.detail_button)
         self._sync_detail_button_visibility()
 
-        self.document_tabs = QTabBar()
+        self.document_tabs = CornerCloseTabBar()
         self.document_tabs.setObjectName("documentTabs")
         self.document_tabs.setDrawBase(False)
         self.document_tabs.setExpanding(False)
@@ -893,7 +899,9 @@ class ResourceSearchTab(QWidget):
 
         self.detail_view = DeferredWrapTextBrowser()
         self.detail_view.setAccessibleName("본문")
-        detail_font = make_detail_font(self.detail_font_size)
+        detail_font = make_detail_font(
+            self.detail_font_size, self.detail_font_family
+        )
         self.detail_view.setFont(detail_font)
         self.detail_view.document().setDefaultFont(detail_font)
         self.detail_view.setOpenExternalLinks(False)
@@ -961,7 +969,7 @@ class ResourceSearchTab(QWidget):
         toc_panel_layout = QVBoxLayout(self.toc_panel)
         # 조문 검색 영역이 왼쪽 분할선에 달라붙아 보이지
         # 않도록 본문 검색줄과 같은 여백을 준다.
-        toc_panel_layout.setContentsMargins(8, 0, 0, 0)
+        toc_panel_layout.setContentsMargins(8, 8, 0, 0)
         toc_panel_layout.setSpacing(6)
         toc_panel_layout.addWidget(toc_search_label)
         toc_panel_layout.addWidget(self.toc_search_input)
@@ -988,6 +996,11 @@ class ResourceSearchTab(QWidget):
         detail_body_layout.setSpacing(8)
         detail_body_layout.addWidget(self.detail_search)
         detail_body_layout.addWidget(self.pinned_headline)
+        self.inline_annex_preview = InlinePdfPreviewPanel(detail_body)
+        self.inline_annex_preview.closeRequested.connect(
+            self._close_inline_annex_preview
+        )
+        detail_body_layout.addWidget(self.inline_annex_preview)
         detail_view_row = QWidget()
         detail_view_row.setObjectName("detailViewRow")
         detail_view_row_layout = QHBoxLayout(detail_view_row)
@@ -1371,6 +1384,25 @@ class ResourceSearchTab(QWidget):
             settings.setValue("resource_detail_font_size", size)
             settings.sync()
 
+    def _set_detail_font_family(self, font: QFont) -> None:
+        family = str(font.family() or "Malgun Gothic")
+        if family == self.detail_font_family:
+            return
+        self.detail_font_family = family
+        selected = make_detail_font(self.detail_font_size, family)
+        self.detail_view.setFont(selected)
+        self.detail_view.document().setDefaultFont(selected)
+        cursor = QTextCursor(self.detail_view.document())
+        cursor.select(QTextCursor.SelectionType.Document)
+        character_format = QTextCharFormat()
+        character_format.setFontFamilies([family])
+        cursor.mergeCharFormat(character_format)
+        self.recent_search_manager.settings.setValue(
+            "resource_detail_font_family", family
+        )
+        self.recent_search_manager.settings.sync()
+        self._save_active_document_state()
+
     def _empty_document_state(self) -> dict[str, object]:
         return {
             "html": "",
@@ -1407,6 +1439,9 @@ class ResourceSearchTab(QWidget):
             pass
         current.setParent(self)
         document.setParent(self)
+        # 문서를 갈아 끼우면 본문 뷰어가 잡아 둔 문서 여백이 Qt 기본값으로
+        # 돌아간다. 탭을 오갈 때만 글자가 테두리에 붙어 보이지 않게 한다.
+        document.setDocumentMargin(DETAIL_DOCUMENT_MARGIN)
         self.detail_view.setDocument(document)
         self.detail_search.bind_document(document)
         self.memo_marker_bar.bind_document(document)
@@ -1477,7 +1512,9 @@ class ResourceSearchTab(QWidget):
         )
         self.detail_search.begin_document_change()
         try:
-            font = make_detail_font(self.detail_font_size)
+            font = make_detail_font(
+                self.detail_font_size, self.detail_font_family
+            )
             self.detail_view.setFont(font)
             self.detail_view.document().setDefaultFont(font)
             if html is not None:
@@ -1629,6 +1666,9 @@ class ResourceSearchTab(QWidget):
 
     def _clear_pending_document_view(self) -> None:
         """새 본문을 곧 그릴 때, 이전 문서의 흔적만 걷어낸다."""
+        self._annex_previews.clear()
+        self._active_annex_preview_key = ""
+        self.inline_annex_preview.hide()
         self.detail_search.query_input.blockSignals(True)
         self.toc_search_input.blockSignals(True)
         self.detail_search.query_input.clear()
@@ -1841,7 +1881,7 @@ class ResourceSearchTab(QWidget):
         )
 
     def _install_document_tab_favorite(self, index: int, key: str) -> None:
-        """본문 탭 양쪽에 즐겨찾기 별표와 닫기 × 를 단다."""
+        """본문 탭 왼쪽에는 별표를 달고, ×는 탭 위에서만 겹쳐 그린다."""
         star = QPushButton()
         star.setObjectName("documentTabFavorite")
         star.setFlat(True)
@@ -1856,22 +1896,6 @@ class ResourceSearchTab(QWidget):
         )
         self.document_tabs.setTabButton(
             index, QTabBar.ButtonPosition.LeftSide, star
-        )
-        close = QPushButton()
-        close.setObjectName("documentTabClose")
-        apply_close_icon(close, 11)
-        close.setFlat(True)
-        close.setFixedSize(22, 22)
-        close.setCursor(Qt.CursorShape.PointingHandCursor)
-        close.setAccessibleName("본문 탭 닫기")
-        close.setToolTip("이 본문 탭을 닫습니다.")
-        close.clicked.connect(
-            lambda _checked=False, tab_key=key: (
-                self._close_document_tab_by_key(tab_key)
-            )
-        )
-        self.document_tabs.setTabButton(
-            index, QTabBar.ButtonPosition.RightSide, close
         )
 
     def _close_document_tab_by_key(self, key: str) -> None:
@@ -2310,7 +2334,7 @@ class ResourceSearchTab(QWidget):
             favorite_button.hide()
             self._article_favorite_buttons.append(favorite_button)
 
-            button = QPushButton("3단비교", viewport)
+            button = QPushButton("3단", viewport)
             button.setObjectName("threeStageArticleButton")
             # 글자 크기는 유지하고 버튼 안쪽 여백만 줄인다.
             button.setFixedSize(56, 24)
@@ -2859,13 +2883,9 @@ class ResourceSearchTab(QWidget):
         if label is None:
             return
         if self.result_table.rowCount():
-            label.hide()
+            label.clear_message()
             return
-        viewport = self.result_table.viewport()
-        label.resize(viewport.size())
-        label.move(0, 0)
-        label.raise_()
-        label.show()
+        label.show_message("검색 결과가 없습니다.")
 
     def eventFilter(self, watched, event) -> bool:
         if (
@@ -5264,20 +5284,37 @@ class ResourceSearchTab(QWidget):
         index, entry = found
         key = self._annex_preview_key(entry, index)
         if key in self._annex_previews:
-            self._annex_previews.pop(key, None)
-            self._rerender_annex_section()
-            self.status_label.setText(
-                f"{self._annex_display_title(entry)} 미리보기를 접었습니다."
-            )
+            self._close_inline_annex_preview()
             return
+        # 본문을 두 개로 쪼개지 않고 한 번에 한 별표만 보여 준다. 다른
+        # 별표를 누르면 같은 제한 높이 패널의 내용만 바뀐다.
+        self._annex_previews.clear()
         self._annex_previews[key] = {
             "zoom": self.ANNEX_PREVIEW_DEFAULT_ZOOM,
             "pages": self.ANNEX_PREVIEW_PAGE_LIMIT,
             "data": None,
             "error": "",
         }
+        self._active_annex_preview_key = key
         self._rerender_annex_section()
+        self.inline_annex_preview.show_loading(
+            self._annex_display_title(entry)
+        )
         self._start_annex_download(key, entry)
+
+    def _close_inline_annex_preview(self) -> None:
+        key = self._active_annex_preview_key
+        title = ""
+        for index, entry in enumerate(self._annex_section_entries):
+            if self._annex_preview_key(entry, index) == key:
+                title = self._annex_display_title(entry)
+                break
+        self._annex_previews.clear()
+        self._active_annex_preview_key = ""
+        self.inline_annex_preview.hide()
+        self._rerender_annex_section()
+        if title:
+            self.status_label.setText(f"{title} 미리보기를 접었습니다.")
 
     def _change_annex_preview_zoom(self, raw: str) -> None:
         """펼쳐 둔 미리보기를 한 단계 크게 또는 작게 그린다."""
@@ -5325,14 +5362,20 @@ class ResourceSearchTab(QWidget):
                 state["data"] = bytes(data)
                 state["error"] = ""
             self._annex_preview_workers.pop(cache_key, None)
-            self._rerender_annex_section()
+            if cache_key == self._active_annex_preview_key:
+                self.inline_annex_preview.show_pdf(
+                    bytes(data), self.inline_annex_preview.title_label.text()
+                )
 
         def failed(message: str, cache_key: str = key) -> None:
             state = self._annex_previews.get(cache_key)
             if isinstance(state, dict):
                 state["error"] = str(message)
             self._annex_preview_workers.pop(cache_key, None)
-            self._rerender_annex_section()
+            if cache_key == self._active_annex_preview_key:
+                self.inline_annex_preview.show_error(
+                    f"PDF를 불러오지 못했습니다: {message}"
+                )
 
         worker.succeeded.connect(finished)
         worker.failed.connect(failed)
@@ -5353,12 +5396,17 @@ class ResourceSearchTab(QWidget):
         position = scroll_bar.value()
         rendered = head + "".join(parts) + tail
         self._replace_detail_content(html=rendered)
+        self._apply_annex_text_font()
         if isinstance(state, dict):
             state["source_html"] = rendered
         scroll_bar.setValue(min(position, scroll_bar.maximum()))
 
     def _annex_preview_html(self, key: str, index: int) -> str:
-        """펼친 별표 한 건의 미리보기 조각."""
+        """미리보기는 실제 Qt PDF 패널이 맡으므로 문서 HTML은 늘 가볍다."""
+        return ""
+
+    def _legacy_annex_preview_html(self, key: str, index: int) -> str:
+        """이전 그림 변환 미리보기. 저장 구버전 호환 참고용."""
         state = self._annex_previews.get(key)
         if not isinstance(state, dict):
             return ""
@@ -6400,6 +6448,14 @@ class ResourceSearchTab(QWidget):
         dialog.activateWindow()
 
     def _category_changed(self) -> None:
+        previous_target = getattr(
+            self, "_active_resource_category", self.category_target
+        )
+        if previous_target not in KEYWORD_CATEGORY_LABELS:
+            self._resource_category_states[previous_target] = (
+                self._capture_resource_category_state()
+            )
+        self._active_resource_category = self.category_target
         self._sync_content_page()
         self._sync_detail_button_visibility()
         if self.is_keyword_category:
@@ -6413,6 +6469,13 @@ class ResourceSearchTab(QWidget):
         self.annex_target.setVisible(self.is_annex_category)
         self._sync_shared_category_controls()
         self._sync_search_scope_items()
+        saved_state = self._resource_category_states.get(self.category_target)
+        if isinstance(saved_state, dict):
+            self._restore_resource_category_state(saved_state)
+            self.status_label.setText(
+                f"{self.category['label']}의 이전 검색 결과를 복원했습니다."
+            )
+            return
         self._prepare_preview_for_outer_search()
         self.result_rows.clear()
         self.result_table.setRowCount(0)
@@ -6439,6 +6502,55 @@ class ResourceSearchTab(QWidget):
         self._sync_detail_button_visibility()
         self.status_label.setText(
             f"{self.category['label']} 검색 유형을 선택했습니다."
+        )
+
+    def _capture_resource_category_state(self) -> dict[str, object]:
+        """분류를 오가도 검색 목록과 사용자가 보던 위치를 그대로 보존."""
+        return {
+            "query": self.query_input.text(),
+            "rows": [dict(row) for row in self.result_rows],
+            "count": self.result_count.text(),
+            "filter": self.result_filter_input.text(),
+            "scope": self.search_scope.currentData(),
+            "selected": self.result_table.currentRow(),
+            "vertical_scroll": self.result_table.verticalScrollBar().value(),
+            "horizontal_scroll": self.result_table.horizontalScrollBar().value(),
+            "sort_column": self._sort_column,
+            "sort_ascending": self._sort_ascending,
+            "highlight_terms": tuple(self.highlight_terms),
+        }
+
+    def _restore_resource_category_state(
+        self, state: dict[str, object]
+    ) -> None:
+        self.query_input.setText(str(state.get("query") or ""))
+        scope = state.get("scope")
+        scope_index = self.search_scope.findData(scope)
+        if scope_index >= 0:
+            self.search_scope.setCurrentIndex(scope_index)
+        self.result_rows = [
+            dict(row)
+            for row in state.get("rows", [])
+            if isinstance(row, dict)
+        ]
+        self.highlight_terms = tuple(state.get("highlight_terms", ()) or ())
+        self.name_delegate.set_terms(self.highlight_terms)
+        self.related_delegate.set_terms(self.highlight_terms)
+        self._sort_column = int(state.get("sort_column", -1))
+        self._sort_ascending = bool(state.get("sort_ascending", True))
+        self._render_result_rows()
+        self.result_count.setText(str(state.get("count") or "0건"))
+        self.result_filter_input.setText(str(state.get("filter") or ""))
+        selected = int(state.get("selected", -1))
+        if 0 <= selected < self.result_table.rowCount():
+            self.result_table.selectRow(selected)
+        else:
+            self._update_result_placeholder()
+        self.result_table.verticalScrollBar().setValue(
+            int(state.get("vertical_scroll", 0) or 0)
+        )
+        self.result_table.horizontalScrollBar().setValue(
+            int(state.get("horizontal_scroll", 0) or 0)
         )
 
     def _sync_search_scope_items(self) -> None:
@@ -6516,7 +6628,7 @@ class ResourceSearchTab(QWidget):
         self.result_table.setRowCount(0)
         self.result_rows.clear()
         self.result_count.setText("0건")
-        self._update_result_placeholder()
+        self.result_empty_label.show_message("검색 중…")
         self._prepare_preview_for_outer_search()
         self.current_detail_text = ""
         self.copy_button.setEnabled(False)
@@ -8941,7 +9053,20 @@ class ResourceSearchTab(QWidget):
     ) -> None:
         """본문 위에 붙박이로 남는 제목 줄. 법령이 아니면 감춘다."""
         headline = law_headline_text(short_name, subtitle)
-        text = f"{title}  {headline}".strip() if headline else ""
+        text = ""
+        if headline:
+            parts = [f'<span style="font-size:13px;">{escape(title)}</span>']
+            if short_name:
+                parts.append(
+                    '<span style="font-size:7px; color:#62666f;">'
+                    f"( 약칭: {escape(short_name)} )</span>"
+                )
+            if subtitle:
+                parts.append(
+                    '<span style="font-size:13px; color:#3d4c60;">'
+                    f"{escape(subtitle)}</span>"
+                )
+            text = "&nbsp;&nbsp;".join(parts)
         self._show_pinned_headline(text)
         state = self._document_states.get(self._active_document_key)
         if isinstance(state, dict):
@@ -8954,7 +9079,9 @@ class ResourceSearchTab(QWidget):
             self.pinned_headline.hide()
             return
         self.pinned_headline.setText(text)
-        self.pinned_headline.setToolTip(text)
+        self.pinned_headline.setToolTip(
+            re.sub(r"<[^>]+>", "", text).replace("&nbsp;", " ")
+        )
         self.pinned_headline.show()
 
     @classmethod
@@ -9210,7 +9337,10 @@ class ResourceSearchTab(QWidget):
         # 별표 사이에 큰 제목이 하나 더 끼면 본문 흐름이 끊긴다. 목차에서
         # 찾아올 수 있게 자리 표시만 남긴다.
         html_parts.append(f'<a name="{section_anchor}"></a>')
-        html_parts.append('<div class="content">')
+        html_parts.append(
+            '<div class="content" style="margin-top:28px; '
+            'font-family:\'Malgun Gothic\',\'맑은 고딕\';">'
+        )
         plain_parts.extend(("", f"[{section_label}]"))
         for index, entry in enumerate(entries):
             shown = self._annex_display_title(entry)
@@ -9254,8 +9384,9 @@ class ResourceSearchTab(QWidget):
                     f"{escape(shown)}</a>"
                 )
             html_parts.append(
-                '<div class="annex-item" style="margin:0; padding:7px 0; '
-                'font-size:13px; font-weight:400; color:#242529;">'
+                '<div class="annex-item" style="margin:0; padding:10px 0; '
+                'line-height:1.55; font-family:\'Malgun Gothic\',\'맑은 고딕\'; '
+                'font-size:9.5pt; font-weight:400; color:#242529;">'
                 f"{title_html}"
                 + (f"&nbsp;&nbsp;{icon_html}" if icon_html else "")
                 + "</div>"
@@ -9297,11 +9428,27 @@ class ResourceSearchTab(QWidget):
     def _commit_detail(self, html_parts: list[str], plain_parts: list[str]) -> None:
         rendered_html = "".join(html_parts)
         self._replace_detail_content(html=rendered_html)
+        self._apply_annex_text_font()
         state = self._document_states.get(self._active_document_key)
         if isinstance(state, dict):
             state["source_html"] = rendered_html
         self.current_detail_text = "\n".join(plain_parts)
         self.copy_button.setEnabled(bool(self.current_detail_text))
+
+    def _apply_annex_text_font(self) -> None:
+        """본문 하단 별표 제목에만 맑은 고딕과 무힌팅을 적용한다."""
+        document = self.detail_view.document()
+        for entry in self._annex_section_entries:
+            shown = self._annex_display_title(entry)
+            cursor = document.find(shown)
+            if cursor.isNull():
+                continue
+            character_format = QTextCharFormat()
+            character_format.setFontFamilies(["Malgun Gothic", "맑은 고딕"])
+            setter = getattr(character_format, "setFontHintingPreference", None)
+            if callable(setter):
+                setter(QFont.HintingPreference.PreferNoHinting)
+            cursor.mergeCharFormat(character_format)
 
     def copy_detail(self) -> None:
         if not self.current_detail_text:

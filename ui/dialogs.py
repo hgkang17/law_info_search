@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QRect, QSize, Signal, Qt, QTimer
+from PySide6.QtCore import QEvent, QPointF, QRect, QSize, Signal, Qt, QTimer
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
     QDialog,
@@ -93,6 +93,181 @@ class PdfPreviewDialog(QDialog):
 
     def _on_failed(self, message: str) -> None:
         self.status_label.setText(f"PDF 다운로드에 실패했습니다: {message}")
+
+
+class InlinePdfPreviewPanel(QFrame):
+    """본문 영역 안에서 높이를 제한해 보여 주는 PDF 미리보기."""
+
+    closeRequested = Signal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("inlinePdfPreviewPanel")
+        self.setMinimumHeight(340)
+        self.setMaximumHeight(560)
+        self._buffer: QBuffer | None = None
+        self._expanded = False
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        toolbar = QFrame()
+        toolbar.setObjectName("inlinePdfToolbar")
+        toolbar_layout = QHBoxLayout(toolbar)
+        toolbar_layout.setContentsMargins(12, 7, 8, 7)
+        toolbar_layout.setSpacing(6)
+        self.title_label = QLabel("별표·서식 미리보기")
+        self.title_label.setObjectName("inlinePdfTitle")
+        self.page_label = QLabel("")
+        self.page_label.setObjectName("inlinePdfPageCount")
+        self.previous_button = QPushButton("‹")
+        self.previous_button.setObjectName("inlinePdfToolButton")
+        self.previous_button.setFixedSize(28, 28)
+        self.page_spin = QSpinBox()
+        self.page_spin.setObjectName("inlinePdfPageSpin")
+        self.page_spin.setRange(1, 1)
+        self.page_spin.setFixedWidth(54)
+        self.next_button = QPushButton("›")
+        self.next_button.setObjectName("inlinePdfToolButton")
+        self.next_button.setFixedSize(28, 28)
+        self.zoom_spin = QSpinBox()
+        self.zoom_spin.setObjectName("inlinePdfZoom")
+        self.zoom_spin.setRange(40, 220)
+        self.zoom_spin.setSingleStep(10)
+        self.zoom_spin.setSuffix("%")
+        self.zoom_spin.setValue(100)
+        self.zoom_spin.setFixedWidth(76)
+        self.expand_button = QPushButton("크게")
+        self.expand_button.setObjectName("inlinePdfToolButton")
+        self.expand_button.setFixedHeight(28)
+        self.close_button = QPushButton("접기")
+        self.close_button.setObjectName("inlinePdfClose")
+        self.close_button.setFixedHeight(28)
+        toolbar_layout.addWidget(self.title_label, 1)
+        toolbar_layout.addWidget(self.page_label)
+        toolbar_layout.addWidget(self.previous_button)
+        toolbar_layout.addWidget(self.page_spin)
+        toolbar_layout.addWidget(self.next_button)
+        toolbar_layout.addWidget(self.zoom_spin)
+        toolbar_layout.addWidget(self.expand_button)
+        toolbar_layout.addWidget(self.close_button)
+        layout.addWidget(toolbar)
+
+        self.status_label = QLabel("PDF를 불러오는 중입니다…")
+        self.status_label.setObjectName("inlinePdfStatus")
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.status_label, 1)
+
+        self.document = QPdfDocument(self)
+        self.document.statusChanged.connect(self._document_status_changed)
+        self.pdf_view = QPdfView(self)
+        self.pdf_view.setObjectName("inlinePdfView")
+        self.pdf_view.setDocument(self.document)
+        self.pdf_view.setPageMode(QPdfView.PageMode.MultiPage)
+        self.pdf_view.setZoomMode(QPdfView.ZoomMode.Custom)
+        self.pdf_view.setZoomFactor(1.0)
+        self.pdf_view.hide()
+        layout.addWidget(self.pdf_view, 1)
+
+        self.zoom_spin.valueChanged.connect(
+            lambda value: self.pdf_view.setZoomFactor(value / 100.0)
+        )
+        self.previous_button.clicked.connect(lambda: self._move_page(-1))
+        self.next_button.clicked.connect(lambda: self._move_page(1))
+        self.page_spin.valueChanged.connect(self._jump_to_page)
+        self.pdf_view.pageNavigator().currentPageChanged.connect(
+            self._current_page_changed
+        )
+        self.expand_button.clicked.connect(self._toggle_expanded)
+        self.close_button.clicked.connect(self.closeRequested)
+        self.setStyleSheet(
+            "QFrame#inlinePdfPreviewPanel { background:#f1f1f1; "
+            "border:1px solid #c9ccd1; }"
+            "QFrame#inlinePdfToolbar { background:#34363a; border:none; }"
+            "QLabel#inlinePdfTitle, QLabel#inlinePdfPageCount { color:#f5f5f5; "
+            "border:none; font-weight:500; }"
+            "QSpinBox#inlinePdfZoom { min-height:26px; max-height:26px; "
+            "background:#fff; border:1px solid #777b82; border-radius:3px; }"
+            "QPushButton#inlinePdfClose { color:#f5f5f5; background:#4a4d52; "
+            "border:1px solid #656970; border-radius:3px; padding:3px 9px; }"
+            "QPushButton#inlinePdfToolButton { color:#f5f5f5; "
+            "background:transparent; border:1px solid #656970; "
+            "border-radius:3px; padding:2px 7px; }"
+            "QPushButton#inlinePdfClose:hover, QPushButton#inlinePdfToolButton:hover "
+            "{ background:#5a5e64; }"
+            "QSpinBox#inlinePdfPageSpin { min-height:26px; max-height:26px; "
+            "background:#fff; border:1px solid #777b82; border-radius:3px; }"
+            "QLabel#inlinePdfStatus { color:#59616c; border:none; }"
+        )
+        self.hide()
+
+    def show_loading(self, title: str) -> None:
+        self.title_label.setText(title or "별표·서식 미리보기")
+        self.page_label.clear()
+        self.page_spin.setRange(1, 1)
+        self.document.close()
+        self.pdf_view.hide()
+        self.status_label.setText("PDF를 불러오는 중입니다…")
+        self.status_label.show()
+        self.show()
+
+    def show_pdf(self, data: bytes, title: str = "") -> None:
+        if title:
+            self.title_label.setText(title)
+        self._buffer = QBuffer(self)
+        self._buffer.setData(bytes(data))
+        self._buffer.open(QIODevice.OpenModeFlag.ReadOnly)
+        error = self.document.load(self._buffer)
+        if error != QPdfDocument.Error.None_:
+            self.show_error(f"PDF를 여는 데 실패했습니다: {error}")
+
+    def show_error(self, message: str) -> None:
+        self.pdf_view.hide()
+        self.page_label.clear()
+        self.status_label.setText(message)
+        self.status_label.show()
+        self.show()
+
+    def _document_status_changed(self, status: QPdfDocument.Status) -> None:
+        if status == QPdfDocument.Status.Ready:
+            total = self.document.pageCount()
+            self.page_label.setText(f"/ {total}" if total else "")
+            self.page_spin.blockSignals(True)
+            self.page_spin.setRange(1, max(1, total))
+            self.page_spin.setValue(1)
+            self.page_spin.blockSignals(False)
+            self.status_label.hide()
+            self.pdf_view.show()
+        elif status == QPdfDocument.Status.Error:
+            self.show_error(
+                f"PDF를 여는 데 실패했습니다: {self.document.error()}"
+            )
+
+    def _move_page(self, delta: int) -> None:
+        self.page_spin.setValue(self.page_spin.value() + int(delta))
+
+    def _jump_to_page(self, page: int) -> None:
+        self.pdf_view.pageNavigator().jump(
+            max(0, int(page) - 1), QPointF(0, 0), self.pdf_view.zoomFactor()
+        )
+
+    def _current_page_changed(self, page: int) -> None:
+        self.page_spin.blockSignals(True)
+        self.page_spin.setValue(max(1, int(page) + 1))
+        self.page_spin.blockSignals(False)
+
+    def _toggle_expanded(self) -> None:
+        self._expanded = not self._expanded
+        if self._expanded:
+            parent_height = self.parentWidget().height() if self.parentWidget() else 700
+            self.setMaximumHeight(16_777_215)
+            self.setMinimumHeight(max(500, parent_height - 24))
+            self.expand_button.setText("축소")
+        else:
+            self.setMinimumHeight(340)
+            self.setMaximumHeight(560)
+            self.expand_button.setText("크게")
 
 
 class PdfPreviewPopup(QFrame):

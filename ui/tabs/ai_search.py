@@ -26,6 +26,7 @@ from ui.widgets import (
     MemoMarkerBar,
     RecentSearchBar,
     ResultHeaderView,
+    ResultOverlayLabel,
     SearchHighlightDelegate,
     SegmentedModeSwitch,
     StableHorizontalTableWidget,
@@ -81,7 +82,7 @@ from utils.parsing import (
     serialize_agency_search_payload,
 )
 from PySide6.QtCore import QEvent, QRect, QTimer, QUrl, Qt, Signal
-from PySide6.QtGui import QColor, QDesktopServices, QKeySequence, QShortcut, QTextCharFormat, QTextCursor
+from PySide6.QtGui import QColor, QDesktopServices, QFont, QKeySequence, QShortcut, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import QAbstractItemView, QApplication, QDialog, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton, QSizePolicy, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
 from html import escape
 import re
@@ -122,6 +123,12 @@ class AiLawSearchTab(QWidget):
         self._visible_memos: list[dict[str, object]] = []
         self.detail_font_size = self._saved_font_size(
             f"{service}_detail_font_size", DEFAULT_DETAIL_FONT_POINT
+        )
+        self.detail_font_family = str(
+            self.recent_search_manager.settings.value(
+                f"{service}_detail_font_family", "Malgun Gothic"
+            )
+            or "Malgun Gothic"
         )
         self._reading_mode = False
         self._sort_column = -1
@@ -253,6 +260,7 @@ class AiLawSearchTab(QWidget):
 
         self.result_table = StableHorizontalTableWidget(0, 6)
         self.result_table.setAccessibleName("검색 결과 표")
+        self.result_empty_label = ResultOverlayLabel(self.result_table.viewport())
         self.result_table.setHorizontalHeader(
             ResultHeaderView(Qt.Orientation.Horizontal, self.result_table)
         )
@@ -331,11 +339,16 @@ class AiLawSearchTab(QWidget):
         detail_head = QHBoxLayout()
         detail_head.setContentsMargins(0, 0, 0, 0)
         detail_head.setSpacing(5)
-        detail_controls = build_detail_header_controls(self.detail_font_size)
+        detail_controls = build_detail_header_controls(
+            self.detail_font_size, self.detail_font_family
+        )
         detail_title = detail_controls.title
         detail_title.doubleClicked.connect(self._toggle_reading_mode)
-        detail_font_label = detail_controls.font_label
+        self.detail_font_combo = detail_controls.font_combo
         self.detail_font_spin = detail_controls.font_spin
+        self.detail_font_combo.currentFontChanged.connect(
+            self._set_detail_font_family
+        )
         self.detail_font_spin.valueChanged.connect(self._set_detail_font_size)
 
         palette_toolbar = build_color_palette_toolbar(
@@ -374,7 +387,8 @@ class AiLawSearchTab(QWidget):
         self.restore_view_button = build_restore_view_button(self)
         detail_head.addWidget(self.restore_view_button)
         detail_head.addWidget(detail_title)
-        detail_head.addWidget(detail_font_label)
+        detail_head.addSpacing(8)
+        detail_head.addWidget(self.detail_font_combo)
         detail_head.addWidget(self.detail_font_spin)
         detail_head.addSpacing(8)
         detail_head.addWidget(self.color_tools)
@@ -388,7 +402,9 @@ class AiLawSearchTab(QWidget):
 
         self.detail_view = DeferredWrapTextBrowser()
         self.detail_view.setAccessibleName("본문")
-        detail_font = make_detail_font(self.detail_font_size)
+        detail_font = make_detail_font(
+            self.detail_font_size, self.detail_font_family
+        )
         self.detail_view.setFont(detail_font)
         self.detail_view.document().setDefaultFont(detail_font)
         self.detail_view.setOpenExternalLinks(False)
@@ -405,7 +421,7 @@ class AiLawSearchTab(QWidget):
         )
         self.detail_view.viewport().installEventFilter(self)
         self.three_stage_button = QPushButton(
-            "3단비교", self.detail_view.viewport()
+            "3단", self.detail_view.viewport()
         )
         self.three_stage_button.setObjectName("threeStageArticleButton")
         self.three_stage_button.setFixedSize(56, 24)
@@ -753,6 +769,23 @@ class AiLawSearchTab(QWidget):
             settings.setValue(f"{self.service}_detail_font_size", size)
             settings.sync()
 
+    def _set_detail_font_family(self, font: QFont) -> None:
+        family = str(font.family() or "Malgun Gothic")
+        if family == self.detail_font_family:
+            return
+        self.detail_font_family = family
+        selected = make_detail_font(self.detail_font_size, family)
+        self.detail_view.setFont(selected)
+        self.detail_view.document().setDefaultFont(selected)
+        cursor = QTextCursor(self.detail_view.document())
+        cursor.select(QTextCursor.SelectionType.Document)
+        character_format = QTextCharFormat()
+        character_format.setFontFamilies([family])
+        cursor.mergeCharFormat(character_format)
+        settings = self.recent_search_manager.settings
+        settings.setValue(f"{self.service}_detail_font_family", family)
+        settings.sync()
+
     def _replace_detail_content(
         self,
         *,
@@ -766,7 +799,9 @@ class AiLawSearchTab(QWidget):
         )
         self.detail_search.begin_document_change()
         try:
-            font = make_detail_font(self.detail_font_size)
+            font = make_detail_font(
+                self.detail_font_size, self.detail_font_family
+            )
             self.detail_view.setFont(font)
             self.detail_view.document().setDefaultFont(font)
             if html is not None:
@@ -1242,6 +1277,7 @@ class AiLawSearchTab(QWidget):
         self.result_table.setRowCount(0)
         self.result_rows.clear()
         self.result_count.setText("0건")
+        self.result_empty_label.show_message("검색 중…")
         self.detail_view.clear()
         self.current_detail_text = ""
         self.copy_button.setEnabled(False)
@@ -1510,8 +1546,10 @@ class AiLawSearchTab(QWidget):
             f"검색 완료: {len(rows)}건을 불러왔습니다."
         )
         if rows:
+            self.result_empty_label.clear_message()
             self.result_table.selectRow(0)
         else:
+            self.result_empty_label.show_message("검색 결과가 없습니다.")
             self.detail_view.setPlainText("검색 결과가 없습니다.")
 
     def _render_result_rows(self) -> None:

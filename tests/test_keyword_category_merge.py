@@ -176,10 +176,10 @@ def test_result_count_badge_size_is_shared(window, qt_app) -> None:
     assert law_hint.height() <= 24
 
 
-def test_detail_button_is_only_shown_for_integrated_search(window) -> None:
+def test_integrated_search_no_longer_shows_detail_button(window) -> None:
     resource = window.resource_tab
     resource.select_category("__all__")
-    assert not resource.detail_button.isHidden()
+    assert resource.detail_button.isHidden()
     resource.select_category("law")
     assert resource.detail_button.isHidden()
     resource.select_category("admrul")

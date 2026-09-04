@@ -58,7 +58,7 @@ DETAIL_DOCUMENT_STYLE = (
     # 줄까지 성글게 벌어져 조문 한 덩이가 눈에 잘 안 들어왔다.
     "body { font-family:" + DETAIL_FONT_CSS_FAMILY + "; font-weight:400; color:#202124; "
     "line-height:1.75; }"
-    # 제목은 본문 글꼴(굴림)이 아니라 화면 UI 글꼴을 쓴다. 굵은 굴림은
+    # 제목은 본문과 같은 맑은 고딕 계열을 쓰되 크기와 색으로 위계를 둔다.
     # 획이 뭉쳐 큰 글자에서 읽기 나쁘다.
     "h1 { font-family:" + UI_FONT_CSS_FAMILY + "; font-size:21px; font-weight:700; "
     "color:#173b63; margin:0 0 6px 0; }"
@@ -68,7 +68,7 @@ DETAIL_DOCUMENT_STYLE = (
     # 약칭은 제목 글자 크기(21px)의 절반으로 둔다.
     ".doc-short-name { font-size:9px; font-weight:400; color:#3d4c60; }"
     ".meta { background:#f3f7fb; border:1px solid #cfdcea; "
-    "border-radius:8px; padding:14px 18px; margin-bottom:20px; }"
+    "border-radius:8px; padding:14px 18px; margin-bottom:28px; }"
     ".meta table { width:100%; border-collapse:collapse; table-layout:fixed; }"
     ".meta td { width:33.33%; color:#172033; font-weight:400; "
     "vertical-align:top; padding:7px 14px 7px 0; white-space:normal; }"
@@ -79,7 +79,10 @@ DETAIL_DOCUMENT_STYLE = (
     "h2 { font-family:" + DETAIL_FONT_CSS_FAMILY + "; color:#1768aa; font-size:16px; "
     "font-weight:700; border-bottom:2px solid #dbeaf7; padding-bottom:6px; "
     "margin-top:22px; }"
-    ".content { font-family:" + DETAIL_FONT_CSS_FAMILY + "; font-weight:400; font-size:14px; }"
+    # 화면 설정값(기본 9.5pt)과 같은 단위를 써야 법령과 수립지침류의
+    # 실제 글자 크기가 같다. 14px은 약 10.5pt라 같은 9.5 설정에서도
+    # 법령 쪽만 더 크게 보였다.
+    ".content { font-family:" + DETAIL_FONT_CSS_FAMILY + "; font-weight:400; font-size:9.5pt; }"
     ".paragraph { margin:0 0 12px 0; }"
     ".bullet { margin:0 0 7px 0; border-collapse:collapse; }"
     ".bullet-marker { font-weight:400; padding:0; }"

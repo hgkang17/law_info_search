@@ -481,7 +481,7 @@ class PlusButton(QPushButton):
     여기서는 단추 네모의 정중앙을 잡아 가로·세로 선을 긋는다.
     """
 
-    _ARM_RATIO = 0.30
+    _ARM_RATIO = 0.24
     _COLOR = "#1768aa"
     _DISABLED_COLOR = "#9aa8b5"
 
@@ -501,7 +501,7 @@ class PlusButton(QPushButton):
         pen = QPen(
             QColor(self._COLOR if self.isEnabled() else self._DISABLED_COLOR)
         )
-        pen.setWidthF(1.6)
+        pen.setWidthF(1.35)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         painter.setPen(pen)
         painter.drawLine(
@@ -560,13 +560,13 @@ class SendButton(QPushButton):
             )
             return
         # 화살표 전체 높이의 40%가 화살촉이다. 막대만 길면 가늘어 보인다.
-        height = size * 0.34
-        head_height = height * 0.42
-        head_width = size * 0.24
+        height = size * 0.39
+        head_height = height * 0.38
+        head_width = size * 0.27
         top = center_y - height / 2.0
         bottom = center_y + height / 2.0
         pen = QPen(color)
-        pen.setWidthF(max(1.8, size * 0.07))
+        pen.setWidthF(max(1.6, size * 0.06))
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         painter.setPen(pen)
@@ -1426,7 +1426,7 @@ class AiChatPanel(QFrame):
         self.reset_button = self.history_new_button
         self.send_button = SendButton()
         self.send_button.setObjectName("aiChatSend")
-        self.send_button.setFixedSize(32, 32)
+        self.send_button.setFixedSize(30, 30)
         self.send_button.setSizePolicy(
             QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
         )

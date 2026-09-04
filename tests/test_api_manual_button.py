@@ -69,7 +69,9 @@ def test_header_shows_api_settings_button_instead_of_key_box(qt_app) -> None:
         assert header.layout().indexOf(window.api_input) == -1
         assert window.api_input.parent() is window.oc_api_dialog
         assert window.api_manual_button.parent() is window.oc_api_dialog
-        assert window.api_manual_button.width() <= 30
+        assert window.api_manual_button.text() == "매뉴얼"
+        assert 72 <= window.api_manual_button.width() <= 100
+        assert 30 <= window.api_manual_button.height() <= 34
         assert header.height() < 80
     finally:
         window.close()

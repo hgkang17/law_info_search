@@ -146,11 +146,13 @@ class LawDocumentCache(QObject):
     """조회한 법령 API 원문을 실행 폴더에 저장하고 다시 불러옴."""
 
     changed = Signal()
+    DEFAULT_FAVORITE_PROJECT = "default"
 
     def __init__(self, directory: Path, parent=None) -> None:
         super().__init__(parent)
         self.directory = directory
         self.last_error = ""
+        self.active_favorite_project = self.DEFAULT_FAVORITE_PROJECT
         # 검색 결과의 저장 여부 확인과 실제 열기가 연달아 같은 JSON을
         # 읽는다. 최근 문서만 작게 유지해 중복 디스크 읽기/파싱을 없앤다.
         self._snapshot_memory: OrderedDict[
@@ -633,6 +635,7 @@ class LawDocumentCache(QObject):
             # 새로 저장할 때도 그대로 유지한다.
             for preserved_key in (
                 "favorite",
+                "favorite_projects",
                 "favorite_folder",
                 "favorite_order",
                 "favorite_articles",
@@ -698,8 +701,17 @@ class LawDocumentCache(QObject):
             record = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(record, dict):
                 raise ValueError("저장 파일 형식이 올바르지 않습니다.")
-            record["favorite"] = bool(is_favorite)
-            if not is_favorite:
+            memberships = self._favorite_memberships(record)
+            memberships = [
+                item
+                for item in memberships
+                if item["id"] != self.active_favorite_project
+            ]
+            if is_favorite:
+                memberships.append({"id": self.active_favorite_project})
+            record["favorite_projects"] = memberships
+            record["favorite"] = bool(memberships)
+            if not memberships:
                 record.pop("favorite_order", None)
                 record.pop("favorite_folder", None)
             temporary_path = path.with_suffix(".json.tmp")
@@ -713,6 +725,137 @@ class LawDocumentCache(QObject):
             return False
         self.changed.emit()
         return True
+
+    def set_active_favorite_project(self, project_id: str) -> None:
+        normalized = str(project_id or self.DEFAULT_FAVORITE_PROJECT).strip()
+        if normalized == self.active_favorite_project:
+            return
+        self.active_favorite_project = normalized
+        self.changed.emit()
+
+    def remove_favorite_project(self, project_id: str) -> bool:
+        """모든 저장 본문에서 한 프로젝트의 즐겨찾기 소속만 제거한다."""
+        normalized = str(project_id or "").strip()
+        if not normalized or normalized == self.DEFAULT_FAVORITE_PROJECT:
+            return False
+        self.last_error = ""
+        changed = False
+        try:
+            for path in self.directory.glob("*.json"):
+                record = self._read_json_cached(path)
+                if record is None:
+                    continue
+                memberships = [
+                    item
+                    for item in self._favorite_memberships(record)
+                    if item["id"] != normalized
+                ]
+                article_entries = self._article_favorites(
+                    record, all_projects=True
+                )
+                filtered_articles: list[dict[str, object]] = []
+                articles_changed = False
+                for entry in article_entries:
+                    entry_memberships = [
+                        dict(item)
+                        for item in entry.get("favorite_projects", [])
+                        if isinstance(item, dict)
+                        and str(item.get("id") or "") != normalized
+                    ]
+                    if len(entry_memberships) != len(
+                        entry.get("favorite_projects", [])
+                    ):
+                        articles_changed = True
+                    if entry_memberships:
+                        entry["favorite_projects"] = entry_memberships
+                        filtered_articles.append(entry)
+                if (
+                    memberships == self._favorite_memberships(record)
+                    and not articles_changed
+                ):
+                    continue
+                record["favorite_projects"] = memberships
+                record["favorite"] = bool(memberships)
+                if filtered_articles:
+                    record["favorite_articles"] = filtered_articles
+                else:
+                    record.pop("favorite_articles", None)
+                temporary_path = path.with_suffix(".json.tmp")
+                temporary_path.write_text(
+                    json.dumps(record, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                temporary_path.replace(path)
+                self._snapshot_memory.pop(path, None)
+                changed = True
+        except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            self.last_error = str(exc)
+            return False
+        if changed:
+            self.changed.emit()
+        return True
+
+    def _favorite_memberships(
+        self, record: dict[str, object]
+    ) -> list[dict[str, object]]:
+        raw = record.get("favorite_projects")
+        memberships: list[dict[str, object]] = []
+        if isinstance(raw, list):
+            for item in raw:
+                if not isinstance(item, dict):
+                    continue
+                project_id = str(item.get("id") or "").strip()
+                if not project_id or any(
+                    existing["id"] == project_id for existing in memberships
+                ):
+                    continue
+                normalized: dict[str, object] = {"id": project_id}
+                folder = str(item.get("folder") or "").strip()
+                if folder:
+                    normalized["folder"] = folder
+                if "order" in item:
+                    try:
+                        normalized["order"] = int(item["order"])
+                    except (TypeError, ValueError):
+                        pass
+                memberships.append(normalized)
+        if not memberships and record.get("favorite"):
+            legacy: dict[str, object] = {"id": self.DEFAULT_FAVORITE_PROJECT}
+            folder = str(record.get("favorite_folder") or "").strip()
+            if folder:
+                legacy["folder"] = folder
+            if "favorite_order" in record:
+                try:
+                    legacy["order"] = int(record["favorite_order"])
+                except (TypeError, ValueError):
+                    pass
+            memberships.append(legacy)
+        return memberships
+
+    def _projected_favorite_record(
+        self, record: dict[str, object]
+    ) -> dict[str, object] | None:
+        membership = next(
+            (
+                item
+                for item in self._favorite_memberships(record)
+                if item["id"] == self.active_favorite_project
+            ),
+            None,
+        )
+        if membership is None:
+            return None
+        projected = dict(record)
+        projected["favorite"] = True
+        projected["favorite_folder"] = str(membership.get("folder") or "")
+        projected["favorite_order"] = int(
+            membership.get("order", 1_000_000_000)
+        )
+        articles = self._article_favorites(record)
+        for article in articles:
+            article.pop("favorite_projects", None)
+        projected["favorite_articles"] = articles
+        return projected
 
     def _read_json_cached(self, path: Path) -> dict[str, object] | None:
         """저장 JSON을 mtime·크기 기준으로 기억해 같은 파일을 반복 파싱하지 않는다."""
@@ -753,10 +896,19 @@ class LawDocumentCache(QObject):
         record = self._read_json_cached(self.path_for_row(row))
         if record is None:
             return []
-        return self._article_favorites(record)
+        entries = self._article_favorites(record)
+        # 프로젝트 소속 정보는 저장 형식의 내부 구현이다. 기존 화면과
+        # 호출자는 조항 위치·폴더·순서만 받도록 공개 형태를 유지한다.
+        for entry in entries:
+            entry.pop("favorite_projects", None)
+        return entries
 
-    @staticmethod
-    def _article_favorites(record: dict[str, object]) -> list[dict[str, object]]:
+    def _article_favorites(
+        self,
+        record: dict[str, object],
+        *,
+        all_projects: bool = False,
+    ) -> list[dict[str, object]]:
         entries = record.get("favorite_articles")
         if not isinstance(entries, list):
             return []
@@ -774,12 +926,67 @@ class LawDocumentCache(QObject):
                 "mok": str(entry.get("mok") or "").strip(),
                 "label": str(entry.get("label") or ""),
             }
-            folder = str(entry.get("favorite_folder") or "").strip()
+            memberships: list[dict[str, object]] = []
+            raw_memberships = entry.get("favorite_projects")
+            if isinstance(raw_memberships, list):
+                for membership in raw_memberships:
+                    if not isinstance(membership, dict):
+                        continue
+                    project_id = str(membership.get("id") or "").strip()
+                    if not project_id:
+                        continue
+                    normalized_membership: dict[str, object] = {"id": project_id}
+                    folder = str(membership.get("folder") or "").strip()
+                    if folder:
+                        normalized_membership["folder"] = folder
+                    if "order" in membership:
+                        try:
+                            normalized_membership["order"] = int(
+                                membership["order"]
+                            )
+                        except (TypeError, ValueError):
+                            pass
+                    memberships.append(normalized_membership)
+            if not memberships:
+                legacy_membership: dict[str, object] = {
+                    "id": self.DEFAULT_FAVORITE_PROJECT
+                }
+                legacy_folder = str(entry.get("favorite_folder") or "").strip()
+                if legacy_folder:
+                    legacy_membership["folder"] = legacy_folder
+                if "favorite_order" in entry:
+                    try:
+                        legacy_membership["order"] = int(entry["favorite_order"])
+                    except (TypeError, ValueError):
+                        pass
+                memberships.append(legacy_membership)
+            normalized["favorite_projects"] = memberships
+            active_membership = next(
+                (
+                    item
+                    for item in memberships
+                    if item["id"] == self.active_favorite_project
+                ),
+                None,
+            )
+            if not all_projects and active_membership is None:
+                continue
+            folder_source = (
+                entry.get("favorite_folder")
+                if all_projects
+                else (active_membership or {}).get("folder")
+            )
+            folder = str(folder_source or "").strip()
             if folder:
                 normalized["favorite_folder"] = folder
-            if "favorite_order" in entry:
+            order_source = (
+                (active_membership or {}).get("order")
+                if not all_projects
+                else entry.get("favorite_order")
+            )
+            if order_source is not None:
                 try:
-                    normalized["favorite_order"] = int(entry["favorite_order"])
+                    normalized["favorite_order"] = int(order_source)
                 except (TypeError, ValueError):
                     pass
             cleaned.append(normalized)
@@ -821,28 +1028,45 @@ class LawDocumentCache(QObject):
             record = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(record, dict):
                 raise ValueError("저장 파일 형식이 올바르지 않습니다.")
-            entries = [
-                entry
-                for entry in self._article_favorites(record)
-                if (
-                    entry["jo"],
-                    entry["hang"],
-                    entry["ho"],
-                    entry["mok"],
-                )
-                != (jo, hang, ho, mok)
+            entries = self._article_favorites(record, all_projects=True)
+            selected = next(
+                (
+                    entry
+                    for entry in entries
+                    if (entry["jo"], entry["hang"], entry["ho"], entry["mok"])
+                    == (jo, hang, ho, mok)
+                ),
+                None,
+            )
+            if selected is None:
+                selected = {
+                    "jo": jo,
+                    "hang": hang,
+                    "ho": ho,
+                    "mok": mok,
+                    "label": label or f"제{jo}조",
+                    "favorite_projects": [],
+                }
+                entries.append(selected)
+            memberships = [
+                dict(item)
+                for item in selected.get("favorite_projects", [])
+                if isinstance(item, dict)
+                and str(item.get("id") or "") != self.active_favorite_project
             ]
             if is_favorite:
-                entries.append(
-                    {
-                        "jo": jo,
-                        "hang": hang,
-                        "ho": ho,
-                        "mok": mok,
-                        "label": label or f"제{jo}조",
-                    }
-                )
-                record["favorite"] = True
+                memberships.append({"id": self.active_favorite_project})
+            selected["favorite_projects"] = memberships
+            if not memberships:
+                entries.remove(selected)
+            law_memberships = self._favorite_memberships(record)
+            if is_favorite and not any(
+                item["id"] == self.active_favorite_project
+                for item in law_memberships
+            ):
+                law_memberships.append({"id": self.active_favorite_project})
+            record["favorite_projects"] = law_memberships
+            record["favorite"] = bool(law_memberships)
             if entries:
                 record["favorite_articles"] = entries
             else:
@@ -908,7 +1132,7 @@ class LawDocumentCache(QObject):
                 record = json.loads(path.read_text(encoding="utf-8"))
                 if not isinstance(record, dict):
                     continue
-                entries = self._article_favorites(record)
+                entries = self._article_favorites(record, all_projects=True)
                 locations = {
                     (
                         str(unit.get("jo") or ""),
@@ -929,11 +1153,27 @@ class LawDocumentCache(QObject):
                     if location is None:
                         continue
                     folder_id, order = location
+                    memberships = [
+                        dict(item)
+                        for item in entry.get("favorite_projects", [])
+                        if isinstance(item, dict)
+                    ]
+                    membership = next(
+                        (
+                            item
+                            for item in memberships
+                            if item.get("id") == self.active_favorite_project
+                        ),
+                        None,
+                    )
+                    if membership is None:
+                        continue
                     if folder_id:
-                        entry["favorite_folder"] = folder_id
+                        membership["folder"] = folder_id
                     else:
-                        entry.pop("favorite_folder", None)
-                    entry["favorite_order"] = order
+                        membership.pop("folder", None)
+                    membership["order"] = order
+                    entry["favorite_projects"] = memberships
                 record["favorite_articles"] = entries
                 temporary_path = path.with_suffix(".json.tmp")
                 temporary_path.write_text(
@@ -952,7 +1192,10 @@ class LawDocumentCache(QObject):
             if not path.is_file():
                 return False
             record = json.loads(path.read_text(encoding="utf-8"))
-            return bool(isinstance(record, dict) and record.get("favorite"))
+            return bool(
+                isinstance(record, dict)
+                and self._projected_favorite_record(record) is not None
+            )
         except (OSError, TypeError, ValueError, json.JSONDecodeError):
             return False
 
@@ -962,7 +1205,9 @@ class LawDocumentCache(QObject):
         목록만 그릴 때는 본문이 필요 없으므로 ``favorite_entries``를 쓴다.
         """
         records = [
-            record for record in self.list_records() if record.get("favorite")
+            projected
+            for record in self.list_records()
+            if (projected := self._projected_favorite_record(record)) is not None
         ]
         records.sort(key=self._favorite_order)
         return records
@@ -1011,17 +1256,35 @@ class LawDocumentCache(QObject):
                         "저장된 법령 폴더 밖의 파일은 정리할 수 없습니다."
                     )
                 record = json.loads(path.read_text(encoding="utf-8"))
-                if not isinstance(record, dict) or not record.get("favorite"):
+                if not isinstance(record, dict):
+                    continue
+                memberships = self._favorite_memberships(record)
+                membership = next(
+                    (
+                        item
+                        for item in memberships
+                        if item["id"] == self.active_favorite_project
+                    ),
+                    None,
+                )
+                if membership is None:
                     continue
                 normalized_folder = str(folder_id or "").strip()
                 normalized_order = max(0, int(order))
                 if (
-                    record.get("favorite_folder") == normalized_folder
-                    and record.get("favorite_order") == normalized_order
+                    membership.get("folder", "") == normalized_folder
+                    and membership.get("order") == normalized_order
                 ):
                     continue
-                record["favorite_folder"] = normalized_folder
-                record["favorite_order"] = normalized_order
+                if normalized_folder:
+                    membership["folder"] = normalized_folder
+                else:
+                    membership.pop("folder", None)
+                membership["order"] = normalized_order
+                record["favorite_projects"] = memberships
+                if self.active_favorite_project == self.DEFAULT_FAVORITE_PROJECT:
+                    record["favorite_folder"] = normalized_folder
+                    record["favorite_order"] = normalized_order
                 temporary_path = path.with_suffix(".json.tmp")
                 temporary_path.write_text(
                     json.dumps(record, ensure_ascii=False, indent=2),
@@ -1063,6 +1326,7 @@ class LawDocumentCache(QObject):
         "saved_at",
         "effective_date",
         "favorite",
+        "favorite_projects",
         "favorite_order",
         "favorite_folder",
         "favorite_articles",
@@ -1199,7 +1463,11 @@ class LawDocumentCache(QObject):
 
     def favorite_entries(self) -> list[dict[str, object]]:
         """즐겨찾기만 골라 저장해 둔 순서대로 돌려준다."""
-        entries = [entry for entry in self.list_entries() if entry.get("favorite")]
+        entries = [
+            projected
+            for entry in self.list_entries()
+            if (projected := self._projected_favorite_record(entry)) is not None
+        ]
         entries.sort(key=self._favorite_order)
         return entries
 

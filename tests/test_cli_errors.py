@@ -22,6 +22,9 @@ from llm.cli_errors import describe_failure, explain_exit_code, explain_stderr, 
         ("ENOSPC: no space left on device", "디스크"),
         ("'claude' is not recognized as an internal or external command", "PATH"),
         ("Unsupported engine: requires Node >=18", "Node.js"),
+        ("400 Bad Request: invalid request", "요청 형식"),
+        ("408 request timeout", "응답 시간이 초과"),
+        ("413 payload too large", "내용이 너무 큽니다"),
         ("529 overloaded_error", "서버 쪽 오류"),
     ],
 )
@@ -73,8 +76,9 @@ def test_message_is_returned_untouched_when_nothing_is_recognized() -> None:
     assert with_explanation(message, 77, "알 수 없는 오류") == message
 
 
-def test_explanation_is_appended_below_the_original_message() -> None:
+def test_korean_explanation_is_shown_before_technical_details() -> None:
     result = with_explanation("실패했습니다", 1, "429 rate limit")
 
-    assert result.startswith("실패했습니다")
+    assert result.startswith("사용량 한도")
+    assert "세부 정보: 실패했습니다" in result
     assert "사용량 한도" in result

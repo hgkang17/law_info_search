@@ -6,6 +6,7 @@ from ui.assets import (
     FAVORITE_PLUS_ICON_PATH,
 )
 from ui.widgets import (
+    DropdownComboBox,
     FavoriteCategoryTree,
 )
 from storage.cache import LawDocumentCache
@@ -41,6 +42,8 @@ class ViewedLawsTab(QWidget):
     )
     FAVORITE_FOLDER_SETTINGS_KEY = "favorite_folder_tree_v2"
     FAVORITE_FOLDER_LEGACY_SETTINGS_KEY = "favorite_folder_tree_v1"
+    FAVORITE_PROJECTS_SETTINGS_KEY = "favorite_projects_v1"
+    FAVORITE_ACTIVE_PROJECT_KEY = "favorite_active_project_v1"
     FAVORITE_VISIBLE_CATEGORIES_KEY = "favorite_visible_categories"
     FAVORITE_VISIBLE_CATEGORIES_VERSION_KEY = (
         "favorite_visible_categories_version"
@@ -70,6 +73,11 @@ class ViewedLawsTab(QWidget):
         self._populating = False
         self.favorite_category_checks: dict[str, QCheckBox] = {}
         self.favorite_category_cards: dict[str, QFrame] = {}
+        self.favorite_projects = self._load_favorite_projects()
+        self.active_favorite_project = self._load_active_favorite_project()
+        self.law_cache.set_active_favorite_project(
+            self.active_favorite_project
+        )
 
         root = QVBoxLayout(self)
         # 위아래 여백을 두지 않는다. 왼쪽 메뉴 카드는 이 탭 바깥에 있어
@@ -86,8 +94,8 @@ class ViewedLawsTab(QWidget):
         title = QLabel("즐겨찾기" if favorites_only else "저장내역")
         title.setObjectName("sectionTitle")
         description = QLabel(
-            "기존 6개 구분은 고정되며, 각 구분 안에 원하는 이름의 폴더와 "
-            "하위 폴더를 만들어 즐겨찾기를 정리할 수 있습니다."
+            "프로젝트마다 법령·조항호목·별표서식을 독립적으로 모을 수 있고, "
+            "같은 항목을 여러 프로젝트에 중복 등록할 수 있습니다."
             if favorites_only
             else "법령·조문·질의회신·해석례·판례의 저장 본문을 모아 보여줍니다. "
             "저장된 본문은 API를 다시 호출하지 않고 엽니다."
@@ -101,10 +109,51 @@ class ViewedLawsTab(QWidget):
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
         self.path_label.setWordWrap(True)
+        self.path_label.setVisible(not favorites_only)
         heading_layout.addWidget(title)
         heading_layout.addWidget(description)
         heading_layout.addWidget(self.path_label)
         root.addWidget(heading)
+
+        self.project_combo: DropdownComboBox | None = None
+        if favorites_only:
+            project_row = QHBoxLayout()
+            project_row.setSpacing(7)
+            project_label = QLabel("프로젝트")
+            project_label.setObjectName("favoriteProjectLabel")
+            self.project_combo = DropdownComboBox()
+            self.project_combo.setObjectName("favoriteProjectCombo")
+            self.project_combo.setMinimumWidth(210)
+            for project in self.favorite_projects:
+                self.project_combo.addItem(
+                    str(project["name"]), str(project["id"])
+                )
+            active_index = self.project_combo.findData(
+                self.active_favorite_project
+            )
+            self.project_combo.setCurrentIndex(max(0, active_index))
+            self.project_combo.currentIndexChanged.connect(
+                self._favorite_project_changed
+            )
+            self.project_add_button = QPushButton("새 프로젝트")
+            self.project_rename_button = QPushButton("이름 변경")
+            self.project_delete_button = QPushButton("삭제")
+            for button in (
+                self.project_add_button,
+                self.project_rename_button,
+                self.project_delete_button,
+            ):
+                button.setObjectName("favoriteProjectButton")
+            self.project_add_button.clicked.connect(self._create_favorite_project)
+            self.project_rename_button.clicked.connect(self._rename_favorite_project)
+            self.project_delete_button.clicked.connect(self._delete_favorite_project)
+            project_row.addWidget(project_label)
+            project_row.addWidget(self.project_combo)
+            project_row.addWidget(self.project_add_button)
+            project_row.addWidget(self.project_rename_button)
+            project_row.addWidget(self.project_delete_button)
+            project_row.addStretch(1)
+            root.addLayout(project_row)
 
         controls = QHBoxLayout()
         controls.setSpacing(8)
@@ -143,6 +192,7 @@ class ViewedLawsTab(QWidget):
             for category, label in self.FAVORITE_CATEGORIES:
                 checkbox = QCheckBox(label.replace("\n", " "))
                 checkbox.setObjectName("favoriteCategoryCheck")
+                checkbox.setFixedHeight(28)
                 checkbox.setChecked(category in visible_categories)
                 checkbox.toggled.connect(
                     lambda _checked=False, selected_category=category: (
@@ -152,7 +202,9 @@ class ViewedLawsTab(QWidget):
                     )
                 )
                 self.favorite_category_checks[category] = checkbox
-                count_row.addWidget(checkbox)
+                count_row.addWidget(
+                    checkbox, 0, Qt.AlignmentFlag.AlignVCenter
+                )
             root.addLayout(count_row)
         else:
             root.addWidget(self.count_label)
@@ -361,6 +413,153 @@ class ViewedLawsTab(QWidget):
         line.setText(self.status_label.text())
         self.status_row.hide()
         self.status_label = line
+
+    def _load_favorite_projects(self) -> list[dict[str, str]]:
+        default = [{"id": "default", "name": "기본 프로젝트"}]
+        if self.settings is None:
+            return default
+        raw = self.settings.value(self.FAVORITE_PROJECTS_SETTINGS_KEY, "")
+        try:
+            parsed = json.loads(str(raw)) if raw else []
+        except (TypeError, ValueError, json.JSONDecodeError):
+            parsed = []
+        projects: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for project in parsed if isinstance(parsed, list) else []:
+            if not isinstance(project, dict):
+                continue
+            project_id = str(project.get("id") or "").strip()
+            name = str(project.get("name") or "").strip()
+            if not project_id or not name or project_id in seen:
+                continue
+            seen.add(project_id)
+            projects.append({"id": project_id, "name": name})
+        if "default" not in seen:
+            projects.insert(0, default[0])
+        self.settings.setValue(
+            self.FAVORITE_PROJECTS_SETTINGS_KEY,
+            json.dumps(projects, ensure_ascii=False, separators=(",", ":")),
+        )
+        return projects
+
+    def _load_active_favorite_project(self) -> str:
+        valid = {project["id"] for project in self.favorite_projects}
+        if self.settings is None:
+            return "default"
+        selected = str(
+            self.settings.value(self.FAVORITE_ACTIVE_PROJECT_KEY, "default")
+            or "default"
+        )
+        return selected if selected in valid else "default"
+
+    def _save_favorite_projects(self) -> None:
+        if self.settings is None:
+            return
+        self.settings.setValue(
+            self.FAVORITE_PROJECTS_SETTINGS_KEY,
+            json.dumps(
+                self.favorite_projects,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+        )
+        self.settings.setValue(
+            self.FAVORITE_ACTIVE_PROJECT_KEY, self.active_favorite_project
+        )
+        self.settings.sync()
+
+    def _favorite_project_changed(self, _index: int = -1) -> None:
+        if self.project_combo is None:
+            return
+        project_id = str(self.project_combo.currentData() or "default")
+        if project_id == self.active_favorite_project:
+            return
+        if self.favorite_trees:
+            self._persist_favorite_tree("현재 프로젝트의 정리를 저장했습니다.")
+        self.active_favorite_project = project_id
+        self._save_favorite_projects()
+        self.law_cache.set_active_favorite_project(project_id)
+        self.favorite_folders = self._load_favorite_folders()
+        self.refresh()
+        self.status_label.setText(
+            f"'{self.project_combo.currentText()}' 프로젝트를 열었습니다."
+        )
+
+    def _create_favorite_project(self) -> None:
+        name, accepted = QInputDialog.getText(
+            self, "새 즐겨찾기 프로젝트", "프로젝트 이름:"
+        )
+        name = name.strip()
+        if not accepted or not name:
+            return
+        project_id = uuid.uuid4().hex
+        self.favorite_projects.append({"id": project_id, "name": name})
+        self.project_combo.addItem(name, project_id)
+        self._save_favorite_projects()
+        self.project_combo.setCurrentIndex(
+            self.project_combo.findData(project_id)
+        )
+
+    def _rename_favorite_project(self) -> None:
+        if self.project_combo is None:
+            return
+        project_id = str(self.project_combo.currentData() or "")
+        current = self.project_combo.currentText()
+        name, accepted = QInputDialog.getText(
+            self,
+            "즐겨찾기 프로젝트 이름 변경",
+            "새 프로젝트 이름:",
+            text=current,
+        )
+        name = name.strip()
+        if not accepted or not name or name == current:
+            return
+        for project in self.favorite_projects:
+            if project["id"] == project_id:
+                project["name"] = name
+                break
+        self.project_combo.setItemText(self.project_combo.currentIndex(), name)
+        self._save_favorite_projects()
+
+    def _delete_favorite_project(self) -> None:
+        if self.project_combo is None:
+            return
+        project_id = str(self.project_combo.currentData() or "")
+        if project_id == "default":
+            QMessageBox.information(
+                self, "프로젝트 삭제", "기본 프로젝트는 삭제할 수 없습니다."
+            )
+            return
+        name = self.project_combo.currentText()
+        answer = QMessageBox.question(
+            self,
+            "즐겨찾기 프로젝트 삭제",
+            f"'{name}' 프로젝트를 삭제할까요?\n"
+            "저장된 본문과 다른 프로젝트의 즐겨찾기는 유지됩니다.",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.law_cache.remove_favorite_project(project_id)
+        self.favorite_projects = [
+            project
+            for project in self.favorite_projects
+            if project["id"] != project_id
+        ]
+        index = self.project_combo.findData(project_id)
+        if index >= 0:
+            self.project_combo.removeItem(index)
+        self.active_favorite_project = "default"
+        self._save_favorite_projects()
+        self.project_combo.setCurrentIndex(
+            self.project_combo.findData("default")
+        )
+
+    def _favorite_folder_settings_key(self) -> str:
+        return (
+            f"{self.FAVORITE_FOLDER_SETTINGS_KEY}/"
+            f"{self.active_favorite_project}"
+        )
+
     def _load_visible_favorite_categories(self) -> set[str]:
         """지난에 선택한 즐겨찾기 카드. 저장값이 없으면 모두 보인다."""
         all_categories = {
@@ -527,8 +726,15 @@ class ViewedLawsTab(QWidget):
     def _load_favorite_folders(self) -> list[dict[str, object]]:
         raw: object = ""
         if self.settings is not None:
-            raw = self.settings.value(self.FAVORITE_FOLDER_SETTINGS_KEY, "")
-            if not raw:
+            raw = self.settings.value(
+                self._favorite_folder_settings_key(), ""
+            )
+            if not raw and self.active_favorite_project == "default":
+                # 프로젝트 기능 도입 전의 정리 상태는 기본 프로젝트로 옮긴다.
+                raw = self.settings.value(
+                    self.FAVORITE_FOLDER_SETTINGS_KEY, ""
+                )
+            if not raw and self.active_favorite_project == "default":
                 raw = self.settings.value(
                     self.FAVORITE_FOLDER_LEGACY_SETTINGS_KEY, ""
                 )
@@ -648,7 +854,7 @@ class ViewedLawsTab(QWidget):
         if self.settings is None:
             return
         self.settings.setValue(
-            self.FAVORITE_FOLDER_SETTINGS_KEY,
+            self._favorite_folder_settings_key(),
             json.dumps(folders, ensure_ascii=False, separators=(",", ":")),
         )
         self.settings.sync()

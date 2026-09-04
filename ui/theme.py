@@ -5,12 +5,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 import sys
 from typing import Callable
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import (
     QBrush,
     QColor,
     QFont,
     QFontDatabase,
+    QIcon,
+    QPainter,
+    QPen,
+    QPixmap,
     QKeySequence,
     QShortcut,
     QTextCharFormat,
@@ -19,13 +23,16 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QHBoxLayout,
+    QMenu,
     QPushButton,
     QSizePolicy,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 from storage.paths import APP_DIR
 from utils.constants import (
+    DETAIL_FONT_CSS_FAMILY,
     DETAIL_FONT_FAMILIES,
     DETAIL_FONT_FAMILY,
     FONT_FAMILY,
@@ -166,15 +173,19 @@ def ui_font(
     return font
 
 
-def detail_font(point_size: float | None = None) -> QFont:
+def detail_font(
+    point_size: float | None = None, family: str | None = None
+) -> QFont:
     """본문(법령ㆍ행정규칙 조문)에 쓰는 글꼴 한 벌.
 
     글꼴 이름만 정하고 목록을 비워 두면 위젯이 앱 기본 글꼴의 목록을 물려받아
     본문 글꼴이 화면 UI 글꼴로 덮인다. 목록까지 못박아야 본문만 다른 글꼴을
     쓸 수 있다.
     """
-    font = QFont(DETAIL_FONT_FAMILY)
-    font.setFamilies(list(DETAIL_FONT_FAMILIES))
+    selected_family = str(family or DETAIL_FONT_FAMILY).strip()
+    font = QFont(selected_family)
+    fallback_families = [selected_family, *DETAIL_FONT_FAMILIES]
+    font.setFamilies(list(dict.fromkeys(fallback_families)))
     font.setWeight(QFont.Weight.Normal)
     if point_size is not None:
         font.setPointSizeF(point_size)
@@ -388,8 +399,12 @@ def apply_legal_title_colors(html: str) -> str:
 
 def apply_detail_font_family(html: str) -> str:
     """이전에 저장된 본문 HTML도 현재 본문 글꼴과 기본 두께로 통일."""
-    html = html.replace("Pretendard Variable", DETAIL_FONT_FAMILY)
-    html = html.replace("Pretendard", DETAIL_FONT_FAMILY)
+    html = re.sub(
+        r"font-family\s*:\s*[^;\"]+",
+        f"font-family:{DETAIL_FONT_CSS_FAMILY}",
+        html,
+        flags=re.IGNORECASE,
+    )
     return re.sub(
         r"font-weight\s*:\s*(?:300|normal)\b",
         "font-weight:400",
@@ -432,7 +447,7 @@ class ColorPaletteToolbar:
     """
 
     color_tools: QWidget
-    palette_buttons: list[QPushButton]
+    palette_buttons: list[QToolButton]
     color_reset_tools: QWidget
     color_reset_button: QPushButton
     all_color_reset_button: QPushButton
@@ -452,78 +467,104 @@ def build_color_palette_toolbar(
     """
     color_tools = QWidget()
     color_tools.setObjectName("colorTools")
-    # 색 네모 두 줄(21+21)과 줄 사이 여백(2)이 들어가고도 남게 둔다.
-    # 딱 맞춰 두면 테두리가 그려지는 만큼 아래 줄이 잘려 보인다.
-    color_tools.setFixedSize(246, 50)
+    color_tools.setFixedSize(78, 28)
     color_tools.setSizePolicy(
         QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
     )
     color_tools_layout = QHBoxLayout(color_tools)
     color_tools_layout.setContentsMargins(0, 0, 0, 0)
     color_tools_layout.setSpacing(0)
-    color_rows_layout = QVBoxLayout()
-    color_rows_layout.setContentsMargins(0, 0, 0, 0)
-    color_rows_layout.setSpacing(2)
-    palette_buttons: list[QPushButton] = []
+    palette_buttons: list[QToolButton] = []
+
+    def tool_icon(kind: str, color_value: str) -> QIcon:
+        pixmap = QPixmap(22, 20)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        ink = QColor("#34465a")
+        if kind == "background":
+            pen = QPen(ink, 1.5)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(pen)
+            painter.drawLine(6, 5, 15, 12)
+            painter.drawLine(5, 7, 13, 15)
+            painter.setPen(QPen(QColor(color_value), 3.0))
+            painter.drawLine(4, 17, 17, 17)
+        else:
+            font = painter.font()
+            font.setBold(True)
+            font.setPixelSize(13)
+            painter.setFont(font)
+            painter.setPen(ink)
+            painter.drawText(3, 0, 16, 16, Qt.AlignmentFlag.AlignCenter, "A")
+            painter.setPen(QPen(QColor(color_value), 2.5))
+            painter.drawLine(4, 17, 18, 17)
+        painter.end()
+        return QIcon(pixmap)
+
     for row_label, is_background in (("음영색", True), ("글자색", False)):
-        color_row = QHBoxLayout()
-        color_row.setContentsMargins(0, 0, 0, 0)
-        color_row.setSpacing(2)
-        label = QLabel(row_label)
-        label.setObjectName("colorRowLabel")
-        label.setFixedWidth(38)
-        label.setAlignment(
-            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        current = {"value": "#fde047" if is_background else "#ef4444"}
+        button = QToolButton()
+        button.setObjectName("colorPaletteToolButton")
+        button.setFixedSize(37, 28)
+        button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        button.setIconSize(QSize(22, 20))
+        button.setIcon(
+            tool_icon("background" if is_background else "text", current["value"])
         )
-        color_row.addWidget(label)
+        button.setToolTip(f"{row_label} · 현재 색 적용 또는 화살표로 색 선택")
+        button.setAccessibleName(row_label)
+        menu = QMenu(button)
         for color_name, color_value in PALETTE_COLORS:
-            button = QPushButton("")
-            button.setObjectName("paletteColorButton")
-            button.setFixedSize(21, 21)
-            button.setToolTip(
+            action = menu.addAction(color_name)
+            action.setToolTip(
                 palette_color_tooltip(
                     row_label, color_name, color_value, background=is_background
                 )
             )
-            button.setAccessibleName(f"{row_label} {color_name}")
-            button.setStyleSheet(
-                "QPushButton {"
-                f"background:{palette_swatch_color(color_value, background=is_background)}; "
-                "border:1px solid #8b98a8; "
-                # 높이는 setFixedSize와 같은 값을 적어 준다. 스타일시트가
-                # 위젯 크기보다 우선해서, 여기 값이 크면 그만큼 아래 줄이
-                # 칸 밖으로 밀려 잘린다.
-                "border-radius:3px; padding:0;"
-                "min-height:21px; max-height:21px;"
-                "} QPushButton:hover { border:2px solid #1768aa; }"
-            )
-            button.clicked.connect(
-                lambda _checked=False, value=color_value,
-                background=is_background: apply_color(
-                    value, background=background
+            action.setIcon(tool_icon("background" if is_background else "text", color_value))
+
+            def choose(
+                _checked=False,
+                *,
+                value=color_value,
+                background=is_background,
+                target=button,
+                state=current,
+            ) -> None:
+                state["value"] = value
+                target.setIcon(
+                    tool_icon("background" if background else "text", value)
                 )
+                apply_color(value, background=background)
+
+            action.triggered.connect(choose)
+        button.setMenu(menu)
+        button.clicked.connect(
+            lambda _checked=False, background=is_background, state=current: (
+                apply_color(state["value"], background=background)
             )
-            palette_buttons.append(button)
-            color_row.addWidget(button)
-        color_rows_layout.addLayout(color_row)
-    color_tools_layout.addLayout(color_rows_layout)
+        )
+        palette_buttons.append(button)
+        color_tools_layout.addWidget(button)
 
     color_reset_tools = QWidget()
     color_reset_tools.setObjectName("colorResetTools")
-    color_reset_tools.setFixedSize(58, 42)
-    color_reset_layout = QVBoxLayout(color_reset_tools)
+    color_reset_tools.setFixedSize(124, 28)
+    color_reset_layout = QHBoxLayout(color_reset_tools)
     color_reset_layout.setContentsMargins(0, 0, 0, 0)
-    color_reset_layout.setSpacing(2)
+    color_reset_layout.setSpacing(4)
     color_reset_button = QPushButton("선택초기화")
     color_reset_button.setObjectName("colorResetButton")
-    color_reset_button.setFixedSize(58, 20)
+    color_reset_button.setFixedSize(60, 28)
     color_reset_button.setToolTip(
         "선택한 본문의 음영색과 글자색을 모두 지웁니다."
     )
     color_reset_button.clicked.connect(reset_selected)
     all_color_reset_button = QPushButton("전체초기화")
     all_color_reset_button.setObjectName("colorResetButton")
-    all_color_reset_button.setFixedSize(58, 20)
+    all_color_reset_button.setFixedSize(60, 28)
     all_color_reset_button.setToolTip(
         "현재 본문의 사용자 음영색과 글자색을 모두 지웁니다."
     )
@@ -533,7 +574,7 @@ def build_color_palette_toolbar(
 
     memo_button = QPushButton("메모")
     memo_button.setObjectName("memoButton")
-    memo_button.setFixedSize(40, 42)
+    memo_button.setFixedSize(40, 28)
     memo_button.setToolTip("본문을 드래그해 선택한 뒤 메모를 작성합니다.")
     memo_button.clicked.connect(lambda _checked=False: edit_memo())
 

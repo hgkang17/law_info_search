@@ -130,6 +130,43 @@ def test_unsaved_law_cannot_hold_an_article_favorite(tmp_path) -> None:
     assert cache.last_error
 
 
+def test_same_law_and_article_can_belong_to_multiple_projects(tmp_path) -> None:
+    cache = _cache(tmp_path)
+    assert cache.set_favorite(ROW, True)
+    assert cache.set_article_favorite(ROW, "25", "제25조", True)
+
+    cache.set_active_favorite_project("project-b")
+    assert not cache.is_favorite(ROW)
+    assert not cache.is_article_favorite(ROW, "25")
+    assert cache.set_favorite(ROW, True)
+    assert cache.set_article_favorite(ROW, "25", "제25조", True)
+
+    cache.set_active_favorite_project("default")
+    assert cache.is_favorite(ROW)
+    assert cache.is_article_favorite(ROW, "25")
+    assert cache.set_article_favorite(ROW, "25", "제25조", False)
+    assert not cache.is_article_favorite(ROW, "25")
+
+    cache.set_active_favorite_project("project-b")
+    assert cache.is_favorite(ROW)
+    assert cache.is_article_favorite(ROW, "25")
+
+
+def test_removing_project_keeps_other_project_memberships(tmp_path) -> None:
+    cache = _cache(tmp_path)
+    assert cache.set_favorite(ROW, True)
+    cache.set_active_favorite_project("project-b")
+    assert cache.set_favorite(ROW, True)
+    assert cache.set_article_favorite(ROW, "30", "제30조", True)
+
+    assert cache.remove_favorite_project("project-b")
+    assert not cache.is_favorite(ROW)
+    assert not cache.is_article_favorite(ROW, "30")
+
+    cache.set_active_favorite_project("default")
+    assert cache.is_favorite(ROW)
+
+
 def test_cited_articles_are_read_from_the_answer(tmp_path) -> None:
     """즐겨찾기 단추는 답에 실제로 박힌 조문 링크에만 단다."""
     text = (

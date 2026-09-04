@@ -151,3 +151,102 @@ def test_annex_helper_name_is_not_shadowed_by_state(qt_app, tmp_path) -> None:
         assert tab._annex_section_entries == entries
     finally:
         tab.close()
+
+
+def test_annex_title_opens_constrained_inline_pdf_panel(
+    qt_app, tmp_path, monkeypatch
+) -> None:
+    settings = QSettings(
+        str(tmp_path / "inline-annex.ini"), QSettings.Format.IniFormat
+    )
+    tab = ResourceSearchTab(
+        lambda: "",
+        RecentSearchManager(settings),
+        LawDocumentCache(tmp_path / "saved"),
+    )
+    try:
+        entries = tab._law_annex_entries(_payload())
+        tab._annex_section_entries = entries
+        monkeypatch.setattr(tab, "_start_annex_download", lambda *_args: None)
+
+        tab._toggle_annex_preview("0")
+        qt_app.processEvents()
+
+        assert not tab.inline_annex_preview.isHidden()
+        assert tab.inline_annex_preview.minimumHeight() >= 320
+        assert tab.inline_annex_preview.maximumHeight() <= 600
+        assert tab.inline_annex_preview.pdf_view.pageMode().name == "MultiPage"
+        assert tab.inline_annex_preview.page_spin.minimum() == 1
+        tab.inline_annex_preview._toggle_expanded()
+        assert tab.inline_annex_preview.expand_button.text() == "축소"
+        tab.inline_annex_preview._toggle_expanded()
+        assert tab.inline_annex_preview.expand_button.text() == "크게"
+        assert tab._active_annex_preview_key.endswith("flSeq=12")
+
+        tab._close_inline_annex_preview()
+        assert tab.inline_annex_preview.isHidden()
+        assert tab._annex_previews == {}
+    finally:
+        tab.close()
+
+
+def test_body_lookup_button_is_removed_from_integrated_search(
+    qt_app, tmp_path
+) -> None:
+    settings = QSettings(
+        str(tmp_path / "integrated-button.ini"), QSettings.Format.IniFormat
+    )
+    tab = ResourceSearchTab(
+        lambda: "",
+        RecentSearchManager(settings),
+        LawDocumentCache(tmp_path / "saved"),
+    )
+    try:
+        tab.select_category("law")
+        assert tab.detail_button.isHidden()
+        tab.select_category("__all__")
+        assert tab.detail_button.isHidden()
+        tab.select_category("admrul")
+        assert tab.detail_button.isHidden()
+    finally:
+        tab.close()
+
+
+def test_resource_category_switch_restores_search_list_state(
+    qt_app, tmp_path
+) -> None:
+    settings = QSettings(
+        str(tmp_path / "category-state.ini"), QSettings.Format.IniFormat
+    )
+    tab = ResourceSearchTab(
+        lambda: "",
+        RecentSearchManager(settings),
+        LawDocumentCache(tmp_path / "saved"),
+    )
+    try:
+        tab.select_category("__all__")
+        tab.query_input.setText("도시계획")
+        tab.result_rows = [
+            {
+                "target": "law",
+                "label": "법령",
+                "id": "1",
+                "name": "도시계획법",
+                "related": "",
+                "kind": "법률",
+                "date": "",
+                "effective": "",
+            }
+        ]
+        tab._render_result_rows()
+        tab.result_count.setText("1건")
+
+        tab.select_category("law")
+        assert tab.result_table.rowCount() == 0
+        tab.select_category("__all__")
+
+        assert tab.query_input.text() == "도시계획"
+        assert tab.result_table.rowCount() == 1
+        assert tab.result_count.text() == "1건"
+    finally:
+        tab.close()

@@ -3,9 +3,10 @@ from __future__ import annotations
 import pytest
 from PySide6.QtWidgets import QApplication
 
+from ui.theme import apply_detail_font_family
 from ui.widgets import (
     DETAIL_FONT_CONTROL_WIDTH,
-    DETAIL_FONT_LABEL_WIDTH,
+    DETAIL_FONT_FAMILY_WIDTH,
     DETAIL_FONT_SIZE_MAX,
     DETAIL_FONT_SIZE_MIN,
     DETAIL_FONT_SIZE_STEP,
@@ -27,9 +28,9 @@ def test_shared_detail_header_preserves_ui_contract() -> None:
     assert controls.title.text() == "본문"
     assert controls.title.objectName() == "detailSectionTitle"
     assert controls.title.toolTip() == "더블클릭하면 본문 크게 보기로 전환합니다."
-    assert controls.font_label.text() == "글자"
-    assert controls.font_label.objectName() == "fontSizeLabel"
-    assert controls.font_label.width() == DETAIL_FONT_LABEL_WIDTH
+    assert controls.font_combo.objectName() == "detailFontCombo"
+    assert controls.font_combo.currentFont().family()
+    assert controls.font_combo.width() == DETAIL_FONT_FAMILY_WIDTH
     assert controls.font_spin.objectName() == "fontSizeSpin"
     assert controls.font_spin.minimum() == DETAIL_FONT_SIZE_MIN
     assert controls.font_spin.maximum() == DETAIL_FONT_SIZE_MAX
@@ -49,9 +50,11 @@ def test_shared_detail_header_keeps_signal_wiring_available_to_each_tab() -> Non
     controls.font_spin.valueChanged.connect(sizes.append)
 
     controls.title.doubleClicked.emit()
+    controls.font_combo.setCurrentFont(controls.font_combo.font())
     controls.font_spin.setValue(10.5)
 
     assert toggles == [True]
+    assert controls.font_combo.currentFont().family()
     assert sizes == [10.5]
 
 
@@ -67,3 +70,12 @@ def test_detail_font_size_tokens_share_clamping_and_step(
 
 def test_saved_detail_font_size_is_clamped_without_changing_its_precision() -> None:
     assert clamp_detail_font_size(11.7) == 11.7
+
+
+def test_legacy_saved_body_fonts_are_normalized_to_malgun_gothic() -> None:
+    html = '<div style="font-family:\'Gulim\',\'굴림\';">본문</div>'
+
+    normalized = apply_detail_font_family(html)
+
+    assert "font-family:'Malgun Gothic'" in normalized
+    assert "font-family:'Gulim'" not in normalized

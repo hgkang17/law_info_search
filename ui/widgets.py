@@ -9,6 +9,7 @@ from math import cos, pi, sin
 import re
 from PySide6.QtCore import (
     QEvent,
+    QEasingCurve,
     QObject,
     QPoint,
     QRect,
@@ -18,6 +19,7 @@ from PySide6.QtCore import (
     QSettings,
     Signal,
     QRegularExpression,
+    QPropertyAnimation,
 )
 from PySide6.QtGui import (
     QBrush,
@@ -42,6 +44,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
+    QFontComboBox,
     QFrame,
     QGraphicsOpacityEffect,
     QHBoxLayout,
@@ -481,8 +484,10 @@ def build_count_badge(text: str = "0건") -> QLabel:
 DETAIL_FONT_SIZE_MIN = 7.0
 DETAIL_FONT_SIZE_MAX = 18.0
 DETAIL_FONT_SIZE_STEP = 0.5
-DETAIL_FONT_LABEL_WIDTH = 24
 DETAIL_FONT_CONTROL_WIDTH = 80
+DETAIL_FONT_FAMILY_WIDTH = 126
+# 본문 표시 영역과 글자 사이 여백. Qt 기본값(4px)보다 넓게 둔다.
+DETAIL_DOCUMENT_MARGIN = 12.0
 
 
 def clamp_detail_font_size(value: float) -> float:
@@ -501,19 +506,23 @@ class DetailHeaderControls:
     """본문 머리글에서 함께 쓰는 제목과 글자 크기 조절 묶음."""
 
     title: DoubleClickLabel
-    font_label: QLabel
+    font_combo: QFontComboBox
     font_spin: QDoubleSpinBox
 
 
-def build_detail_header_controls(font_size: float) -> DetailHeaderControls:
+def build_detail_header_controls(
+    font_size: float, font_family: str = "Malgun Gothic"
+) -> DetailHeaderControls:
     """검색 화면마다 같은 규격으로 쓰는 본문 머리글 조절부를 만든다."""
     title = DoubleClickLabel("본문")
     title.setObjectName("detailSectionTitle")
     title.setToolTip("더블클릭하면 본문 크게 보기로 전환합니다.")
 
-    font_label = QLabel("글자")
-    font_label.setObjectName("fontSizeLabel")
-    font_label.setFixedWidth(DETAIL_FONT_LABEL_WIDTH)
+    font_combo = QFontComboBox()
+    font_combo.setObjectName("detailFontCombo")
+    font_combo.setToolTip("본문에 사용할 글꼴을 선택합니다.")
+    font_combo.setFixedWidth(DETAIL_FONT_FAMILY_WIDTH)
+    font_combo.setCurrentFont(QFont(font_family))
 
     font_spin = QDoubleSpinBox()
     font_spin.setObjectName("fontSizeSpin")
@@ -527,7 +536,7 @@ def build_detail_header_controls(font_size: float) -> DetailHeaderControls:
     font_spin.setValue(font_size)
     font_spin.setFixedWidth(DETAIL_FONT_CONTROL_WIDTH)
 
-    return DetailHeaderControls(title, font_label, font_spin)
+    return DetailHeaderControls(title, font_combo, font_spin)
 
 
 @dataclass(frozen=True, slots=True)
@@ -536,6 +545,46 @@ class SearchResultHead:
     count: QLabel
     shade_reset: QPushButton
     refresh: QPushButton
+
+
+class ResultOverlayLabel(QLabel):
+    """빈 결과와 검색 진행 상태를 표 가운데에서 짧게 강조해 보여준다."""
+
+    def __init__(self, viewport: QWidget) -> None:
+        super().__init__("검색 결과가 없습니다.", viewport)
+        self.setObjectName("resultEmptyNotice")
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._opacity = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(self._opacity)
+        self._pulse = QPropertyAnimation(self._opacity, b"opacity", self)
+        self._pulse.setDuration(320)
+        self._pulse.setStartValue(0.35)
+        self._pulse.setEndValue(1.0)
+        self._pulse.setEasingCurve(QEasingCurve.Type.OutCubic)
+        viewport.installEventFilter(self)
+        self.hide()
+
+    def eventFilter(self, watched, event) -> bool:
+        if watched is self.parentWidget() and event.type() in (
+            QEvent.Type.Resize,
+            QEvent.Type.Show,
+        ):
+            self.setGeometry(self.parentWidget().rect())
+        return super().eventFilter(watched, event)
+
+    def show_message(self, text: str, *, pulse: bool = True) -> None:
+        self.setText(text)
+        self.setGeometry(self.parentWidget().rect())
+        self.raise_()
+        self.show()
+        if pulse:
+            self._pulse.stop()
+            self._pulse.start()
+
+    def clear_message(self) -> None:
+        self._pulse.stop()
+        self.hide()
 
 
 def build_search_result_head(
@@ -653,7 +702,10 @@ class CategoryTabButton(QPushButton):
         total = title_height + self.LINE_GAP + subtitle_height
         top = self.rect().top() + (self.height() - total) // 2
 
-        painter.setPen(self.palette().color(self.foregroundRole()))
+        # 부제가 있는 법령ㆍ행정규칙ㆍ자치법규만 직접 그리기 때문에
+        # 스타일시트의 :checked 글자색이 자동 적용되지 않는다. 통합검색과
+        # 똑같은 선택 파랑을 명시해 모든 분류의 선택 표시를 통일한다.
+        painter.setPen(QColor("#1f57c8"))
         painter.setFont(title_font)
         painter.drawText(
             QRect(0, top, self.width(), title_height),
@@ -841,7 +893,7 @@ class SharedStatusBar(QFrame):
         self.setObjectName("sharedStatusBar")
         self.setFixedHeight(self.HEIGHT)
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(1, 1, 1, 1)
         layout.setSpacing(10)
         self.label = QLabel("")
         self.label.setObjectName("mutedText")
@@ -855,6 +907,9 @@ class SharedStatusBar(QFrame):
         self._opacity.setOpacity(0.0)
         self.progress.setGraphicsEffect(self._opacity)
         layout.addWidget(self.label, 1)
+        # 상태 문구를 숨겨도 오른쪽 도구들이 가운데로 당겨지지 않게 하는
+        # 독립적인 탄성 여백이다.
+        layout.addStretch(1)
         layout.addWidget(self.progress, 0)
         self._layout = layout
         self._active: StatusLine | None = None
@@ -951,9 +1006,14 @@ class DropdownComboBox(QComboBox):
         # 세지 않는다. 그대로 두면 마지막 항목이 그 여백만큼 잘린다.
         view = self.view()
         visible = min(self.count(), max(1, self.maxVisibleItems()))
-        rows = sum(view.sizeHintForRow(row) for row in range(visible))
+        rows = sum(max(28, view.sizeHintForRow(row)) for row in range(visible))
         if rows:
             container.setFixedHeight(rows + self.POPUP_CHROME)
+        view.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+            if self.count() <= self.maxVisibleItems()
+            else Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
         # 목록을 감싼 틀을 투명하게 두면 둥근 모서리 바깥이 창 뒤를 그대로
         # 비쳐 검은 조각처럼 보인다. 틀에도 같은 흰 바탕을 깔아 막는다.
         container.setStyleSheet(
@@ -1154,6 +1214,9 @@ class DeferredWrapTextBrowser(QTextBrowser):
         self._wrap_timer = QTimer(self)
         self._wrap_timer.setSingleShot(True)
         self._wrap_timer.timeout.connect(self._finish_deferred_wrap)
+        # Qt 기본 문서 여백 4px은 글자가 테두리에 붙어 보인다. 본문을 쓰는
+        # 세 화면이 모두 이 클래스를 쓰므로 여기서 한 번만 넓혀 둔다.
+        self.document().setDocumentMargin(DETAIL_DOCUMENT_MARGIN)
 
     def createMimeDataFromSelection(self):
         # 드래그 복사ㆍCtrl+Cㆍ우클릭 복사가 모두 이 경로를 지나므로,
@@ -1613,6 +1676,8 @@ class DetailSearchBar(QWidget):
         )
         self.find_shortcut.activated.connect(self.focus_query)
         self._update_controls()
+        # 본문 공간을 상시 차지하지 않고 Ctrl+F에서만 나타난다.
+        self.hide()
 
     def bind_document(self, document) -> None:
         """본문 뷰가 보관 중인 다른 QTextDocument로 전환될 때 재연결."""
@@ -1630,6 +1695,8 @@ class DetailSearchBar(QWidget):
         self._update_controls()
 
     def focus_query(self) -> None:
+        self.show()
+        self.raise_()
         vertical_position = self.browser.verticalScrollBar().value()
         horizontal_position = self.browser.horizontalScrollBar().value()
         selected_query = re.sub(
@@ -1670,6 +1737,7 @@ class DetailSearchBar(QWidget):
         self.query_input.clear()
         self._set_query_highlight(False)
         self.browser.setFocus(Qt.FocusReason.ShortcutFocusReason)
+        self.hide()
         self._restore_scroll_if_changed(vertical_position, horizontal_position)
 
     def eventFilter(self, watched, event) -> bool:
@@ -1780,6 +1848,49 @@ class DetailSearchBar(QWidget):
         self.refresh()
 
 
+class RecentSearchChip(QWidget):
+    """텍스트 중앙 정렬을 유지한 채 ×를 오른쪽에 겹쳐 놓는 최근 검색 칩."""
+
+    def __init__(self, query: str, on_select, on_remove, parent=None) -> None:
+        super().__init__(parent)
+        self.query_button = QPushButton(" ".join(query.split()), self)
+        self.query_button.setObjectName("recentSearchButton")
+        self.query_button.setToolTip(query)
+        self.query_button.clicked.connect(on_select)
+        self.remove_button = QPushButton(self)
+        self.remove_button.setObjectName("recentSearchRemove")
+        apply_close_icon(self.remove_button, 9)
+        self.remove_button.setFlat(True)
+        self.remove_button.setFixedSize(16, 16)
+        self.remove_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.remove_button.setToolTip(f"최근 검색어에서 '{query}'를 지웁니다.")
+        self.remove_button.setAccessibleName(f"{query} 최근 검색어 삭제")
+        self.remove_button.clicked.connect(on_remove)
+        self.remove_button.hide()
+        self.setMouseTracking(True)
+        self.query_button.setMouseTracking(True)
+        self.setFixedHeight(22)
+
+    def resizeEvent(self, event) -> None:
+        self.query_button.setGeometry(self.rect())
+        self.remove_button.move(
+            max(0, self.width() - self.remove_button.width() - 3),
+            max(0, (self.height() - self.remove_button.height()) // 2),
+        )
+        self.remove_button.raise_()
+        super().resizeEvent(event)
+
+    def enterEvent(self, event) -> None:
+        self.remove_button.show()
+        self.remove_button.raise_()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        if not self.remove_button.underMouse():
+            self.remove_button.hide()
+        super().leaveEvent(event)
+
+
 class RecentSearchBar(QWidget):
     """최근 검색어를 한 줄에 최대 10개까지 표시하고 다시 입력하거나 초기화함."""
 
@@ -1848,34 +1959,22 @@ class RecentSearchBar(QWidget):
 
         for query in values:
             query = str(query)
-            button = QPushButton(" ".join(query.split()))
-            button.setObjectName("recentSearchButton")
+            chip = RecentSearchChip(
+                query,
+                lambda _checked=False, value=query: self._select(value),
+                lambda _checked=False, value=query: self.manager.remove(value),
+            )
+            button = chip.query_button
             button.setMinimumWidth(0)
             button.setMaximumWidth(self.QUERY_BUTTON_MAX_WIDTH)
             button.setSizePolicy(
                 QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed
             )
-            button.setToolTip(query)
-            button.clicked.connect(
-                lambda _checked=False, value=query: self._select(value)
-            )
-            self.items_layout.addWidget(button, 1)
+            chip.setMinimumWidth(0)
+            chip.setMaximumWidth(self.QUERY_BUTTON_MAX_WIDTH)
+            chip.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+            self.items_layout.addWidget(chip, 1)
             self._query_buttons.append((button, query))
-
-            # 검색어 하나만 지우는 표시. 모두 지우는 단추만 있으면 오타로
-            # 남은 한 건을 치우려고 나머지까지 버려야 한다.
-            remove = QPushButton()
-            remove.setObjectName("recentSearchRemove")
-            apply_close_icon(remove, 9)
-            remove.setFlat(True)
-            remove.setFixedSize(16, 16)
-            remove.setCursor(Qt.CursorShape.PointingHandCursor)
-            remove.setToolTip(f"최근 검색어에서 '{query}'를 지웁니다.")
-            remove.setAccessibleName(f"{query} 최근 검색어 삭제")
-            remove.clicked.connect(
-                lambda _checked=False, value=query: self.manager.remove(value)
-            )
-            self.items_layout.addWidget(remove)
         # 검색어가 적을 때 칩이 남은 한 줄 전체를 늘려 쓰지 않게 한다.
         # 폭이 부족하면 앞의 stretch factor에 따라 모든 칩이 함께 줄어든다.
         self.items_layout.addStretch(1)
@@ -2418,7 +2517,7 @@ class ReferenceHistoryChip(QFrame):
         self._dragging = False
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 0, 2, 0)
+        layout.setContentsMargins(6, 0, 1, 0)
         layout.setSpacing(3)
         layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         self.text_label = QLabel(text)
@@ -2429,7 +2528,7 @@ class ReferenceHistoryChip(QFrame):
         self.close_button = QPushButton()
         self.close_button.setObjectName("referenceChipClose")
         apply_close_icon(self.close_button, 10)
-        self.close_button.setFixedSize(18, 18)
+        self.close_button.setFixedSize(14, 14)
         self.close_button.setFlat(True)
         self.close_button.setAccessibleName(f"{text} 참조 제거")
         self.close_button.setToolTip(f"{text} 참조 제거")
@@ -2439,7 +2538,7 @@ class ReferenceHistoryChip(QFrame):
         )
         layout.addWidget(self.text_label)
         layout.addWidget(self.close_button)
-        self.setFixedHeight(22)
+        self.setFixedHeight(18)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
     def set_text(self, text: str) -> None:
@@ -2522,7 +2621,7 @@ class ReferenceHistoryBar(QScrollArea):
 
     ROW_HEIGHT = 18
     ROW_SPACING = 4
-    CHIP_HEIGHT = 22
+    CHIP_HEIGHT = 18
     # 휠 한 칸(120)에 옮길 거리. 칩 하나가 대략 이 정도 폭이다.
     WHEEL_STEP = 60
 
@@ -2545,7 +2644,7 @@ class ReferenceHistoryBar(QScrollArea):
         container = QWidget()
         container.setObjectName("referenceHistoryContent")
         self._row = QHBoxLayout(container)
-        self._row.setContentsMargins(2, 1, 2, 1)
+        self._row.setContentsMargins(1, 0, 1, 0)
         self._row.setSpacing(self.ROW_SPACING)
         # 칩이 몇 개 없을 때 남는 자리를 칩이 나눠 갖지 않도록 끝을 민다.
         self._row.addStretch(1)
@@ -2555,7 +2654,7 @@ class ReferenceHistoryBar(QScrollArea):
         self._data: list[str] = []
         self._current_index = -1
         self._dragging_chip: ReferenceHistoryChip | None = None
-        self.setFixedHeight(self.CHIP_HEIGHT + 2)
+        self.setFixedHeight(self.CHIP_HEIGHT + 1)
         self.setToolTip(
             "클릭하면 그 조문으로 이동하고, 끌어서 순서를 바꿀 수 있습니다. "
             "항목이 많으면 휠로 좌우로 넘깁니다."
@@ -2918,15 +3017,15 @@ class CornerCloseTabBar(QTabBar):
     # --- 그리기 ----------------------------------------------------
     def paintEvent(self, event) -> None:  # noqa: N802 (Qt 규약)
         super().paintEvent(event)
+        if self._hover_index < 0:
+            return
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         for index in range(self.count()):
-            if not self._is_closable(index):
+            if index != self._hover_index or not self._is_closable(index):
                 continue
             center = self._close_center(index)
-            pen = QPen(
-                QColor("#ff9d92" if index == self._hover_index else "#a3b6c8")
-            )
+            pen = QPen(QColor("#c0392b"))
             pen.setWidthF(1.4)
             pen.setCapStyle(Qt.PenCapStyle.RoundCap)
             painter.setPen(pen)

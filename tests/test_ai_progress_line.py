@@ -762,8 +762,8 @@ def test_model_picker_is_compact_but_keeps_full_menu_labels(
         )
         assert widget.model_menu_button.toolTip() == full_label
         assert widget.model_menu_button.height() == 26
-        assert widget.send_button.width() == 32
-        assert widget.send_button.height() == 32
+        assert widget.send_button.width() == 30
+        assert widget.send_button.height() == 30
         assert abs(
             widget.model_menu_button.geometry().center().y()
             - widget.send_button.geometry().center().y()
@@ -796,10 +796,10 @@ def test_sent_user_question_remains_visible(qt_app, tmp_path, standalone) -> Non
         assert labels[0].isVisibleTo(widget.transcript_content)
         assert labels[0].width() > 0
         assert widget._messages[0] == ["user", question]
-        assert widget.send_button.minimumWidth() == 32
-        assert widget.send_button.maximumWidth() == 32
-        assert widget.send_button.minimumHeight() == 32
-        assert widget.send_button.maximumHeight() == 32
+        assert widget.send_button.minimumWidth() == 30
+        assert widget.send_button.maximumWidth() == 30
+        assert widget.send_button.minimumHeight() == 30
+        assert widget.send_button.maximumHeight() == 30
     finally:
         widget._streams.clear()
         widget.shutdown()

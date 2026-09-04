@@ -40,6 +40,7 @@ def test_ctrl_f_uses_selected_body_text_as_query() -> None:
     browser = QTextBrowser()
     browser.setPlainText("도시·군계획시설 결정 기준")
     bar = DetailSearchBar(browser)
+    assert bar.isHidden()
     cursor = browser.textCursor()
     cursor.setPosition(0)
     cursor.setPosition(8, QTextCursor.MoveMode.KeepAnchor)
@@ -48,6 +49,7 @@ def test_ctrl_f_uses_selected_body_text_as_query() -> None:
     bar.focus_query()
     app.processEvents()
 
+    assert not bar.isHidden()
     assert bar.query_input.text() == "도시·군계획시설"
     assert len(bar.matches) == 1
     assert bar.query_input.hasSelectedText()

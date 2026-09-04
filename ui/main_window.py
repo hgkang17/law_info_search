@@ -446,9 +446,9 @@ class LawSearchWindow(QMainWindow):
         self.save_api_checkbox.setChecked(self.has_saved_oc)
         self.api_input.textChanged.connect(self._api_value_changed)
         self.save_api_checkbox.toggled.connect(self._api_save_toggled)
-        self.api_manual_button = QPushButton("?")
+        self.api_manual_button = QPushButton("매뉴얼")
         self.api_manual_button.setObjectName("ocApiManualButton")
-        self.api_manual_button.setFixedSize(28, 28)
+        self.api_manual_button.setFixedSize(72, 30)
         self.api_manual_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.api_manual_button.setAccessibleName("법제처 API 인증키 발급 안내")
         self.api_manual_button.setToolTip("법제처 API 인증키 발급 방법 보기")
@@ -459,9 +459,9 @@ class LawSearchWindow(QMainWindow):
         key_row.addWidget(self.api_input, 1)
         key_row.addWidget(self.api_reveal_button)
         key_row.addWidget(self.save_api_checkbox)
-        key_row.addWidget(self.api_manual_button)
         dialog_layout.addLayout(key_row)
         close_row = QHBoxLayout()
+        close_row.addWidget(self.api_manual_button)
         close_row.addStretch(1)
         close_api_button = QPushButton("저장하고 닫기")
         close_api_button.clicked.connect(self.oc_api_dialog.accept)
@@ -1584,7 +1584,7 @@ class LawSearchWindow(QMainWindow):
             /* 스크롤바는 본문을 가리지 않도록 얇은 막대 하나로만 둔다.
                트랙과 화살표 없이 손잡이만 보이고, 올렸을 때만 진해진다. */
             QScrollBar:vertical {
-                width: 8px;
+                width: 12px;
                 margin: 2px 2px;
                 background: transparent;
                 border: none;
@@ -1593,12 +1593,12 @@ class LawSearchWindow(QMainWindow):
                 min-height: 28px;
                 background: #c8d1da;
                 border: none;
-                border-radius: 4px;
+                border-radius: 6px;
             }
             QScrollBar::handle:vertical:hover { background: #9fadbb; }
             QScrollBar::handle:vertical:pressed { background: #7f8f9f; }
             QScrollBar:horizontal {
-                height: 8px;
+                height: 12px;
                 margin: 2px 2px;
                 background: transparent;
                 border: none;
@@ -1607,7 +1607,7 @@ class LawSearchWindow(QMainWindow):
                 min-width: 28px;
                 background: #c8d1da;
                 border: none;
-                border-radius: 4px;
+                border-radius: 6px;
             }
             QScrollBar::handle:horizontal:hover { background: #9fadbb; }
             QScrollBar::handle:horizontal:pressed { background: #7f8f9f; }
@@ -1623,7 +1623,7 @@ class LawSearchWindow(QMainWindow):
             /* 콤보 목록ㆍ메뉴 안의 스크롤바도 같은 모양으로 둔다. */
             QComboBox QAbstractItemView QScrollBar:vertical,
             QMenu QScrollBar:vertical {
-                width: 8px;
+                width: 12px;
                 margin: 2px;
                 background: transparent;
             }
@@ -1666,7 +1666,7 @@ class LawSearchWindow(QMainWindow):
                 margin: 3px 7px;
             }
             /* 글꼴 이름은 여기서 정하지 않는다. 이 규칙은 모든 위젯에
-               닿아서, 본문처럼 자기 글꼴을 따로 쓰는 화면(굴림)까지 덮어
+               닿아서, 본문처럼 자기 글꼴을 따로 쓰는 화면까지 덮어
                버린다. 화면 글꼴은 앱 기본 글꼴(ui/theme.py의 ui_font)이
                맡고, 본문은 detail_font가 맡는다. */
             QMainWindow, QWidget {
@@ -1997,10 +1997,10 @@ class LawSearchWindow(QMainWindow):
                 border: none;
                 border-radius: 9px;
                 padding: 0px;
-                min-width: 32px;
-                max-width: 32px;
-                min-height: 32px;
-                max-height: 32px;
+                min-width: 30px;
+                max-width: 30px;
+                min-height: 30px;
+                max-height: 30px;
             }
             QPushButton#aiChatSend:hover { background: #12578e; }
             QPushButton#aiChatSend:disabled { background: #9fb5c8; }
@@ -2481,9 +2481,18 @@ class LawSearchWindow(QMainWindow):
             QCheckBox#favoriteCategoryCheck {
                 background: transparent;
                 color: #40566b;
-                spacing: 4px;
-                padding: 2px 3px;
+                /* 위아래 padding을 두면 고정 높이 28px 안에서 글자와
+                   네모의 중심이 서로 어긋난다. 좌우만 띄운다. */
+                spacing: 6px;
+                padding: 0 7px;
                 font-size: 8.5pt;
+            }
+            QCheckBox#favoriteCategoryCheck::indicator {
+                /* 8.5pt 글자 옆에서는 전역 16px이 커 보인다. 글자 높이에
+                   맞춰 줄이고 세로 가운데에 붙인다. */
+                width: 14px;
+                height: 14px;
+                subcontrol-position: left center;
             }
             QFrame#favoriteCategoryCard {
                 background: transparent;
@@ -2754,7 +2763,8 @@ class LawSearchWindow(QMainWindow):
                 border: none;
                 border-radius: 6px;
                 padding: 0 10px;
-                font-weight: 600;
+                font-size: 9pt;
+                font-weight: 400;
             }
             QPushButton#modeSwitchButton:checked {
                 background: #1976b8;
@@ -2819,16 +2829,16 @@ class LawSearchWindow(QMainWindow):
                 max-height: 30px;
                 padding: 0;
                 margin: 0;
-                background: #eef3f8;
-                border: 1px solid #cfd8e3;
+                background: #f3f3f2;
+                border: 1px solid #d7d8d9;
                 border-radius: 6px;
             }
             QPushButton#restoreViewButton:hover {
-                background: #dce9f5;
-                border-color: #8fb9dc;
+                background: #e9e9e8;
+                border-color: #bfc1c3;
             }
             QPushButton#restoreViewButton:pressed {
-                background: #cadff0;
+                background: #dedfdf;
             }
             QScrollArea#referenceHistoryBar,
             QWidget#referenceHistoryContent {
@@ -2910,15 +2920,15 @@ class LawSearchWindow(QMainWindow):
             }
             /* 본문을 굴려도 남는 붙박이 제목 줄(법령명ㆍ약칭ㆍ시행일). */
             QLabel#pinnedDocumentHeadline {
-                background: #f3f7fb;
-                border: 1px solid #cfdcea;
-                border-radius: 6px;
+                background: transparent;
+                border: none;
+                border-radius: 0;
                 color: #173b63;
                 /* 본문 머리글을 그대로 옮긴 줄이라 본문과 같은 글꼴을 쓴다. */
                 font-family: "Malgun Gothic", "맑은 고딕";
                 font-size: 13px;
                 font-weight: 400;
-                padding: 6px 10px;
+                padding: 5px 8px;
             }
             QLabel#countBadge {
                 background: #e8f1fb;
@@ -2958,6 +2968,30 @@ class LawSearchWindow(QMainWindow):
                 color: #526176;
                 font-size: 8pt;
                 font-weight: 600;
+            }
+            QFontComboBox#detailFontCombo {
+                min-height: 28px;
+                max-height: 28px;
+                padding: 0 22px 0 7px;
+                font-size: 8.5pt;
+            }
+            QToolButton#colorPaletteToolButton {
+                min-width: 37px;
+                max-width: 37px;
+                min-height: 28px;
+                max-height: 28px;
+                background: #ffffff;
+                border: 1px solid #cfd8e3;
+                border-radius: 5px;
+                padding: 0;
+            }
+            QToolButton#colorPaletteToolButton:hover {
+                background: #f2f5f8;
+                border-color: #9ebed8;
+            }
+            QToolButton#colorPaletteToolButton::menu-button {
+                width: 10px;
+                border: none;
             }
             QDoubleSpinBox#fontSizeSpin,
             QSpinBox#pdfZoomSpin {
@@ -3127,7 +3161,7 @@ class LawSearchWindow(QMainWindow):
                 background: transparent;
                 border: none;
                 padding: 0;
-                margin: 0 6px 0 1px;
+                margin: 0;
             }
             QPushButton#recentSearchRemove:hover {
                 background: #f0e3e3;
@@ -3166,7 +3200,10 @@ class LawSearchWindow(QMainWindow):
                 border-color: #e7bcbc;
             }
             QWidget#detailSearchBar {
-                background: transparent;
+                background: #ffffff;
+                border: 1px solid #cfd8e3;
+                border-radius: 7px;
+                padding: 4px;
             }
             QLabel#detailSearchLabel {
                 background: transparent;
@@ -3251,14 +3288,14 @@ class LawSearchWindow(QMainWindow):
             /* 크게 보기에서는 같은 자리가 대화 패널을 여는 단추가 된다.
                하는 일이 달라졌다는 것이 색으로도 보이게 채워서 그린다. */
             QPushButton#readingModeButton[buttonMode="ai"] {
-                background: #1768aa;
-                border: 1px solid #135b95;
+                background: #45484e;
+                border: 1px solid #35383d;
                 color: white;
                 font-weight: 700;
             }
             QPushButton#readingModeButton[buttonMode="ai"]:hover {
-                background: #12578e;
-                border-color: #0f4a7b;
+                background: #303338;
+                border-color: #24262a;
             }
             QWidget#colorTools {
                 background: transparent;
@@ -3270,8 +3307,8 @@ class LawSearchWindow(QMainWindow):
                 font-weight: 600;
             }
             QPushButton#colorResetButton {
-                min-height: 18px;
-                max-height: 18px;
+                min-height: 28px;
+                max-height: 28px;
                 background: white;
                 color: #526176;
                 border: 1px solid #cfd8e3;
@@ -3309,8 +3346,8 @@ class LawSearchWindow(QMainWindow):
                 border-color: #b9d3ea;
             }
             QPushButton#memoButton {
-                min-height: 40px;
-                max-height: 40px;
+                min-height: 28px;
+                max-height: 28px;
                 background: #fff8dc;
                 color: #6b5200;
                 border: 1px solid #dccb7a;
@@ -3729,21 +3766,21 @@ class LawSearchWindow(QMainWindow):
                 font-size: 9pt;
             }
             QPushButton#ocApiManualButton {
-                min-width: 28px;
-                max-width: 28px;
-                min-height: 28px;
-                max-height: 28px;
-                padding: 0;
-                border-radius: 14px;
-                border: 1px solid #aec4d7;
-                background: #eef3f7;
-                color: #17324b;
-                font-weight: 700;
+                min-width: 72px;
+                max-width: 72px;
+                min-height: 30px;
+                max-height: 30px;
+                padding: 0 10px;
+                border-radius: 6px;
+                border: 1px solid #d7d8d9;
+                background: #ffffff;
+                color: #4e5158;
+                font-weight: 500;
             }
             QPushButton#ocApiManualButton:hover {
-                background: #17607f;
-                border-color: #17607f;
-                color: white;
+                background: #eeeeed;
+                border-color: #c8c9ca;
+                color: #242529;
             }
             QTableWidget {
                 alternate-background-color: #f5f8f9;
@@ -3853,7 +3890,9 @@ class LawSearchWindow(QMainWindow):
                 background: transparent;
                 color: #666970;
                 border: 1px solid transparent;
-                border-radius: 6px;
+                border-radius: 0px;
+                border-top-left-radius: 7px;
+                border-top-right-radius: 7px;
                 font-size: 9pt;
                 font-weight: 500;
             }
@@ -3974,6 +4013,18 @@ class LawSearchWindow(QMainWindow):
                 border: none;
                 border-bottom: 1px solid #dedfdf;
                 border-radius: 0px;
+            }
+            QFrame#pageHeadingTrack {
+                background: transparent;
+                border: none;
+                border-bottom: 1px solid #dedfdf;
+            }
+            QLabel#pageHeadingLabel {
+                background: transparent;
+                color: #1f57c8;
+                font-family: "Malgun Gothic";
+                font-size: 10pt;
+                font-weight: 600;
             }
             QPushButton#categoryTrackButton {
                 background: transparent;
@@ -4155,7 +4206,7 @@ class LawSearchWindow(QMainWindow):
                 color: #174ea6;
             }
             /* 본문 글꼴은 여기서 정하지 않는다. 스타일시트가 위젯보다
-               우선해서, 코드가 정한 본문 글꼴(굴림)과 사용자가 조절한 글자
+               우선해서, 코드가 정한 본문 글꼴과 사용자가 조절한 글자
                크기까지 덮어쓴다. 글꼴은 ui/theme.py의 detail_font가 맡는다. */
             QTextBrowser {
                 background: #ffffff;
@@ -4201,6 +4252,12 @@ class LawSearchWindow(QMainWindow):
                 border-bottom: 2px solid #2563eb;
                 font-weight: 600;
             }
+            QTabBar#documentTabs::tab,
+            QTabBar#openDocumentTabs::tab {
+                border-radius: 0px;
+                border-top-left-radius: 7px;
+                border-top-right-radius: 7px;
+            }
             QFrame#modeSwitchFrame {
                 background: #eeeeed;
                 border: 1px solid #dedfdf;
@@ -4224,6 +4281,14 @@ class LawSearchWindow(QMainWindow):
                 color: #242529;
             }
             QFrame#aiChatBubbleUser { background: #eeeeed; }
+            QWidget#aiChatHistoryRow[selected="true"] {
+                background: #e7e7e5;
+                border-color: #c9cacc;
+            }
+            QWidget#aiChatHistoryRow[selected="true"] QLabel {
+                color: #2d2f33;
+                font-weight: 600;
+            }
             QFrame#aiChatComposer {
                 background: #ffffff;
                 border: 1px solid #c9cacc;
@@ -4236,6 +4301,21 @@ class LawSearchWindow(QMainWindow):
             }
             QPushButton#aiChatSend:hover { background: #090a0b; }
             QPushButton#aiChatSend:disabled { background: #b7b9bd; }
+            QPushButton#aiChatHistoryNew {
+                min-width: 24px;
+                max-width: 24px;
+                min-height: 24px;
+                max-height: 24px;
+                padding: 0;
+                background: #ffffff;
+                color: #4f5258;
+                border: 1px solid #cfd0d2;
+                border-radius: 6px;
+            }
+            QPushButton#aiChatHistoryNew:hover {
+                background: #eeeeed;
+                border-color: #bdbfc1;
+            }
             QLabel#aiCliStatusBadge,
             QLabel#aiChatStatusProvider {
                 background: #eeeeed;
@@ -4283,6 +4363,7 @@ class LawSearchWindow(QMainWindow):
                 color: #6f7279;
                 text-decoration: none;
             }
+            QPushButton#updateLinkButton { font-weight: 600; }
             QPushButton#aboutLinkButton:hover,
             QPushButton#updateLinkButton:hover { color: #1f57c8; }
             QMenu {
