@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import sys
 from typing import Callable
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QPointF, QSize, Qt
 from PySide6.QtGui import (
     QBrush,
     QColor,
@@ -17,6 +17,7 @@ from PySide6.QtGui import (
     QPainter,
     QPen,
     QPixmap,
+    QPolygonF,
     QKeySequence,
     QShortcut,
     QTextCharFormat,
@@ -423,11 +424,27 @@ def apply_legal_title_colors(html: str) -> str:
     return pattern.sub(replace, html)
 
 
-def apply_detail_font_family(html: str) -> str:
-    """이전에 저장된 본문 HTML도 현재 본문 글꼴과 기본 두께로 통일."""
+def detail_font_css_family(family: str = "") -> str:
+    """고른 글꼴을 맨 앞에 세운 CSS 글꼴 목록.
+
+    글꼴이 없는 환경을 위해 기본 대체 목록을 뒤에 붙인다.
+    """
+    chosen = str(family or "").strip()
+    if not chosen:
+        return DETAIL_FONT_CSS_FAMILY
+    names = list(dict.fromkeys([chosen, *DETAIL_FONT_FAMILIES]))
+    return ", ".join(f"'{name}'" for name in names)
+
+
+def apply_detail_font_family(html: str, family: str = "") -> str:
+    """저장된 본문 HTML을 지금 고른 본문 글꼴과 기본 두께로 통일.
+
+    ``family``를 주지 않으면 기본 글꼴로 맞춘다. 예전에는 늘 기본 글꼴로
+    덮어써서, 글꼴 칸에서 다른 글꼴을 골라도 본문은 그대로였다.
+    """
     html = re.sub(
         r"font-family\s*:\s*[^;\"]+",
-        f"font-family:{DETAIL_FONT_CSS_FAMILY}",
+        f"font-family:{detail_font_css_family(family)}",
         html,
         flags=re.IGNORECASE,
     )
@@ -440,14 +457,14 @@ def apply_detail_font_family(html: str) -> str:
 
 
 def scale_document_font_sizes(
-    html: str, source_size: float, target_size: float
+    html: str, source_size: float, target_size: float, family: str = ""
 ) -> str:
     """저장된 본문 HTML의 글꼴·제목색을 맞추고 글자 크기를 비율대로 바꾼다.
 
     법령검색·키워드검색·중앙부처 탭이 모두 같은 규칙으로 본문을 그리므로
     한곳에 두고 함께 쓴다.
     """
-    html = apply_detail_font_family(apply_legal_title_colors(html))
+    html = apply_detail_font_family(apply_legal_title_colors(html), family)
     if source_size <= 0 or source_size == target_size:
         return html
     ratio = target_size / source_size
@@ -509,13 +526,35 @@ def build_color_palette_toolbar(
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         ink = QColor("#34465a")
         if kind == "background":
-            pen = QPen(ink, 1.5)
-            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-            painter.setPen(pen)
-            painter.drawLine(6, 5, 15, 12)
-            painter.drawLine(5, 7, 13, 15)
+            # 형광펜. 기울어진 펜대는 지금 고른 색으로 채우고, 촉과
+            # 그어 놓은 자국까지 그려야 무엇을 하는 단추인지 한눈에
+            # 들어온다. 예전의 사선 두 줄은 만년필처럼 보였다.
+            painter.setPen(QPen(ink, 1.0))
+            painter.setBrush(QBrush(QColor(color_value)))
+            painter.drawPolygon(
+                QPolygonF(
+                    [
+                        QPointF(13.5, 2.5),
+                        QPointF(18.5, 7.5),
+                        QPointF(11.0, 14.0),
+                        QPointF(6.5, 9.5),
+                    ]
+                )
+            )
+            painter.setBrush(QBrush(QColor("#c9d3de")))
+            painter.drawPolygon(
+                QPolygonF(
+                    [
+                        QPointF(6.5, 9.5),
+                        QPointF(11.0, 14.0),
+                        QPointF(7.5, 15.5),
+                        QPointF(4.0, 13.0),
+                    ]
+                )
+            )
+            painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.setPen(QPen(QColor(color_value), 3.0))
-            painter.drawLine(4, 17, 17, 17)
+            painter.drawLine(4, 18, 18, 18)
         else:
             font = painter.font()
             font.setBold(True)

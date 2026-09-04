@@ -49,7 +49,7 @@ def test_shared_detail_header_preserves_ui_contract() -> None:
     assert controls.font_spin.singleStep() == DETAIL_FONT_SIZE_STEP
     assert controls.font_spin.decimals() == 1
     assert controls.font_spin.suffix() == "pt"
-    assert controls.font_spin.value() == pytest.approx(9.0)
+    assert controls.font_spin.value() == pytest.approx(DEFAULT_DETAIL_FONT_POINT)
     assert controls.font_spin.width() == DETAIL_FONT_CONTROL_WIDTH
 
 
@@ -116,7 +116,7 @@ def test_legacy_saved_font_migrates_once_without_overwriting_custom_size(
     assert size == pytest.approx(11.5)
 
 
-def test_new_detail_font_preferences_default_to_gulim_9pt(tmp_path) -> None:
+def test_new_detail_font_preferences_default_to_gulim_9_5pt(tmp_path) -> None:
     settings = QSettings(
         str(tmp_path / "new-detail-font.ini"), QSettings.Format.IniFormat
     )
@@ -128,6 +128,31 @@ def test_new_detail_font_preferences_default_to_gulim_9pt(tmp_path) -> None:
     )
 
     assert family == DETAIL_FONT_FAMILY
+    assert size == pytest.approx(DEFAULT_DETAIL_FONT_POINT)
+
+
+def test_legacy_default_9pt_migrates_to_9_5pt_once(tmp_path) -> None:
+    settings = QSettings(
+        str(tmp_path / "legacy-9pt.ini"), QSettings.Format.IniFormat
+    )
+    settings.setValue("resource_detail_font_family", DETAIL_FONT_FAMILY)
+    settings.setValue("resource_detail_font_size", 9.0)
+    settings.setValue("resource_detail_font_family_defaults_version", 1)
+
+    size, family = load_detail_font_preferences(
+        settings,
+        size_key="resource_detail_font_size",
+        family_key="resource_detail_font_family",
+    )
+    assert family == DETAIL_FONT_FAMILY
+    assert size == pytest.approx(9.5)
+
+    settings.setValue("resource_detail_font_size", 9.0)
+    size, _family = load_detail_font_preferences(
+        settings,
+        size_key="resource_detail_font_size",
+        family_key="resource_detail_font_family",
+    )
     assert size == pytest.approx(9.0)
 
 

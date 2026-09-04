@@ -5,12 +5,14 @@ from __future__ import annotations
 from PySide6.QtCore import QEvent, QPointF, QRect, QSize, Signal, Qt, QTimer
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
+    QApplication,
     QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
     QPlainTextEdit,
     QPushButton,
+    QSizePolicy,
     QSpinBox,
     QTextBrowser,
     QVBoxLayout,
@@ -18,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtPdf import QPdfDocument
 from PySide6.QtPdfWidgets import QPdfView
+from ui.assets import SPIN_DOWN_ICON_PATH, SPIN_UP_ICON_PATH
 from ui.theme import detail_font
 from ui.widgets import (
     PopupDragBar,
@@ -27,7 +30,6 @@ from ui.widgets import (
 )
 from workers.download_worker import PdfDownloadWorker
 from PySide6.QtCore import QBuffer, QIODevice
-from PySide6.QtWidgets import QApplication
 from html import escape
 
 
@@ -100,11 +102,17 @@ class InlinePdfPreviewPanel(QFrame):
 
     closeRequested = Signal()
 
+    # 도구줄에 서는 칸ㆍ단추의 공통 높이. 본문 글자 크기 조절칸(28px)의
+    # 절반에 가깝게 두어 검은 띠가 종이를 덜 가리게 한다.
+    TOOL_HEIGHT = 22
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("inlinePdfPreviewPanel")
-        self.setMinimumHeight(340)
-        self.setMaximumHeight(560)
+        self.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
+        )
+        self.setFixedHeight(340)
         self._buffer: QBuffer | None = None
         self._expanded = False
 
@@ -115,40 +123,36 @@ class InlinePdfPreviewPanel(QFrame):
         toolbar = QFrame()
         toolbar.setObjectName("inlinePdfToolbar")
         toolbar_layout = QHBoxLayout(toolbar)
-        toolbar_layout.setContentsMargins(12, 7, 8, 7)
-        toolbar_layout.setSpacing(6)
-        self.title_label = QLabel("별표·서식 미리보기")
-        self.title_label.setObjectName("inlinePdfTitle")
-        self.page_label = QLabel("")
-        self.page_label.setObjectName("inlinePdfPageCount")
-        self.previous_button = QPushButton("‹")
-        self.previous_button.setObjectName("inlinePdfToolButton")
-        self.previous_button.setFixedSize(28, 28)
+        # 도구줄은 얇게. 원문을 보는 자리가 본체이므로 검은 띠가 두꺼우면
+        # 그만큼 종이가 가려진다.
+        toolbar_layout.setContentsMargins(10, 3, 6, 3)
+        toolbar_layout.setSpacing(5)
+        # 제목은 두지 않는다. 바로 위 별표 목록 줄에 같은 제목이 이미
+        # 있고, 도구줄 폭을 다 차지해 흰 상자처럼 보였다.
+        self._title = ""
         self.page_spin = QSpinBox()
         self.page_spin.setObjectName("inlinePdfPageSpin")
         self.page_spin.setRange(1, 1)
-        self.page_spin.setFixedWidth(54)
-        self.next_button = QPushButton("›")
-        self.next_button.setObjectName("inlinePdfToolButton")
-        self.next_button.setFixedSize(28, 28)
+        # 숫자만 있으면 무슨 값인지 알기 어렵다. 쪽수라는 것을 붙여 둔다.
+        self.page_spin.setSuffix("p")
+        self.page_spin.setFixedSize(58, self.TOOL_HEIGHT)
         self.zoom_spin = QSpinBox()
         self.zoom_spin.setObjectName("inlinePdfZoom")
         self.zoom_spin.setRange(40, 220)
         self.zoom_spin.setSingleStep(10)
         self.zoom_spin.setSuffix("%")
         self.zoom_spin.setValue(100)
-        self.zoom_spin.setFixedWidth(76)
+        self.zoom_spin.setFixedSize(72, self.TOOL_HEIGHT)
         self.expand_button = QPushButton("크게")
         self.expand_button.setObjectName("inlinePdfToolButton")
-        self.expand_button.setFixedHeight(28)
+        self.expand_button.setFixedHeight(self.TOOL_HEIGHT)
         self.close_button = QPushButton("접기")
         self.close_button.setObjectName("inlinePdfClose")
-        self.close_button.setFixedHeight(28)
-        toolbar_layout.addWidget(self.title_label, 1)
-        toolbar_layout.addWidget(self.page_label)
-        toolbar_layout.addWidget(self.previous_button)
+        self.close_button.setFixedHeight(self.TOOL_HEIGHT)
+        # 쪽 이동은 스핀 상자의 위아래 화살표만으로 한다. ‹ › 단추는
+        # 같은 일을 두 번 두는 것이라 뺐다.
+        toolbar_layout.addStretch(1)
         toolbar_layout.addWidget(self.page_spin)
-        toolbar_layout.addWidget(self.next_button)
         toolbar_layout.addWidget(self.zoom_spin)
         toolbar_layout.addWidget(self.expand_button)
         toolbar_layout.addWidget(self.close_button)
@@ -173,79 +177,112 @@ class InlinePdfPreviewPanel(QFrame):
         self.zoom_spin.valueChanged.connect(
             lambda value: self.pdf_view.setZoomFactor(value / 100.0)
         )
-        self.previous_button.clicked.connect(lambda: self._move_page(-1))
-        self.next_button.clicked.connect(lambda: self._move_page(1))
         self.page_spin.valueChanged.connect(self._jump_to_page)
         self.pdf_view.pageNavigator().currentPageChanged.connect(
             self._current_page_changed
         )
         self.expand_button.clicked.connect(self._toggle_expanded)
         self.close_button.clicked.connect(self.closeRequested)
+        # 숫자칸의 위아래 화살표는 본문 글자 크기 조절칸과 같은 모양으로
+        # 둔다. 같은 일을 하는 칸이 화면마다 다르게 생기지 않게 한다.
+        height = self.TOOL_HEIGHT
+        arrow_height = max(8, (height - 2) // 2)
         self.setStyleSheet(
             "QFrame#inlinePdfPreviewPanel { background:#f1f1f1; "
             "border:1px solid #c9ccd1; }"
             "QFrame#inlinePdfToolbar { background:#34363a; border:none; }"
-            "QLabel#inlinePdfTitle, QLabel#inlinePdfPageCount { color:#f5f5f5; "
-            "border:none; font-weight:500; }"
-            "QSpinBox#inlinePdfZoom { min-height:26px; max-height:26px; "
-            "background:#fff; border:1px solid #777b82; border-radius:3px; }"
             "QPushButton#inlinePdfClose { color:#f5f5f5; background:#4a4d52; "
-            "border:1px solid #656970; border-radius:3px; padding:3px 9px; }"
+            f"border:1px solid #656970; border-radius:3px; padding:0 9px; "
+            f"min-height:{height}px; max-height:{height}px; }}"
             "QPushButton#inlinePdfToolButton { color:#f5f5f5; "
             "background:transparent; border:1px solid #656970; "
-            "border-radius:3px; padding:2px 7px; }"
+            f"border-radius:3px; padding:0 7px; "
+            f"min-height:{height}px; max-height:{height}px; }}"
             "QPushButton#inlinePdfClose:hover, QPushButton#inlinePdfToolButton:hover "
             "{ background:#5a5e64; }"
-            "QSpinBox#inlinePdfPageSpin { min-height:26px; max-height:26px; "
-            "background:#fff; border:1px solid #777b82; border-radius:3px; }"
+            "QSpinBox#inlinePdfPageSpin, QSpinBox#inlinePdfZoom { "
+            f"min-height:{height}px; max-height:{height}px; "
+            "background:#fff; border:1px solid #777b82; border-radius:3px; "
+            "padding:0 17px 0 5px; font-size:8pt; }"
+            "QSpinBox#inlinePdfPageSpin::up-button, "
+            "QSpinBox#inlinePdfZoom::up-button { "
+            "subcontrol-origin:border; subcontrol-position:top right; "
+            f"width:15px; height:{arrow_height}px; background:#f4f7fa; "
+            "border-left:1px solid #cfd8e3; border-bottom:1px solid #dbe3eb; "
+            "border-top-right-radius:2px; }"
+            "QSpinBox#inlinePdfPageSpin::down-button, "
+            "QSpinBox#inlinePdfZoom::down-button { "
+            "subcontrol-origin:border; subcontrol-position:bottom right; "
+            f"width:15px; height:{arrow_height}px; background:#f4f7fa; "
+            "border-left:1px solid #cfd8e3; border-top:1px solid #dbe3eb; "
+            "border-bottom-right-radius:2px; }"
+            "QSpinBox#inlinePdfPageSpin::up-button:hover, "
+            "QSpinBox#inlinePdfZoom::up-button:hover, "
+            "QSpinBox#inlinePdfPageSpin::down-button:hover, "
+            "QSpinBox#inlinePdfZoom::down-button:hover { background:#e8f1fb; }"
+            "QSpinBox#inlinePdfPageSpin::up-arrow, "
+            "QSpinBox#inlinePdfZoom::up-arrow { "
+            f'image:url("{SPIN_UP_ICON_PATH.as_posix()}"); '
+            "width:8px; height:5px; }"
+            "QSpinBox#inlinePdfPageSpin::down-arrow, "
+            "QSpinBox#inlinePdfZoom::down-arrow { "
+            f'image:url("{SPIN_DOWN_ICON_PATH.as_posix()}"); '
+            "width:8px; height:5px; }"
+            "QSpinBox#inlinePdfPageSpin QLineEdit, "
+            "QSpinBox#inlinePdfZoom QLineEdit { min-height:0; border:none; "
+            "background:transparent; padding:0; }"
             "QLabel#inlinePdfStatus { color:#59616c; border:none; }"
         )
         self.hide()
 
+    def current_title(self) -> str:
+        """지금 보여 주는 별표 제목. 화면에는 그리지 않고 기록만 한다."""
+        return self._title
+
     def show_loading(self, title: str) -> None:
-        self.title_label.setText(title or "별표·서식 미리보기")
-        self.page_label.clear()
+        self._title = title or "별표·서식 미리보기"
         self.page_spin.setRange(1, 1)
         self.document.close()
         self.pdf_view.hide()
         self.status_label.setText("PDF를 불러오는 중입니다…")
         self.status_label.show()
-        self.show()
+        # 위치는 본문 쪽 `_place_inline_annex_preview`가 잡은 뒤에만
+        # 보이게 한다. 여기서 show()하면 뷰포트 전체를 덮는다.
 
     def show_pdf(self, data: bytes, title: str = "") -> None:
         if title:
-            self.title_label.setText(title)
+            self._title = title
         self._buffer = QBuffer(self)
         self._buffer.setData(bytes(data))
         self._buffer.open(QIODevice.OpenModeFlag.ReadOnly)
         error = self.document.load(self._buffer)
-        if error != QPdfDocument.Error.None_:
+        # load()가 비동기로 끝나 None을 주는 경우가 있다. 그때를 실패로
+        # 보면 "PDF를 여는 데 실패했습니다: None"이 뜨고, 실제 결과는
+        # statusChanged가 나중에 알려 준다.
+        if error is not None and error != QPdfDocument.Error.None_:
             self.show_error(f"PDF를 여는 데 실패했습니다: {error}")
 
     def show_error(self, message: str) -> None:
         self.pdf_view.hide()
-        self.page_label.clear()
         self.status_label.setText(message)
         self.status_label.show()
-        self.show()
 
     def _document_status_changed(self, status: QPdfDocument.Status) -> None:
         if status == QPdfDocument.Status.Ready:
             total = self.document.pageCount()
-            self.page_label.setText(f"/ {total}" if total else "")
             self.page_spin.blockSignals(True)
             self.page_spin.setRange(1, max(1, total))
             self.page_spin.setValue(1)
             self.page_spin.blockSignals(False)
+            self.page_spin.setToolTip(
+                f"보고 있는 쪽 (전체 {total}쪽)" if total else "보고 있는 쪽"
+            )
             self.status_label.hide()
             self.pdf_view.show()
         elif status == QPdfDocument.Status.Error:
             self.show_error(
                 f"PDF를 여는 데 실패했습니다: {self.document.error()}"
             )
-
-    def _move_page(self, delta: int) -> None:
-        self.page_spin.setValue(self.page_spin.value() + int(delta))
 
     def _jump_to_page(self, page: int) -> None:
         self.pdf_view.pageNavigator().jump(
@@ -258,16 +295,12 @@ class InlinePdfPreviewPanel(QFrame):
         self.page_spin.blockSignals(False)
 
     def _toggle_expanded(self) -> None:
+        # 부모는 본문 뷰포트다. 예전처럼 parent.height()-24를 쓰면
+        # 미리보기가 문서 전체를 덮고, 자리 표시 높이도 같이 커져
+        # 본문을 밀어 낸다. 접힘 340 · 크게 560만 오간다.
         self._expanded = not self._expanded
-        if self._expanded:
-            parent_height = self.parentWidget().height() if self.parentWidget() else 700
-            self.setMaximumHeight(16_777_215)
-            self.setMinimumHeight(max(500, parent_height - 24))
-            self.expand_button.setText("축소")
-        else:
-            self.setMinimumHeight(340)
-            self.setMaximumHeight(560)
-            self.expand_button.setText("크게")
+        self.setFixedHeight(560 if self._expanded else 340)
+        self.expand_button.setText("축소" if self._expanded else "크게")
 
 
 class PdfPreviewPopup(QFrame):

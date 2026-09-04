@@ -76,19 +76,50 @@ def test_headline_survives_missing_fields() -> None:
 def test_document_header_shows_short_name_and_effective_line() -> None:
     html_parts, plain_parts = detail_document_header(
         "국토의 계획 및 이용에 관한 법률",
-        [("법령ID", "009294")],
+        [
+            ("법령ID", "009294"),
+            ("공포일자", "2026.03.05"),
+            ("공포번호", "21447"),
+            ("시행일자", "2026.07.01"),
+            ("소관부처", "국토교통부"),
+        ],
         (),
         short_name="국토계획법",
         subtitle="[시행 2026. 7. 1.] [법률 제21447호, 2026. 3. 5., 타법개정]",
     )
     html = "".join(html_parts)
-    # 약칭은 제목의 절반 크기로 못박아 둔다. Qt 리치텍스트에서는 h1 안의
-    # 클래스 규칙만으로는 제목 크기에 묻힌다.
+    # 약칭은 법령명과 같은 크기ㆍ굵기다. 짧은 이름만 작게 두면 제목 한
+    # 줄이 중간에서 끊겨 보였다.
+    assert "( 약칭: " in html
     assert 'class="doc-short-name"' in html
-    assert "font-size:9px" in html
-    assert "( 약칭: 국토계획법 )</span>" in html
-    assert '<div class="doc-subtitle">[시행 2026. 7. 1.]' in html
+    assert "font-weight:700" in html
+    assert ">국토계획법</span> )" in html
+    assert "font-size:9px" not in html
+    # 제목과 시행일 줄은 가운데, 기본정보는 오른쪽 끝 한 줄이다.
+    assert '<h1 align="center">' in html
+    assert '<div class="doc-subtitle" align="center"' in html
+    assert '<div class="doc-meta" align="right"' in html
     assert "( 약칭: 국토계획법 )" in plain_parts
+    # 시행일ㆍ공포번호는 바로 위 줄에 이미 있어 기본정보에서 뺀다.
+    assert "법령ID" in html
+    assert "소관부처" in html
+    assert "공포번호" not in html
+    assert "시행일자" not in html
+    assert "공포일자" not in html
+    # 어두운 네모 칸은 없앴다.
+    assert 'bgcolor=' not in html
+
+
+def test_document_header_keeps_effective_date_when_there_is_no_subtitle() -> None:
+    """행정규칙처럼 시행일 줄이 없는 문서는 기본정보에 그대로 남긴다."""
+    html_parts, _plain = detail_document_header(
+        "행정규칙명",
+        [("시행일자", "2026.01.01"), ("소관부처", "국토교통부")],
+        (),
+    )
+    html = "".join(html_parts)
+    assert "시행일자" in html
+    assert "2026.01.01" in html
 
 
 def test_document_header_without_headline_keeps_old_shape() -> None:
@@ -97,7 +128,7 @@ def test_document_header_without_headline_keeps_old_shape() -> None:
     # 스타일 정의에는 두 클래스가 늘 들어 있으므로 실제로 그린 요소만 본다.
     assert '<span class="doc-short-name">' not in html
     assert '<div class="doc-subtitle">' not in html
-    assert "<h1>행정규칙명</h1>" in html
+    assert '<h1 align="center">행정규칙명</h1>' in html
     assert plain_parts == ["행정규칙명"]
 
 

@@ -9,7 +9,11 @@ from PySide6.QtGui import QFont, QFontMetrics
 from PySide6.QtWidgets import QApplication
 
 from utils.constants import FONT_FAMILY
-from utils.formatting import ARTICLE_BODY_LEFT_MARGIN, body_to_html
+from utils.formatting import (
+    ARTICLE_BODY_LEFT_MARGIN,
+    BODY_PARAGRAPH_GAP_PX,
+    body_to_html,
+)
 from utils.parsing import (
     insert_admin_clause_breaks,
     insert_law_style_article_breaks,
@@ -80,7 +84,7 @@ def test_law_style_admin_rule_renders_article_titles() -> None:
     assert "제5조에 따른" in html.replace("&nbsp;", " ")
 
     items = re.findall(
-        r'style="margin:0 0 7px (\d+)px;[^>]*>\s*'
+        rf'style="margin:0 0 {BODY_PARAGRAPH_GAP_PX}px (\d+)px;[^>]*>\s*'
         r'<span class="bullet-marker"[^>]*>([^<]+)&nbsp;',
         html,
     )

@@ -106,9 +106,13 @@ def test_closing_one_screen_leaves_the_others(window: LawSearchWindow) -> None:
     assert not any(token.startswith("expc:") for token in tokens)
 
 
-def test_keyword_screens_stay_unclosable(window: LawSearchWindow) -> None:
-    """연관검색ㆍ직접검색은 검색어를 바꾸면 통째로 바뀌므로 그대로 둔다."""
+def test_keyword_screens_can_be_closed(window: LawSearchWindow) -> None:
+    """조문검색으로 연 본문도 표시줄에서 바로 닫는다."""
     _open_detail(window.ai_related_tab, "연관법령")
-    _open_detail(window.ai_search_tab, "직접검색")
+    _open_detail(window.ai_search_tab, "조문검색")
 
-    assert _closable_sources(window) & {"ai_related", "ai_search"} == set()
+    assert {"ai_related", "ai_search"} <= _closable_sources(window)
+
+    window.ai_search_tab.close_open_document()
+    assert window.ai_search_tab._active_detail_row is None
+    assert window.ai_search_tab.current_detail_text == ""

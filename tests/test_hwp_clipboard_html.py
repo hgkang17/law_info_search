@@ -7,7 +7,7 @@ from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import QApplication
 
 from ui.widgets import DeferredWrapTextBrowser
-from utils.formatting import hwp_friendly_clipboard_html
+from utils.formatting import BODY_PARAGRAPH_GAP_PX, hwp_friendly_clipboard_html
 
 
 DETAIL_HTML = (
@@ -17,7 +17,7 @@ DETAIL_HTML = (
     "제8조(다른 법률에 따른 토지 이용에 관한 구역 등의 지정 제한 등)</span>"
     " 본문입니다.</div>"
     '<div class="legal-indent level-0" '
-    'style="margin:0 0 7px 20px; text-indent:-20px;">'
+    f'style="margin:0 0 {BODY_PARAGRAPH_GAP_PX}px 20px; text-indent:-20px;">'
     '<span class="bullet-marker" style="font-weight:400; padding:0;">①&nbsp;</span>'
     '<span class="bullet-text" style="font-weight:400;">'
     "중앙행정기관의 장은 구역등의 지정목적에 부합되도록 하여야 한다.</span></div>"

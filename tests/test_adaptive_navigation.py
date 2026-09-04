@@ -84,7 +84,7 @@ def test_gray_workbench_navigation_is_flat_and_compact(monkeypatch) -> None:
         assert window.favorite_navigation_button.text() == "즐겨찾기"
         assert window.favorite_navigation_button.height() <= 44
         assert window.ai_review_button.text() == "AI 에이전트"
-        assert window.viewed_laws_button.text() == "열람 내역"
+        assert window.viewed_laws_button.text() == "저장내역"
         assert window.navigation.item(1).text() == "법령 검색"
         # 머리글에는 로고만 둔다. 프로그램 이름은 창 제목 표시줄에 있다.
         assert window.header_card.findChild(QLabel, "appNameLabel") is None

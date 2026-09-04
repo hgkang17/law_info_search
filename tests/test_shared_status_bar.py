@@ -61,6 +61,10 @@ def test_update_and_about_buttons_share_the_status_line(window, qt_app) -> None:
 def test_status_text_follows_the_screen_in_front(window, qt_app) -> None:
     """뒤에 있는 화면이 앞 화면의 문구를 덮어쓰지 않는다."""
     resource = window.resource_tab
+    # 창을 열면 시작 화면이 앞에 있다. 상태줄은 앞에 나온 화면을 따라가므로
+    # 법령검색 화면을 먼저 앞으로 보낸다.
+    window.navigation.setCurrentRow(1)
+    qt_app.processEvents()
     resource.select_category("law")
     qt_app.processEvents()
     resource.status_label.setText("법령 목록 문구")
@@ -86,6 +90,8 @@ def test_status_text_follows_the_screen_in_front(window, qt_app) -> None:
 def test_keyword_screens_show_their_guidance_in_the_status_line(window, qt_app) -> None:
     """닫히던 상단 배너 대신 안내가 늘 상태줄에 보인다."""
     resource = window.resource_tab
+    window.navigation.setCurrentRow(1)
+    qt_app.processEvents()
     resource.select_category("ai_search")
     qt_app.processEvents()
     assert "키워드가 직접 포함된" in window.status_bar.label.text()

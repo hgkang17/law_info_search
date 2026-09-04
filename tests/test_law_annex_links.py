@@ -101,6 +101,8 @@ def test_annex_links_are_rendered_after_articles(qt_app, tmp_path) -> None:
     assert "[별표1] 시험 기준(제1조 관련)" in html
     assert "[별지제2호의3서식] 시험 신청서" in html
     assert 'href="annex:0"' in html
+    # 펼침 표시는 글자가 아니라 단추 모양 그림이다.
+    assert "annex_expand.svg" in html
     assert "annex_hwp.svg" in html and "annex_pdf.svg" in html
     assert "flDownload.do?flSeq=11" in html
     assert "flDownload.do?flSeq=12" in html
@@ -114,9 +116,15 @@ def test_annex_links_are_rendered_after_articles(qt_app, tmp_path) -> None:
         tab.detail_view.textInteractionFlags()
         & Qt.TextInteractionFlag.LinksAccessibleByKeyboard
     )
-    # 제목 줄이 없으니 목차에도 넣지 않는다.
+    # 본문 끝의 별표도 왼쪽 조문 목차에서 바로 갈 수 있어야 한다.
     toc = tab._document_states[tab._active_document_key]["toc_entries"]
-    assert all(anchor != "law-annexes" for _depth, _label, anchor in toc)
+    anchors = [anchor for _depth, _label, anchor in toc]
+    assert "law-annexes" in anchors
+    assert "annex-item-0" in anchors
+    assert "annex-item-1" in anchors
+    labels = {anchor: label for _depth, label, anchor in toc}
+    assert labels["law-annexes"] == "별표·서식 (2건)"
+    assert labels["annex-item-0"] == "[별표1] 시험 기준(제1조 관련)"
     tab.close()
 
 
@@ -165,27 +173,123 @@ def test_annex_title_opens_constrained_inline_pdf_panel(
         LawDocumentCache(tmp_path / "saved"),
     )
     try:
-        entries = tab._law_annex_entries(_payload())
-        tab._annex_section_entries = entries
+        tab.resize(900, 800)
+        tab.show()
+        row = {
+            "target": "law",
+            "id": "000001",
+            "label": "법령",
+            "name": "표시 시험법 시행령",
+        }
+        tab.pending_row = row
+        tab._open_document_tab(row, defer_restore=True)
+        title, metadata, sections = tab._parse_law_detail(_payload())
+        tab._set_detail_document(
+            title,
+            metadata,
+            sections,
+            build_toc=True,
+            law_annexes=tab._law_annex_entries(_payload()),
+        )
         monkeypatch.setattr(tab, "_start_annex_download", lambda *_args: None)
 
         tab._toggle_annex_preview("0")
         qt_app.processEvents()
 
         assert not tab.inline_annex_preview.isHidden()
+        assert tab.inline_annex_preview.parent() is tab.detail_view.viewport()
         assert tab.inline_annex_preview.minimumHeight() >= 320
         assert tab.inline_annex_preview.maximumHeight() <= 600
+        assert tab.inline_annex_preview.height() <= 560
+        viewport_height = tab.detail_view.viewport().height()
+        if viewport_height > 360:
+            assert tab.inline_annex_preview.height() < viewport_height
         assert tab.inline_annex_preview.pdf_view.pageMode().name == "MultiPage"
         assert tab.inline_annex_preview.page_spin.minimum() == 1
+        source = str(tab._document_states[tab._active_document_key]["source_html"])
+        assert tab.ANNEX_SECTION_START in source
+        # 자리는 이름 앵커가 아니라 스페이서 그림 하나로 잡는다. 이름을
+        # 붙인 빈 글자는 Qt가 위 별표 제목 줄에 붙여 버려 미리보기가 한
+        # 줄 위에서 시작했다.
+        assert tab.ANNEX_PREVIEW_SPACER_IMAGE in source
+        tab._place_inline_annex_preview()
+        qt_app.processEvents()
+        title_cursor = tab._find_named_anchor_cursor("annex-item-0")
+        slot_cursor = tab._find_named_anchor_cursor(tab.ANNEX_PREVIEW_SLOT_NAME)
+        assert title_cursor is not None
+        assert slot_cursor is not None
+        assert title_cursor.position() < slot_cursor.position()
+        assert tab.inline_annex_preview.geometry().height() >= 320
+        assert tab.inline_annex_preview.geometry().top() >= (
+            tab.detail_view.cursorRect(title_cursor).top() - 2
+        )
         tab.inline_annex_preview._toggle_expanded()
         assert tab.inline_annex_preview.expand_button.text() == "축소"
+        assert tab.inline_annex_preview.height() == 560
         tab.inline_annex_preview._toggle_expanded()
         assert tab.inline_annex_preview.expand_button.text() == "크게"
+        assert tab.inline_annex_preview.height() == 340
         assert tab._active_annex_preview_key.endswith("flSeq=12")
 
         tab._close_inline_annex_preview()
         assert tab.inline_annex_preview.isHidden()
         assert tab._annex_previews == {}
+    finally:
+        tab.close()
+
+
+def test_annex_section_split_finds_saved_html_without_comments() -> None:
+    """저장 toHtml()은 주석을 버린다. 앵커만으로도 별표 구간을 찾아야 한다."""
+    source = (
+        '<h1>시험법</h1>'
+        '<a name="law-annexes"></a>'
+        '<div class="content">[별표1]</div>'
+    )
+    head, tail = ResourceSearchTab._split_annex_section_html(source)
+    assert head.endswith("<h1>시험법</h1>")
+    assert tail == ""
+    commented = (
+        "앞<!--annex-section--><a name=\"law-annexes\"></a>"
+        "목록<!--/annex-section-->뒤"
+    )
+    head, tail = ResourceSearchTab._split_annex_section_html(commented)
+    assert head == "앞"
+    assert tail == "뒤"
+
+
+def test_annex_link_url_uses_path(qt_app, tmp_path, monkeypatch) -> None:
+    settings = QSettings(
+        str(tmp_path / "annex-url.ini"), QSettings.Format.IniFormat
+    )
+    tab = ResourceSearchTab(
+        lambda: "",
+        RecentSearchManager(settings),
+        LawDocumentCache(tmp_path / "saved"),
+    )
+    try:
+        tab.resize(900, 800)
+        tab.show()
+        row = {
+            "target": "law",
+            "id": "000001",
+            "label": "법령",
+            "name": "표시 시험법 시행령",
+        }
+        tab.pending_row = row
+        tab._open_document_tab(row, defer_restore=True)
+        title, metadata, sections = tab._parse_law_detail(_payload())
+        tab._set_detail_document(
+            title,
+            metadata,
+            sections,
+            build_toc=True,
+            law_annexes=tab._law_annex_entries(_payload()),
+        )
+        monkeypatch.setattr(tab, "_start_annex_download", lambda *_args: None)
+        tab._detail_link_clicked(QUrl("annex:0"))
+        qt_app.processEvents()
+        assert tab._active_annex_preview_key.endswith("flSeq=12")
+        assert not tab.inline_annex_preview.isHidden()
     finally:
         tab.close()
 
@@ -344,3 +448,17 @@ def test_annex_list_survives_switching_document_tabs(
         assert not tab.inline_annex_preview.isHidden()
     finally:
         tab.close()
+
+
+def test_inline_pdf_load_none_is_not_treated_as_failure(qt_app) -> None:
+    """load()가 None을 돌려줘도 실패 문구를 바로 띄우지 않는다."""
+    from ui.dialogs import InlinePdfPreviewPanel
+
+    panel = InlinePdfPreviewPanel()
+    try:
+        panel.document.load = lambda _device: None
+        panel.show_pdf(b"%PDF-1.4", "시험 별표")
+        qt_app.processEvents()
+        assert "실패했습니다: None" not in panel.status_label.text()
+    finally:
+        panel.close()

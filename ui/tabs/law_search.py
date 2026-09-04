@@ -409,8 +409,8 @@ class LawSearchTab(QWidget):
         self.detail_view.setPlaceholderText(
             "검색 결과에서 항목을 더블클릭하면 본문을 조회합니다."
         )
+        # 찾기 줄은 본문 위에 뜨는 창이라 레이아웃에 넣지 않는다.
         self.detail_search = DetailSearchBar(self.detail_view, self)
-        detail_layout.addWidget(self.detail_search)
         detail_view_row = QWidget()
         detail_view_row.setObjectName("detailViewRow")
         detail_view_row_layout = QHBoxLayout(detail_view_row)
@@ -771,7 +771,10 @@ class LawSearchTab(QWidget):
             if html is not None:
                 self.detail_view.setHtml(
                     scale_document_font_sizes(
-                        html, source_font_size, self.detail_font_size
+                        html,
+                        source_font_size,
+                        self.detail_font_size,
+                        self.detail_font_family,
                     )
                 )
             elif text is not None:

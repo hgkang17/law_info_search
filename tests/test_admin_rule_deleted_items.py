@@ -1,4 +1,5 @@
 import os
+import re
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -82,7 +83,10 @@ def test_deleted_markers_render_as_text_and_keep_item_boundaries() -> None:
     )
 
     html = body_to_html(source, administrative_rule=True)
-    assert html.count("&lt;삭제&gt;") == 3
+    # ``<삭제>``는 개정 표기와 같은 서식을 받아 꺾쇠만 한 겹 더 감싼다.
+    # 표시되는 글자만 보려고 태그를 걷어 내고 센다.
+    shown = re.sub(r"<[^>]+>", "", html)
+    assert shown.count("&lt;삭제&gt;") == 3
     assert "(4)&nbsp;" in html
     assert "(5)&nbsp;" in html
     assert "(6)&nbsp;" in html

@@ -103,6 +103,13 @@ _PAREN_ITEM_REFERENCE_TAIL_PATTERN = re.compile(
 
 _PAREN_ITEM_RANGE_TAIL_PATTERN = re.compile(r"\s*(?:부터|까지|내지)(?=\s|\()")
 
+# ``2-2-3.의 (1), (2), (3) 및 (4)의 개정규정``처럼 번호만 잇달아 적는
+# 나열은 목록이 아니라 다른 항목을 가리키는 인용이다. 진짜 목록은 번호
+# 뒤에 그 항목의 본문이 따라온다.
+_PAREN_ITEM_ENUMERATION_TAIL_PATTERN = re.compile(
+    r"\s*(?:[,ㆍ·]|및(?=\s|\()|또는(?=\s|\())"
+)
+
 _FOOTNOTE_MARK_TAIL_PATTERN = re.compile(r"※\s*$")
 
 _CLOSING_PAREN_ITEM_PATTERN = re.compile(r"(?<![\d(])(\d{1,2})\)\s*")

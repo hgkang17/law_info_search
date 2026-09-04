@@ -5,10 +5,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass
+import json
 from math import cos, pi, sin
 import re
 from PySide6.QtCore import (
     QEvent,
+    QByteArray,
     QEasingCurve,
     QObject,
     QPoint,
@@ -26,6 +28,7 @@ from PySide6.QtGui import (
     QColor,
     QCursor,
     QFont,
+    QFontDatabase,
     QFontMetrics,
     QIcon,
     QKeySequence,
@@ -82,11 +85,15 @@ from ui.assets import CLOSE_MARK_ICON_PATH
 from utils.constants import (
     DEFAULT_DETAIL_FONT_POINT,
     DETAIL_FONT_DEFAULTS_VERSION,
+    DETAIL_FONT_FAMILIES,
     DETAIL_FONT_FAMILY,
     DETAIL_HEADER_CONTROL_HEIGHT,
 )
 from utils.formatting import hwp_friendly_clipboard_html
 from utils.parsing import whitespace_flexible_pattern
+
+
+FAVORITE_PROJECT_MIME = "application/x-law-favorite-items"
 
 
 def draw_favorite_star(
@@ -518,6 +525,10 @@ _LEGACY_DEFAULT_DETAIL_FAMILIES = {
     "pretendard variable",
     "malgun gothic",
     "맑은 고딕",
+    # 굴림으로 옮기기 전에 잠깐 기본값이던 글꼴. 고른 적이 없는데 이
+    # 이름이 남아 있으면 지금 기본 글꼴로 되돌린다.
+    "dotum",
+    "돋움",
 }
 
 
@@ -542,6 +553,10 @@ def load_detail_font_preferences(
         if not raw_family or raw_family.casefold() in _LEGACY_DEFAULT_DETAIL_FAMILIES:
             raw_family = DETAIL_FONT_FAMILY
             settings.setValue(family_key, raw_family)
+        # 예전 기본 9.0만 9.5로 옮긴다. 사용자가 고른 다른 크기는 그대로 둔다.
+        if abs(font_size - 9.0) < 0.01:
+            font_size = DEFAULT_DETAIL_FONT_POINT
+            settings.setValue(size_key, font_size)
         settings.setValue(revision_key, DETAIL_FONT_DEFAULTS_VERSION)
         settings.sync()
 
@@ -598,6 +613,18 @@ def build_detail_header_controls(
     font_combo.setFixedWidth(DETAIL_FONT_FAMILY_WIDTH)
     font_combo.setFixedHeight(DETAIL_HEADER_CONTROL_HEIGHT)
     font_combo.setCurrentFont(QFont(font_family))
+    # QFontComboBox는 목록에 없는 이름을 받으면 알파벳순으로 가까운 글꼴을
+    # 대신 고른다. 그래서 굴림ㆍ돋움이 잡히지 않는 상황에서 "D-DIN Exp"
+    # 같은 엉뚱한 이름이 칸에 떴다. 대체 후보를 차례로 시도하고, 그래도
+    # 없으면 적어도 본문이 실제로 쓰는 이름을 글자로 보여 준다.
+    if font_combo.currentFont().family() != font_family:
+        installed = set(QFontDatabase.families())
+        for candidate in DETAIL_FONT_FAMILIES:
+            if candidate in installed:
+                font_combo.setCurrentFont(QFont(candidate))
+                break
+        else:
+            font_combo.setEditText(font_family)
 
     font_spin = CompactDoubleSpinBox()
     font_spin.setObjectName("fontSizeSpin")
@@ -1111,6 +1138,30 @@ class DropdownComboBox(QComboBox):
     # 목록에 준 안쪽 여백(위아래 3px)과 테두리(1px)의 합.
     POPUP_CHROME = 8
 
+    def _fit_popup_height(self, container: QFrame) -> None:
+        """펼친 목록 높이를 실제 글자 영역에 딱 맞춘다.
+
+        모자라면 마지막 항목이 잘리고, 남으면 목록 아래에 빈 띠가 생긴다.
+        한 번 그린 뒤 실제로 글자가 그려지는 영역을 재서 양쪽으로 맞춘다.
+        """
+        if container is None or not container.isVisible():
+            return
+        view = self.view()
+        visible = min(self.count(), max(1, self.maxVisibleItems()))
+        rows = sum(max(28, view.sizeHintForRow(row)) for row in range(visible))
+        if not rows:
+            return
+        if container.height() <= 0:
+            container.setFixedHeight(rows + self.POPUP_CHROME)
+        # POPUP_CHROME은 목록에 준 여백만 센 값이라, 목록을 감싼 틀과
+        # 목록 자신의 테두리까지 합치면 어긋난다(항목 둘일 때 12px).
+        # 스타일이 바뀌어도 맞도록 남거나 모자란 만큼 그대로 더한다.
+        for _ in range(4):
+            difference = rows - view.viewport().height()
+            if difference == 0:
+                break
+            container.setFixedHeight(max(rows, container.height() + difference))
+
     def showPopup(self) -> None:
         super().showPopup()
         container = self.findChild(QFrame)
@@ -1123,15 +1174,13 @@ class DropdownComboBox(QComboBox):
         rows = sum(max(28, view.sizeHintForRow(row)) for row in range(visible))
         if rows:
             container.setFixedHeight(rows + self.POPUP_CHROME)
-            # POPUP_CHROME은 목록에 준 여백만 센 값이라, 목록을 감싼 틀과
-            # 목록 자신의 테두리까지 합치면 늘 모자랐다(항목 둘일 때 12px).
-            # 스타일이 바뀌어도 맞도록 실제로 글자가 그려지는 영역을 재서
-            # 모자란 만큼 더 준다.
-            for _ in range(3):
-                deficit = rows - view.viewport().height()
-                if deficit <= 0:
-                    break
-                container.setFixedHeight(container.height() + deficit)
+            self._fit_popup_height(container)
+            # 처음 펼칠 때는 목록에 스타일이 아직 다 앉기 전이라 행 높이가
+            # 실제와 달랐다. 그래서 첫 번에는 잘리고 두 번째부터 맞는 일이
+            # 있었다. 그려진 뒤 한 번 더 맞춘다.
+            QTimer.singleShot(
+                0, lambda frame=container: self._fit_popup_height(frame)
+            )
         view.setVerticalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
             if self.count() <= self.maxVisibleItems()
@@ -1572,11 +1621,16 @@ class FavoriteTitleDelegate(SearchHighlightDelegate):
         *,
         star_only: bool = False,
         supports_callback=None,
+        pending_callback=None,
     ) -> None:
         super().__init__(parent)
         self._toggle_callback = toggle_callback
         self._is_favorite_callback = is_favorite_callback
         self._star_only = star_only
+        # 저장본을 먼저 받아야 하는 줄은 누른 뒤 몇 초가 걸린다. 그동안
+        # 별이 그대로면 눌리지 않은 것처럼 보여, 처리 중인 줄만 파란
+        # 별로 바꿔 눌린 것을 알린다.
+        self._pending_callback = pending_callback
         # 줄마다 별을 걸 수 있는지 다를 때 쓴다. 돌려주는 값이 거짓이면
         # 그 줄에는 별을 아예 그리지 않고 누르는 자리도 두지 않는다.
         self._supports_callback = supports_callback
@@ -1606,14 +1660,24 @@ class FavoriteTitleDelegate(SearchHighlightDelegate):
                 QStyledItemDelegate.paint(self, painter, option, index)
             return
         is_favorite = bool(self._is_favorite_callback(index.row()))
+        pending = bool(
+            self._pending_callback is not None
+            and self._pending_callback(index.row())
+        )
         star_rect = self._star_rect(option)
         if self._star_only:
             QStyledItemDelegate.paint(self, painter, option, index)
+        if pending:
+            star_color = "#1768aa"
+        elif is_favorite:
+            star_color = "#c88700"
+        else:
+            star_color = "#aeb4bc"
         draw_favorite_star(
             painter,
             star_rect,
-            filled=is_favorite,
-            color=QColor("#c88700" if is_favorite else "#aeb4bc"),
+            filled=is_favorite or pending,
+            color=QColor(star_color),
         )
         if self._star_only:
             return
@@ -1657,6 +1721,14 @@ class FavoriteTreeItemDelegate(QStyledItemDelegate):
     def _is_record(self, index) -> bool:
         return index.data(self._KIND_ROLE) in ("record", "article")
 
+    def _is_removable(self, index) -> bool:
+        tree = self.parent()
+        return self._is_record(index) and bool(
+            tree.property("favoriteRemoveEnabled")
+            if isinstance(tree, QTreeWidget)
+            else True
+        )
+
     def _remove_rect(self, option) -> QRect:
         return QRect(
             option.rect.left(),
@@ -1668,7 +1740,8 @@ class FavoriteTreeItemDelegate(QStyledItemDelegate):
     def paint(self, painter, option, index) -> None:
         styled_option = QStyleOptionViewItem(option)
         is_record = self._is_record(index)
-        if is_record:
+        is_removable = self._is_removable(index)
+        if is_removable:
             styled_option.rect = styled_option.rect.adjusted(
                 self.REMOVE_BUTTON_WIDTH, 0, 0, 0
             )
@@ -1711,7 +1784,7 @@ class FavoriteTreeItemDelegate(QStyledItemDelegate):
             )
         super().paint(painter, styled_option, index)
 
-        if is_record:
+        if is_removable:
             remove_rect = self._remove_rect(option)
             hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
             draw_favorite_star(
@@ -1723,7 +1796,7 @@ class FavoriteTreeItemDelegate(QStyledItemDelegate):
 
     def editorEvent(self, event, model, option, index) -> bool:
         if (
-            self._is_record(index)
+            self._is_removable(index)
             and event.type() == QEvent.Type.MouseButtonRelease
             and event.button() == Qt.MouseButton.LeftButton
             and self._remove_rect(option).contains(
@@ -1743,12 +1816,80 @@ class FavoriteCategoryTree(QTreeWidget):
 
     categoryActivated = Signal(str)
     removeRequested = Signal(object)
+    externalFavoritesDropped = Signal(object)
 
     def __init__(self, category: str, parent=None) -> None:
         super().__init__(parent)
         self.category = category
+        self.setProperty("favoriteRemoveEnabled", True)
         self.setItemDelegate(FavoriteTreeItemDelegate(self))
         self.setMouseTracking(True)
+
+    def mimeData(self, items):
+        """기본 내부 이동 자료에 프로젝트 복사용 항목 정보를 덧붙인다."""
+        mime_data = super().mimeData(items)
+        payloads: list[dict[str, object]] = []
+        for item in items:
+            kind = str(item.data(0, int(Qt.ItemDataRole.UserRole) + 1) or "")
+            path = str(item.data(0, Qt.ItemDataRole.UserRole) or "")
+            if kind not in ("record", "article") or not path:
+                continue
+            payload: dict[str, object] = {"kind": kind, "path": path}
+            if kind == "article":
+                unit = item.data(0, int(Qt.ItemDataRole.UserRole) + 5)
+                if isinstance(unit, dict):
+                    payload["unit"] = dict(unit)
+            payloads.append(payload)
+        if payloads:
+            mime_data.setData(
+                FAVORITE_PROJECT_MIME,
+                QByteArray(
+                    json.dumps(
+                        payloads, ensure_ascii=False, separators=(",", ":")
+                    ).encode("utf-8")
+                ),
+            )
+        return mime_data
+
+    def dragEnterEvent(self, event) -> None:
+        if (
+            event.mimeData().hasFormat(FAVORITE_PROJECT_MIME)
+            and event.source() is not self
+        ):
+            event.setDropAction(Qt.DropAction.CopyAction)
+            event.accept()
+            return
+        super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event) -> None:
+        if (
+            event.mimeData().hasFormat(FAVORITE_PROJECT_MIME)
+            and event.source() is not self
+        ):
+            event.setDropAction(Qt.DropAction.CopyAction)
+            event.accept()
+            return
+        super().dragMoveEvent(event)
+
+    def dropEvent(self, event) -> None:
+        if (
+            event.mimeData().hasFormat(FAVORITE_PROJECT_MIME)
+            and event.source() is not self
+        ):
+            try:
+                payloads = json.loads(
+                    bytes(event.mimeData().data(FAVORITE_PROJECT_MIME)).decode(
+                        "utf-8"
+                    )
+                )
+            except (UnicodeDecodeError, ValueError, json.JSONDecodeError):
+                event.ignore()
+                return
+            self.externalFavoritesDropped.emit(payloads)
+            event.setDropAction(Qt.DropAction.CopyAction)
+            event.accept()
+            return
+        super().dropEvent(event)
 
     def focusInEvent(self, event) -> None:
         self.categoryActivated.emit(self.category)
@@ -1779,11 +1920,17 @@ class DetailSearchBar(QWidget):
         self.current_index = -1
         self._document_change_suspended = False
         self.setObjectName("detailSearchBar")
+        # 본문 위에 뜨는 작은 찾기 창. 예전에는 본문 위쪽에 한 줄을
+        # 끼워 넣어 Ctrl+F를 누를 때마다 본문 전체가 아래로 밀렸다.
+        self.setWindowFlags(
+            Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
+        )
+        self.setWindowTitle("본문 검색")
+        # 창으로 띄우면 QSS의 배경ㆍ테두리는 이 속성이 있어야 그려진다.
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
         layout = QHBoxLayout(self)
-        # 본문 카드 경계에 라벨이 바로 붙지 않도록
-        # 검색줄에만 작은 왼쪽 여백을 둔다.
-        layout.setContentsMargins(8, 0, 0, 0)
+        layout.setContentsMargins(10, 8, 10, 8)
         layout.setSpacing(6)
 
         label = QLabel("본문 검색")
@@ -1809,6 +1956,12 @@ class DetailSearchBar(QWidget):
         self.next_button = QPushButton("다음")
         self.next_button.setObjectName("detailSearchButton")
         self.next_button.setFixedWidth(54)
+        # 창에는 테두리 단추가 없으므로 닫는 자리를 따로 둔다.
+        self.close_button = QPushButton("✕")
+        self.close_button.setObjectName("detailSearchButton")
+        self.close_button.setFixedWidth(30)
+        self.close_button.setToolTip("찾기 창 닫기 (Esc)")
+        self.close_button.setAccessibleName("찾기 창 닫기")
 
         layout.addWidget(label)
         layout.addWidget(self.query_input, 1)
@@ -1816,12 +1969,14 @@ class DetailSearchBar(QWidget):
         layout.addWidget(self.count_label)
         layout.addWidget(self.previous_button)
         layout.addWidget(self.next_button)
+        layout.addWidget(self.close_button)
 
         self.query_input.textChanged.connect(lambda _text: self.refresh())
         self.whole_word_checkbox.toggled.connect(lambda _checked: self.refresh())
         self.query_input.returnPressed.connect(lambda: self.move(1))
         self.previous_button.clicked.connect(lambda: self.move(-1))
         self.next_button.clicked.connect(lambda: self.move(1))
+        self.close_button.clicked.connect(self.cancel_search)
         self.browser.document().contentsChanged.connect(self.refresh)
         self._connected_document = self.browser.document()
         self.find_shortcut = QShortcut(
@@ -1850,7 +2005,25 @@ class DetailSearchBar(QWidget):
         self.current_index = -1
         self._update_controls()
 
+    def _place_over_browser(self) -> None:
+        """찾기 창을 본문 오른쪽 위 모서리에 띄운다.
+
+        ``move``는 이 클래스에서 일치 항목 이동을 뜻하므로 자리는
+        ``setGeometry``로 잡는다.
+        """
+        viewport = self.browser.viewport()
+        if not viewport.isVisible():
+            return
+        hint = self.sizeHint()
+        origin = viewport.mapToGlobal(QPoint(0, 0))
+        width = max(360, min(hint.width(), max(280, viewport.width() - 24)))
+        height = max(hint.height(), 44)
+        x = origin.x() + max(0, viewport.width() - width - 16)
+        y = origin.y() + 12
+        self.setGeometry(QRect(x, y, width, height))
+
     def focus_query(self) -> None:
+        self._place_over_browser()
         self.show()
         self.raise_()
         vertical_position = self.browser.verticalScrollBar().value()
@@ -2066,10 +2239,15 @@ class RecentSearchBar(QWidget):
         query_input: QLineEdit,
         manager: RecentSearchManager,
         parent=None,
+        *,
+        max_items: int | None = None,
     ) -> None:
         super().__init__(parent)
         self.query_input = query_input
         self.manager = manager
+        # 좁은 자리에서는 앞의 몇 개만 보여 준다. 열 개를 그대로 늘어놓으면
+        # 칩 하나가 글자 한 자도 못 담을 만큼 좁아져 빈 상자만 남는다.
+        self._max_items = max_items
         self.setObjectName("recentSearchBar")
 
         layout = QHBoxLayout(self)
@@ -2100,6 +2278,8 @@ class RecentSearchBar(QWidget):
         values = [str(value) for value in (
             items if items is not None else self.manager.items
         )]
+        if self._max_items is not None:
+            values = values[: max(0, int(self._max_items))]
         if values == [query for _button, query in self._query_buttons]:
             self.clear_button.setEnabled(bool(values))
             self._schedule_query_eliding_if_needed()
@@ -2214,6 +2394,19 @@ class DoubleClickLabel(QLabel):
             event.accept()
             return
         super().mouseDoubleClickEvent(event)
+
+
+class ClickableLabel(QLabel):
+    """한 번 누르는 것을 신호로 주는 라벨. 로고를 홈 단추로 쓴다."""
+
+    clicked = Signal()
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+            event.accept()
+            return
+        super().mousePressEvent(event)
 
 
 class MemoMarkerBar(QWidget):
@@ -2699,7 +2892,12 @@ class ReferenceHistoryChip(QFrame):
         )
         self.close_button = QPushButton()
         self.close_button.setObjectName("referenceChipClose")
-        apply_close_icon(self.close_button, 10)
+        # 위 문서 탭과 같이 마우스를 올렸을 때만 ✕를 보여 준다. 자리는
+        # 늘 잡아 두어야 표시가 나타날 때 칩 폭이 흔들리지 않는다.
+        self._close_icon = QIcon(str(CLOSE_MARK_ICON_PATH))
+        self.close_button.setText("")
+        self.close_button.setIcon(QIcon())
+        self.close_button.setIconSize(QSize(10, 10))
         self.close_button.setFixedSize(14, 14)
         self.close_button.setFlat(True)
         self.close_button.setAccessibleName(f"{text} 참조 제거")
@@ -2709,9 +2907,19 @@ class ReferenceHistoryChip(QFrame):
             lambda: self.close_requested.emit(self)
         )
         layout.addWidget(self.text_label)
-        layout.addWidget(self.close_button)
+        layout.addWidget(
+            self.close_button, 0, Qt.AlignmentFlag.AlignVCenter
+        )
         self.setFixedHeight(18)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def enterEvent(self, event) -> None:
+        self.close_button.setIcon(self._close_icon)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self.close_button.setIcon(QIcon())
+        super().leaveEvent(event)
 
     def set_text(self, text: str) -> None:
         self.text_label.setText(text)

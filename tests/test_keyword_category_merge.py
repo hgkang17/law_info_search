@@ -42,9 +42,9 @@ def _category_targets(window: LawSearchWindow) -> list[str]:
 def test_keyword_categories_sit_next_to_integrated_search(window) -> None:
     targets = _category_targets(window)
 
-    # 지능형 법령검색은 캡슐 하나로 묶여 통합검색 바로 옆에 붙고, 어느
-    # API를 고른 상태인지는 그 캡슐의 tabData가 들고 있다.
-    assert targets[:2] == ["__all__", "ai_related"]
+    # 조문검색 캡슐이 통합검색 바로 옆에 붙는다. 연관검색은 고를 자리를
+    # 두지 않고 통합검색 결과에 "AI추천" 구분으로 섞여 나온다.
+    assert targets[:2] == ["__all__", "ai_search"]
     # 별표·서식 캡슐은 세 대상을 한 번에 찾는 전체가 기본이다.
     assert targets[2:] == ["law", "admrul", "ordin", "__annex_all__"]
 
@@ -72,17 +72,20 @@ def test_annex_capsule_carries_the_chosen_annex_target(window) -> None:
     assert resource.annex_target.isHidden()
 
 
-def test_keyword_mode_switch_swaps_the_api(window) -> None:
-    """검색줄의 모드 스위치가 연관ㆍ직접 화면을 갈아 끼운다."""
+def test_keyword_capsule_returns_to_article_search(window) -> None:
+    """캡슐은 조문검색만 맡는다. 연관 화면은 저장 본문 복원 때만 나온다."""
     resource = window.resource_tab
+    assert not hasattr(window.ai_search_tab, "mode_switch")
+
+    # 저장해 둔 연관검색 본문을 되살리는 경로는 그대로 남는다.
     resource.select_category("ai_related")
     assert window.ai_tabs.currentWidget() is window.ai_related_tab
-    assert window.ai_related_tab.mode_switch.current_value() == "ai_related"
 
-    window.ai_related_tab.mode_switch.changed.emit("ai_search")
+    # 다른 분류를 거쳐 캡슐을 다시 고르면 조문검색으로 돌아온다.
+    resource.select_category("law")
+    resource.select_category("ai_search")
     assert resource.category_target == "ai_search"
     assert window.ai_tabs.currentWidget() is window.ai_search_tab
-    assert window.ai_search_tab.mode_switch.current_value() == "ai_search"
 
 
 def test_keyword_search_left_the_main_menu(window) -> None:
@@ -93,7 +96,8 @@ def test_keyword_search_left_the_main_menu(window) -> None:
 
     assert not any("키워드" in label for label in labels)
     # 페이지 번호와 메뉴 줄 번호는 1:1로 묶여 있어 함께 당겨져야 한다.
-    assert window.navigation.count() == window.tabs.count() - 2
+    # 메뉴와 짝이 없는 페이지는 저장내역ㆍAI 검토ㆍ시작 화면 셋이다.
+    assert window.navigation.count() == window.tabs.count() - 3
 
 
 def test_choosing_a_keyword_category_swaps_the_page(window) -> None:
@@ -297,9 +301,9 @@ def test_integrated_search_keeps_keyword_article_rows(window) -> None:
     rows, total = window.resource_tab._parse_keyword_rows(roots, [])
 
     assert total == 3
-    assert [row["label"] for row in rows] == [
-        "연관검색", "연관검색", "직접검색"
-    ]
+    # 어느 API에서 왔든 통합 목록에서는 "AI추천" 한 구분으로 묶는다.
+    assert [row["label"] for row in rows] == ["AI추천", "AI추천", "AI추천"]
+    assert all(row["ai_recommended"] for row in rows)
     assert [row["id"] for row in rows] == ["001234", "001234", "009999"]
     assert [row["display_name"] for row in rows[:2]] == [
         "제77조 용도지역의 건폐율",

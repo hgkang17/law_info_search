@@ -15,12 +15,19 @@ KEYWORD_RELATED_TARGET = "ai_related"
 KEYWORD_DIRECT_TARGET = "ai_search"
 KEYWORD_CATEGORY_LABELS = {
     KEYWORD_RELATED_TARGET: "연관검색",
-    KEYWORD_DIRECT_TARGET: "직접검색",
+    # 화면에 보이는 이름. "직접검색"은 무엇을 곧바로 찾는다는 것인지
+    # 알기 어려워, 실제로 찾는 대상인 조문을 그대로 쓴다.
+    KEYWORD_DIRECT_TARGET: "조문검색",
 }
 
-# 두 API는 지능형 법령검색 시스템의 검색(직접)과 연관법령(연관) 조회다.
-# 카테고리 바에는 캡슐 하나로 묶어 두고, 화면 안 스위치로 갈아탄다.
-KEYWORD_CATEGORY_LABEL = "지능형 법령검색시스템(AI)"
+# 카테고리 바의 캡슐 이름. 이 캡슐은 조문검색(직접) 하나만 맡는다.
+# 연관검색은 따로 자리를 두지 않고 통합검색 결과 안에 "AI추천" 구분으로
+# 섞어 보여 준다. 두 화면을 오가며 같은 키워드를 두 번 넣는 일이 잦았다.
+KEYWORD_CATEGORY_LABEL = KEYWORD_CATEGORY_LABELS[KEYWORD_DIRECT_TARGET]
+
+# 통합검색 목록에서 지능형 검색(연관ㆍ조문) 결과에 붙이는 구분 이름.
+# 어느 API에서 왔는지가 아니라 "AI가 추천한 조문"이라는 성격을 밝힌다.
+KEYWORD_INTEGRATED_LABEL = "AI추천"
 
 
 # 별표ㆍ서식은 법령ㆍ행정규칙ㆍ자치법규 세 API로 나뉘어 있다. 카테고리

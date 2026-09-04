@@ -51,6 +51,20 @@ from .parsing import (
 # 값에 경고 색을 입힌다.
 REPEAL_NOTICE_LABEL = "현행여부"
 
+# 기본정보 줄. 제목 아래 오른쪽 끝에 한 줄로만 둔다. 어두운 네모 칸을
+# 크게 두던 때가 있었으나, 시행일ㆍ공포번호는 제목 아래 줄과 붙박이
+# 머리글에 이미 있어 같은 값을 세 번 보여 주는 셈이었다.
+META_LABEL_COLOR = "#9aa3af"
+META_VALUE_COLOR = "#6b7280"
+META_WARNING_COLOR = "#c0392b"
+
+# 제목 아래 ``[시행 …] [법률 제…호, …]`` 줄에 이미 든 항목. 기본정보
+# 줄에서는 빼고 법령ID와 소관부처만 남긴다.
+HEADLINE_DUPLICATED_META_LABELS = ("공포일자", "공포번호", "시행일자")
+
+# 편ㆍ장ㆍ절 제목 색. 국가법령정보센터 본문과 같은 남보라를 쓴다.
+LAW_HEADING_COLOR = "#333399"
+
 
 # 한 문단이 여러 줄로 접힐 때의 줄 간격과, 단락 사이 여백.
 #
@@ -58,8 +72,8 @@ REPEAL_NOTICE_LABEL = "현행여부"
 # 줄 사이"를 벌리고, 단락 여백은 "제2조와 제3조 사이"를 벌린다. 줄 간격만
 # 올리면 한 줄짜리 항목의 높이까지 함께 커져 본문 문단이 많은 문서(법률)가
 # 유난히 성글어 보이므로, 단락 여백은 번호 항목과 같은 값으로 눌러 둔다.
-BODY_LINE_HEIGHT = "1.25"
-BODY_PARAGRAPH_GAP_PX = 7
+BODY_LINE_HEIGHT = "1.35"
+BODY_PARAGRAPH_GAP_PX = 4
 
 
 DETAIL_DOCUMENT_STYLE = (
@@ -71,21 +85,23 @@ DETAIL_DOCUMENT_STYLE = (
     # 제목은 본문과 같은 맑은 고딕 계열을 쓰되 크기와 색으로 위계를 둔다.
     # 획이 뭉쳐 큰 글자에서 읽기 나쁘다.
     "h1 { font-family:" + UI_FONT_CSS_FAMILY + "; font-size:21px; font-weight:700; "
-    "color:#173b63; margin:0 0 6px 0; }"
+    "color:#173b63; margin:0 0 6px 0; text-align:center; }"
     # 법제처 본문처럼 제목 아래에 시행일ㆍ공포번호ㆍ제개정구분을 한 줄로 둔다.
+    # 제목과 한 덩어리로 읽히도록 제목과 같이 가운데에 둔다.
     ".doc-subtitle { font-family:" + DETAIL_FONT_CSS_FAMILY + "; font-size:13px; "
-    "font-weight:400; color:#3d4c60; margin:0 0 14px 0; }"
-    # 약칭은 제목 글자 크기(21px)의 절반으로 둔다.
-    ".doc-short-name { font-size:9px; font-weight:400; color:#3d4c60; }"
-    ".meta { background:#f3f7fb; border:1px solid #cfdcea; "
-    "border-radius:8px; padding:14px 18px; margin-bottom:38px; }"
-    ".meta table { width:100%; border-collapse:collapse; table-layout:fixed; }"
-    ".meta td { width:33.33%; color:#172033; font-weight:400; "
-    "vertical-align:top; padding:7px 14px 7px 0; white-space:normal; }"
-    ".meta-label { color:#3d4c60; font-weight:700; margin-right:8px; "
+    "font-weight:400; color:#3d4c60; margin:0 0 6px 0; text-align:center; }"
+    # 제목 옆 약칭은 법령명과 같은 크기ㆍ굵기다. 짧은 이름만 작게 두었더니
+    # 굵기까지 달라 제목 한 줄이 중간에서 끊겨 보였다.
+    ".doc-short-name { font-weight:700; }"
+    # 기본정보는 오른쪽 끝 한 줄. Qt는 클래스 크기를 흘릴 때가 있어
+    # 그리는 자리에서 인라인으로도 같은 값을 준다.
+    ".doc-meta { font-family:" + DETAIL_FONT_CSS_FAMILY + "; font-size:11px; "
+    "font-weight:400; color:" + META_VALUE_COLOR + "; text-align:right; "
+    "margin:0 0 14px 0; }"
+    ".meta-label { color:" + META_LABEL_COLOR + "; font-weight:400; "
     "white-space:nowrap; }"
-    ".meta-value { color:#172033; font-weight:400; }"
-    ".meta-warning { color:#c0392b; font-weight:700; }"
+    ".meta-value { color:" + META_VALUE_COLOR + "; font-weight:400; }"
+    ".meta-warning { color:" + META_WARNING_COLOR + "; font-weight:700; }"
     "h2 { font-family:" + DETAIL_FONT_CSS_FAMILY + "; color:#1768aa; font-size:16px; "
     "font-weight:700; border-bottom:2px solid #dbeaf7; padding-bottom:6px; "
     "margin-top:22px; }"
@@ -99,12 +115,13 @@ DETAIL_DOCUMENT_STYLE = (
     # 한 문단이 여러 줄로 접힐 때의 줄 간격. 여기 준 값만 실제로 먹는다.
     ".content { font-family:" + DETAIL_FONT_CSS_FAMILY + "; font-weight:400; "
     "line-height:" + BODY_LINE_HEIGHT + "; }"
-    # 단락 사이 여백은 번호 항목(legal-indent, margin-bottom 7px)과 같게
-    # 둔다. 조문 본문만 12px을 쓰면 줄 간격을 넓혔을 때 법률처럼 본문
-    # 문단이 많은 문서만 유난히 성글어 보였다. 한 문단 안에서 줄이 접힐
-    # 때의 간격은 line-height가 맡고, 단락 사이는 이 값이 맡는다.
+    # 단락 사이 여백은 번호 항목(legal-indent)과 같게 둔다. 조문 본문만
+    # 넓은 값을 쓰면 본문 문단이 많은 법률 쪽만 유난히 성글어 보였다.
+    # 한 문단 안에서 줄이 접힐 때의 간격은 line-height가 맡고, 단락
+    # 사이는 이 값이 맡는다.
     ".paragraph { margin:0 0 " + str(BODY_PARAGRAPH_GAP_PX) + "px 0; }"
-    ".bullet { margin:0 0 7px 0; border-collapse:collapse; }"
+    ".bullet { margin:0 0 " + str(BODY_PARAGRAPH_GAP_PX) + "px 0; "
+    "border-collapse:collapse; }"
     ".bullet-marker { font-weight:400; padding:0; }"
     ".bullet-text { font-weight:400; padding:0; }"
     "a { color:#1768aa; font-weight:600; text-decoration:none; }"
@@ -441,10 +458,11 @@ def law_reference_html_text(
 ARTICLE_BODY_LEFT_MARGIN = 22
 
 
-# 개정 이력 표기를 본문보다 한 단계 작고 연한 파란색으로 둔다. 본문
-# ``.content``가 14px이므로 13px가 한 단계 아래다. 인라인 px로 두면
-# ``scale_document_font_sizes``가 본문 글자 크기와 같은 비율로 함께 키운다.
-AMENDMENT_NOTE_STYLE = "font-size:13px; color:#2d55c8;"
+# 개정 이력은 본문보다 한 단계 작게. 본문은 조절칸 기본 9.5pt인데
+# 13px로 고정하면 오히려 더 커 보이고, ASCII ``[]`` ``<>``는 한글보다
+# 글쇠 높이가 커서 괄호만 더 도드라진다. em으로 본문을 따르게 둔다.
+AMENDMENT_NOTE_STYLE = "font-size:0.85em; font-weight:400; color:#2d55c8;"
+AMENDMENT_BRACKET_STYLE = "font-size:0.82em; font-weight:400;"
 
 # 본문 HTML은 이스케이프를 거쳐 ``<개정 …>``이 ``&lt;개정 …&gt;``으로 남는다.
 # 꺾쇠 표기는 안쪽에 개정 관련 낱말이 있으면 잡고, 대괄호 표기는 일반 인용
@@ -466,7 +484,20 @@ def style_amendment_notes(html: str) -> str:
         return html
 
     def wrap(match: re.Match[str]) -> str:
-        return f'<span style="{AMENDMENT_NOTE_STYLE}">{match.group(0)}</span>'
+        text = match.group(0)
+        if text.startswith("&lt;") and text.endswith("&gt;"):
+            inner, open_mark, close_mark = text[4:-4], "&lt;", "&gt;"
+        elif text.startswith("[") and text.endswith("]"):
+            inner, open_mark, close_mark = text[1:-1], "[", "]"
+        else:
+            return f'<span style="{AMENDMENT_NOTE_STYLE}">{text}</span>'
+        return (
+            f'<span style="{AMENDMENT_NOTE_STYLE}">'
+            f'<span style="{AMENDMENT_BRACKET_STYLE}">{open_mark}</span>'
+            f"{inner}"
+            f'<span style="{AMENDMENT_BRACKET_STYLE}">{close_mark}</span>'
+            f"</span>"
+        )
 
     html = _HTML_AMENDMENT_ANGLE_PATTERN.sub(wrap, html)
     return _HTML_AMENDMENT_BRACKET_PATTERN.sub(wrap, html)
@@ -484,6 +515,7 @@ def body_to_html(
     administrative_rule: bool = False,
     administrative_rule_normalized: bool = False,
     embedded_images: dict[str, str] | None = None,
+    paragraph_gap_px: int | None = None,
 ) -> str:
     """일반 본문과 법령 계층·글머리표 문단을 Qt용 HTML로 변환.
 
@@ -491,6 +523,9 @@ def body_to_html(
     글머리표로 시작한 줄 뒤의 연속된 줄은 같은 항목으로 묶는다.
     ``administrative_rule_normalized``는 이 호출 직전에
     ``normalize_admin_rule_text``를 적용한 값에만 사용한다.
+    ``paragraph_gap_px``는 항목 사이 여백이다. 본문보다 글씨가 작은
+    자리(조문 팝업)에서는 같은 값을 그대로 쓰면 줄 사이가 유난히 벌어져
+    보이므로, 부르는 쪽이 글씨 크기에 맞춘 값을 준다.
     """
     # 행정규칙은 이름만으로 번호체계를 가릴 수 없다. 본문 앞부분의
     # 첫 조항 표지로 수립지침식(1-1-1.)과 법령식(제1조)을 나눈다.
@@ -504,6 +539,12 @@ def body_to_html(
     # 지침처럼 첫머리에서 (이하 "법"이라 한다)로 약칭을 정하는 문서를 위해
     # 문단으로 쪼개기 전에 문서 전체에서 약칭 선언을 모아 둔다.
     document_aliases = collect_law_aliases(value)
+    # 항목 사이 여백. 부르는 쪽이 값을 주지 않으면 본문과 같게 둔다.
+    item_gap = (
+        BODY_PARAGRAPH_GAP_PX
+        if paragraph_gap_px is None
+        else max(0, int(paragraph_gap_px))
+    )
     parts: list[str] = []
     paragraph_lines: list[str] = []
     bullet_marker = ""
@@ -618,7 +659,7 @@ def body_to_html(
         block_left_margin = left_margin + marker_indent
         parts.append(
             f'<div class="legal-indent level-{bullet_level}" '
-            f'style="margin:0 0 7px {block_left_margin}px; '
+            f'style="margin:0 0 {item_gap}px {block_left_margin}px; '
             f'text-indent:-{marker_indent}px;">'
             '<span class="bullet-marker" style="font-weight:400; padding:0; '
             'white-space:nowrap;">'
@@ -739,7 +780,11 @@ def body_to_html(
             flush_bullet()
             flush_paragraph()
             marker, heading = heading_match.groups()
-            size = 17 if marker.endswith(("편", "장")) else 15
+            # 조 제목(제1조(목적))은 본문 크기 그대로다. 장 제목은 그보다
+            # 한 포인트만 크게 둔다. px로 못 박으면 사용자가 본문 크기를
+            # 올렸을 때 차이가 그대로 남아 장 제목만 작아 보이므로,
+            # 본문 크기를 따르는 배율로 준다(9.5pt 기준 약 1포인트).
+            size = "1.1em" if marker.endswith(("편", "장")) else "1.05em"
             heading_text = f"{marker} {heading}".strip()
             anchor_open = ""
             anchor_close = ""
@@ -754,7 +799,8 @@ def body_to_html(
                 anchor_close = "</a>"
             parts.append(
                 '<div class="law-heading" '
-                f'style="font-weight:700; font-size:{size}px; color:#173b63; '
+                f'style="font-weight:700; font-size:{size}; '
+                f'color:{LAW_HEADING_COLOR}; '
                 'margin:20px 0 10px 0;">'
                 f"{anchor_open}{highlight_html_text(heading_text, terms)}"
                 f"{anchor_close}</div>"
@@ -880,7 +926,7 @@ def detail_document_header(
     short_name: str = "",
     subtitle: str = "",
 ) -> tuple[list[str], list[str]]:
-    """공통 본문 제목과 기본정보를 최대 3개 항목씩 가로 배치.
+    """공통 본문 제목을 가운데, 기본정보를 오른쪽 끝 한 줄에 둔다.
 
     ``short_name``ㆍ``subtitle``은 법제처 본문 머리글과 같은 표기를 위한 것이다.
     제목 옆에 ``( 약칭: 국토계획법 )``을, 그 아래에
@@ -888,23 +934,25 @@ def detail_document_header(
     """
     heading = highlight_html_text(str(title), terms)
     if short_name:
-        # Qt 리치텍스트에서는 h1 안의 클래스 규칙이 제목 크기에 묻혀 약칭이
-        # 제목만 하게 나온다. 크기를 인라인으로 못박아 제목의 절반으로 둔다.
+        # 약칭도 법령명과 같은 크기ㆍ굵기다. Qt는 h1 안 클래스 스타일을
+        # 흘릴 때가 있어 굵기만 인라인으로 한 번 더 못 박는다.
         heading += (
-            ' <span class="doc-short-name" style="font-size:9px;'
-            ' font-weight:400; color:#3d4c60;">'
-            f"( 약칭: {highlight_html_text(str(short_name), terms)} )</span>"
+            " ( 약칭: "
+            '<span class="doc-short-name" style="font-weight:700;">'
+            f"{highlight_html_text(str(short_name), terms)}</span> )"
         )
     html_parts = [
         DETAIL_DOCUMENT_STYLE,
-        f"<h1>{heading}</h1>",
+        # Qt는 h1의 CSS text-align을 무시할 때가 있어 align 속성을 같이 준다.
+        f'<h1 align="center">{heading}</h1>',
     ]
     plain_parts = [str(title)]
     if short_name:
         plain_parts.append(f"( 약칭: {short_name} )")
     if subtitle:
         html_parts.append(
-            '<div class="doc-subtitle">'
+            '<div class="doc-subtitle" align="center" '
+            'style="text-align:center;">'
             f"{highlight_html_text(str(subtitle), terms)}</div>"
         )
         plain_parts.append(str(subtitle))
@@ -912,28 +960,32 @@ def detail_document_header(
         (str(label), str(value or ""))
         for label, value in metadata
         if str(value or "")
+        # 시행일ㆍ공포번호는 바로 위 ``[시행 …]`` 줄과 붙박이 머리글에
+        # 이미 있다. 같은 값을 세 번 보여 주지 않는다.
+        and not (subtitle and str(label) in HEADLINE_DUPLICATED_META_LABELS)
     ]
     if visible_metadata:
+        # 오른쪽 끝에 작게 한 줄. 클래스만 두면 Qt가 크기ㆍ정렬을 흘리므로
+        # 인라인으로도 같은 값을 준다.
+        cells = []
+        for label, value in visible_metadata:
+            # 폐지ㆍ연혁 안내는 그냥 지나치기 쉬워 붉게 강조한다.
+            is_warning = label == REPEAL_NOTICE_LABEL
+            value_class = "meta-warning" if is_warning else "meta-value"
+            value_color = META_WARNING_COLOR if is_warning else META_VALUE_COLOR
+            cells.append(
+                f'<span class="meta-label" style="color:{META_LABEL_COLOR};">'
+                f"{escape(label)}</span>&nbsp;"
+                f'<span class="{value_class}" style="color:{value_color}; '
+                f'font-weight:{"700" if is_warning else "400"};">'
+                f"{highlight_html_text(value, terms)}</span>"
+            )
+            plain_parts.append(f"{label} {value}")
         html_parts.append(
-            '<div class="meta"><table cellspacing="0" cellpadding="0">'
+            '<div class="doc-meta" align="right" '
+            f'style="font-size:11px; color:{META_VALUE_COLOR}; '
+            'text-align:right; margin:0 0 14px 0;">'
+            + "&nbsp;&nbsp;&nbsp;".join(cells)
+            + "</div>"
         )
-        for offset in range(0, len(visible_metadata), 3):
-            row = visible_metadata[offset : offset + 3]
-            html_parts.append("<tr>")
-            for label, value in row:
-                # 폐지ㆍ연혁 안내는 그냥 지나치기 쉬워 붉게 강조한다.
-                value_class = (
-                    "meta-warning" if label == REPEAL_NOTICE_LABEL else "meta-value"
-                )
-                html_parts.append(
-                    '<td><span class="meta-label">'
-                    f"{escape(label)}</span>&nbsp;"
-                    f'<span class="{value_class}">'
-                    f"{highlight_html_text(value, terms)}</span></td>"
-                )
-                plain_parts.append(f"{label} {value}")
-            for _unused in range(3 - len(row)):
-                html_parts.append("<td></td>")
-            html_parts.append("</tr>")
-        html_parts.append("</table></div>")
     return html_parts, plain_parts

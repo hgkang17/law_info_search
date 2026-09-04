@@ -10,7 +10,11 @@ from PySide6.QtCore import QSettings
 
 from storage.cache import LawDocumentCache
 from storage.recent import RecentSearchManager
-from utils.formatting import ARTICLE_BODY_LEFT_MARGIN, body_to_html
+from utils.formatting import (
+    ARTICLE_BODY_LEFT_MARGIN,
+    BODY_PARAGRAPH_GAP_PX,
+    body_to_html,
+)
 from utils.constants import FONT_FAMILY
 from utils.parsing import (
     insert_admin_clause_breaks,
@@ -333,7 +337,7 @@ def test_guideline_parenthesized_items_have_distinct_indent() -> None:
     assert "3-2-8-1.&nbsp;" in html
     assert "(1)&nbsp;" in html
     parent_item = re.search(
-        r'class="legal-indent level-1" style="margin:0 0 7px (\d+)px;[^>]*>'
+        rf'class="legal-indent level-1" style="margin:0 0 {BODY_PARAGRAPH_GAP_PX}px (\d+)px;[^>]*>'
         r'.*?\(1\)&nbsp;',
         html,
     )
@@ -345,7 +349,7 @@ def test_period_numbered_items_have_twenty_four_pixel_left_indent() -> None:
     _app = QApplication.instance() or QApplication([])
     html = body_to_html("① 상위 항\n1. 첫 번째 호\n2. 두 번째 호")
     items = re.findall(
-        r'style="margin:0 0 7px (\d+)px;[^>]*>\s*'
+        rf'style="margin:0 0 {BODY_PARAGRAPH_GAP_PX}px (\d+)px;[^>]*>\s*'
         r'<span class="bullet-marker"[^>]*>([^<]+)&nbsp;',
         html,
     )
@@ -367,7 +371,7 @@ def test_law_hang_ho_mok_indent_is_twelve_pixels_more() -> None:
     items = {
         marker: margin
         for margin, marker in re.findall(
-            r'style="margin:0 0 7px (\d+)px;[^>]*>\s*'
+            rf'style="margin:0 0 {BODY_PARAGRAPH_GAP_PX}px (\d+)px;[^>]*>\s*'
             r'<span class="bullet-marker"[^>]*>([^<]+)&nbsp;',
             html,
         )
@@ -391,7 +395,7 @@ def test_guideline_period_numbered_items_have_40px_left_indent_only() -> None:
         administrative_rule=True,
     )
     items = re.findall(
-        r'style="margin:0 0 7px (\d+)px;[^>]*>\s*'
+        rf'style="margin:0 0 {BODY_PARAGRAPH_GAP_PX}px (\d+)px;[^>]*>\s*'
         r'<span class="bullet-marker"[^>]*>([^<]+)&nbsp;',
         html,
     )
@@ -427,7 +431,7 @@ def test_guideline_korean_period_items_split_as_whole_tokens_and_indent_50px() -
     marker_font.setPixelSize(14)
     for marker in ("가.", "나.", "다."):
         expected_margin = 50 + 4 + QFontMetrics(marker_font).horizontalAdvance(marker)
-        assert f'margin:0 0 7px {expected_margin}px;' in html
+        assert f'margin:0 0 {BODY_PARAGRAPH_GAP_PX}px {expected_margin}px;' in html
 
 
 def test_guideline_korean_sentence_endings_are_not_item_markers() -> None:
@@ -477,7 +481,7 @@ def test_guideline_year_placeholders_stay_inline_and_circle_items_indent() -> No
     marker_font = QFont(FONT_FAMILY)
     marker_font.setPixelSize(14)
     circle_margin = 12 + 4 + QFontMetrics(marker_font).horizontalAdvance("○")
-    assert f'margin:0 0 7px {circle_margin}px;' in html
+    assert f'margin:0 0 {BODY_PARAGRAPH_GAP_PX}px {circle_margin}px;' in html
 
 
 def test_old_saved_guideline_rebuilds_parent_ranges_from_plain_text() -> None:

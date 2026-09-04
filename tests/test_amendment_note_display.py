@@ -7,7 +7,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 
-from utils.formatting import AMENDMENT_NOTE_STYLE, body_to_html, style_amendment_notes
+from utils.formatting import (
+    AMENDMENT_BRACKET_STYLE,
+    AMENDMENT_NOTE_STYLE,
+    body_to_html,
+    style_amendment_notes,
+)
 from utils.parsing import json_text, law_article_text
 
 # body_to_html은 표지 폭을 QFontMetrics로 재므로 앱 인스턴스가 있어야 한다.
@@ -58,15 +63,14 @@ def test_law_article_text_shows_amendment_dates_like_the_official_site():
 def test_amendment_notes_get_smaller_light_blue_style():
     """개정 표기만 한 단계 작고 연한 파란색으로 감싼다."""
     html = body_to_html(law_article_text(ARTICLE_UNITS))
-    styled = re.findall(
-        rf'<span style="{re.escape(AMENDMENT_NOTE_STYLE)}">(.*?)</span>', html
-    )
-    assert styled == [
-        "&lt;개정 2009. 7. 16., 2010. 2. 18., 2020. 4. 28.&gt;",
-        "&lt;신설 2016. 1. 19.&gt;",
-        "[전문개정 2008. 10. 29.]",
-    ]
-    assert "font-size:13px" in AMENDMENT_NOTE_STYLE
+    assert "전문개정 2008. 10. 29." in html
+    # 괄호는 별도 span이라 `&lt;개정`이 한 덩어리로 남지 않는다.
+    assert "개정 2009. 7. 16., 2010. 2. 18., 2020. 4. 28." in html
+    assert "&lt;" in html and "&gt;" in html
+    assert html.count(AMENDMENT_NOTE_STYLE) >= 3
+    assert html.count(AMENDMENT_BRACKET_STYLE) >= 6
+    assert "font-size:0.85em" in AMENDMENT_NOTE_STYLE
+    assert "font-size:13px" not in AMENDMENT_NOTE_STYLE
 
 
 def test_plain_bracket_citation_is_not_styled():

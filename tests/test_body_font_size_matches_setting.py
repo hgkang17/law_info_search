@@ -94,3 +94,66 @@ def test_body_text_uses_the_size_from_the_control(
         )
     finally:
         tab.close()
+
+
+def test_changing_font_size_rebinds_article_overlay_positions(
+    qt_app, tmp_path
+) -> None:
+    """글자 크기를 바꿔도 별·3단 단추가 조문 제목 자리를 다시 찾는다."""
+    settings = QSettings(str(tmp_path / "resize.ini"), QSettings.Format.IniFormat)
+    tab = ResourceSearchTab(
+        lambda: "",
+        RecentSearchManager(settings),
+        LawDocumentCache(tmp_path / "saved"),
+    )
+    payload = {
+        "법령": {
+            "기본정보": {"법령명_한글": "시험법", "법령ID": "1"},
+            "조문": {
+                "조문단위": [
+                    {
+                        "조문번호": "0001",
+                        "조문가지번호": "00",
+                        "조문제목": "목적",
+                        "조문내용": "제1조(목적) 이 법의 목적을 정한다.",
+                    },
+                    {
+                        "조문번호": "0002",
+                        "조문가지번호": "00",
+                        "조문제목": "정의",
+                        "조문내용": "제2조(정의) 용어의 뜻은 다음과 같다.",
+                    },
+                ]
+            },
+        }
+    }
+    try:
+        tab.resize(900, 700)
+        tab.show()
+        tab.pending_row = {
+            "target": "law",
+            "id": "1",
+            "label": "법령",
+            "name": "시험법",
+        }
+        tab._show_detail(payload, save_cache=False)
+        qt_app.processEvents()
+        before = tab.detail_view.document().size().height()
+        tab._set_detail_font_size(12.0, persist=False)
+        qt_app.processEvents()
+        after = tab.detail_view.document().size().height()
+        assert after < before * 1.8, (
+            f"글자 크기를 조금 올렸는데 문서 높이가 너무 커졌다 "
+            f"({before} → {after})"
+        )
+        assert tab._three_stage_anchor_positions
+        for anchor, position in tab._three_stage_anchor_positions.items():
+            cursor = QTextCursor(tab.detail_view.document())
+            cursor.setPosition(position)
+            cursor.movePosition(
+                QTextCursor.MoveOperation.EndOfBlock,
+                QTextCursor.MoveMode.KeepAnchor,
+            )
+            assert cursor.selectedText().startswith("제"), anchor
+    finally:
+        tab.close()

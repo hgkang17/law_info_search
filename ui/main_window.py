@@ -52,6 +52,7 @@ from ui.assets import (
 )
 from ui.tabs.ai_chat_panel import AiChatPanel, shutdown_ai_background_services
 from ui.tabs.ai_search import AiLawSearchTab
+from ui.tabs.home import HomeSearchPage
 from ui.tabs.law_search import LawSearchTab
 from ui.tabs.resource_search import ResourceSearchTab
 from ui.tabs.viewed_laws import ViewedLawsTab
@@ -62,6 +63,7 @@ from ui.theme import (
     ui_font,
 )
 from ui.widgets import (
+    ClickableLabel,
     CornerCloseTabBar,
     GroupedNavigationList,
     SharedStatusBar,
@@ -88,6 +90,11 @@ from workers.search_worker import (
     ApiWorker,
 )
 from workers.update_worker import UpdateCheckWorker, UpdateDownloadWorker
+
+
+# 왼쪽 메뉴 목록(QListView)이 항목마다 두는 좌우 간격. 위아래 단추를
+# 같은 값으로 들여써야 상자 왼쪽 선이 목록과 나란해진다.
+NAVIGATION_BUTTON_SIDE_MARGIN = 4
 
 
 class LawSearchWindow(QMainWindow):
@@ -244,7 +251,33 @@ class LawSearchWindow(QMainWindow):
         elif isinstance(target, int):
             self.navigation.setCurrentRow(target)
 
+    def _sync_navigation_bold(self) -> None:
+        """고른 메뉴 글자를 굵게. QSS만으로는 목록 항목에 먹지 않는다.
+
+        ``QListWidget::item:selected { font-weight }``는 Qt가 항목 글꼴을
+        다시 만들지 않아 무시된다. 옆 단추(즐겨찾기ㆍ저장내역)는 굵어지는데
+        가운데 목록만 굵어지지 않아 어긋나 보였다.
+        """
+        navigation = getattr(self, "navigation", None)
+        if navigation is None:
+            return
+        current = navigation.currentRow()
+        for index in range(navigation.count()):
+            item = navigation.item(index)
+            if item is None:
+                continue
+            font = item.font()
+            bold = index == current and not (
+                self.favorite_navigation_button.isChecked()
+                or self.viewed_laws_button.isChecked()
+                or self.ai_review_button.isChecked()
+            )
+            if font.bold() != bold:
+                font.setBold(bold)
+                item.setFont(font)
+
     def _sync_compact_navigation(self, *_args: object) -> None:
+        self._sync_navigation_bold()
         if not hasattr(self, "compact_navigation"):
             return
         if self.favorite_navigation_button.isChecked():
@@ -316,9 +349,13 @@ class LawSearchWindow(QMainWindow):
         header_layout.setContentsMargins(14, 7, 14, 7)
         header_layout.setSpacing(8)
 
-        logo_label = QLabel()
+        logo_label = ClickableLabel()
         logo_label.setObjectName("logoLabel")
         logo_label.setFixedSize(28, 28)
+        logo_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        logo_label.setToolTip("시작 화면으로 돌아갑니다.")
+        logo_label.clicked.connect(self._activate_home_page)
+        self.logo_label = logo_label
         logo_pixmap = QPixmap(str(LOGO_PATH))
         if not logo_pixmap.isNull():
             logo_label.setPixmap(
@@ -399,7 +436,7 @@ class LawSearchWindow(QMainWindow):
             ("법령 해석례", 3),
             ("판례 검색", 4),
             ("AI 에이전트", "ai"),
-            ("저장 내역", "viewed"),
+            ("저장내역", "viewed"),
         ):
             self.compact_navigation.addItem(label, target)
         self.compact_navigation.setMinimumWidth(142)
@@ -552,10 +589,6 @@ class LawSearchWindow(QMainWindow):
         # 키워드검색 탭은 링크만 넘겨 같은 화면을 재사용한다.
         self.ai_search_tab.reference_tab = self.resource_tab
         self.ai_related_tab.reference_tab = self.resource_tab
-        # 검색줄의 모드 스위치는 카테고리 바의 캡슐 하나를 다른 API로
-        # 갈아 끼우는 것이므로, 전환은 법령검색 탭에 맡긴다.
-        for tab in (self.ai_search_tab, self.ai_related_tab):
-            tab.mode_requested.connect(self.resource_tab.select_category)
         self.ai_tabs.addWidget(self.ai_related_tab)
         self.ai_tabs.addWidget(self.ai_search_tab)
         ai_layout.addWidget(self.ai_tabs)
@@ -612,6 +645,13 @@ class LawSearchWindow(QMainWindow):
         ):
             self.tabs.addWidget(page)
 
+        # 시작 화면은 메뉴 줄과 짝이 없는 페이지라 맨 뒤에 붙인다.
+        # 가운데 메뉴 목록의 줄 번호가 그대로 페이지 번호이므로, 중간에
+        # 끼우면 기존 화면 이동이 통째로 한 칸씩 밀린다.
+        self.home_page = HomeSearchPage(self.recent_search_manager)
+        self.home_page.searchRequested.connect(self._search_from_home)
+        self._home_page_index = self.tabs.addWidget(self.home_page)
+
         navigation_card = QFrame()
         navigation_card.setObjectName("navigationCard")
         navigation_card.setFixedWidth(168)
@@ -656,7 +696,7 @@ class LawSearchWindow(QMainWindow):
                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
             )
         self.navigation.set_group_ranges([])
-        self.viewed_laws_button = QPushButton("열람 내역")
+        self.viewed_laws_button = QPushButton("저장내역")
         self.viewed_laws_button.setObjectName("viewedLawsNavigationButton")
         self.viewed_laws_button.setCheckable(True)
         self.viewed_laws_button.setFixedHeight(40)
@@ -680,12 +720,30 @@ class LawSearchWindow(QMainWindow):
             "AI 에이전트에게 법령 검토를 요청합니다. 필요한 법령은 AI가 직접 검색합니다."
         )
         self.ai_review_button.clicked.connect(self._activate_ai_review_page)
-        navigation_layout.addWidget(self.favorite_navigation_button)
+        # 가운데 목록은 QListView 간격(4px) 때문에 항목 상자가 좌우로
+        # 4px씩 들어간다. 위아래 단추도 같은 만큼 들여써야 상자 왼쪽
+        # 선이 한 줄로 맞는다(QSS margin은 단추 자리를 바꾸지 못한다).
+        def add_navigation_button(button) -> None:
+            row = QHBoxLayout()
+            row.setContentsMargins(NAVIGATION_BUTTON_SIDE_MARGIN, 0, NAVIGATION_BUTTON_SIDE_MARGIN, 0)
+            row.setSpacing(0)
+            row.addWidget(button)
+            navigation_layout.addLayout(row)
+
+        add_navigation_button(self.favorite_navigation_button)
         navigation_layout.addSpacing(2)
         navigation_layout.addWidget(self.navigation, 1)
-        navigation_layout.addWidget(self.ai_review_button)
-        navigation_layout.addWidget(self.viewed_laws_button)
+        add_navigation_button(self.ai_review_button)
+        add_navigation_button(self.viewed_laws_button)
+        # 법령검색 화면을 한 번 세워 둔 뒤 시작 화면을 앞에 놓는다.
+        # 처음 보이는 것은 검색칸 하나뿐인 시작 화면이고, 거기서 넣은
+        # 말이 그대로 통합검색으로 넘어간다.
         self.navigation.setCurrentRow(1)
+        self.navigation.blockSignals(True)
+        self.navigation.setCurrentRow(-1)
+        self.navigation.clearSelection()
+        self.navigation.blockSignals(False)
+        self.tabs.setCurrentIndex(self._home_page_index)
 
         body_layout = QHBoxLayout()
         body_layout.setContentsMargins(0, 0, 0, 0)
@@ -799,7 +857,15 @@ class LawSearchWindow(QMainWindow):
             if spaces
             else max(1, round(midpoint))
         )
-        return f"{title[:split_at].rstrip()}\n{title[split_at:].lstrip()}"
+        limit = LawSearchWindow.OPEN_DOCUMENT_TAB_LINE_LIMIT
+
+        def clip(line: str) -> str:
+            return line if len(line) <= limit else f"{line[: limit - 1]}…"
+
+        return (
+            f"{clip(title[:split_at].rstrip())}"
+            f"\n{clip(title[split_at:].lstrip())}"
+        )
 
     def _collect_open_documents(self) -> list[dict[str, object]]:
         documents: list[dict[str, object]] = []
@@ -830,7 +896,7 @@ class LawSearchWindow(QMainWindow):
 
         for source, tab, fallback in (
             ("ai_related", self.ai_related_tab, "연관법령"),
-            ("ai_search", self.ai_search_tab, "직접검색"),
+            ("ai_search", self.ai_search_tab, "조문검색"),
             ("central", self.central_tab, "중앙부처 질의회신"),
             ("expc", self.expc_tab, "법령해석례"),
             ("prec", self.prec_tab, "판례"),
@@ -1025,10 +1091,17 @@ class LawSearchWindow(QMainWindow):
     # 표시줄에서 직접 닫을 수 있는 항목. 법령 본문은 화면 안 탭을 지우고,
     # 질의회신ㆍ해석례ㆍ판례는 화면에 붙은 본문 칸을 비운다. 연관검색ㆍ
     # 직접검색은 검색어를 바꾸면 결과가 통째로 바뀌는 화면이라 뺀다.
+    # 열린 본문 탭 한 줄에 넣는 글자 수. 조문 이름까지 붙으면 한 줄이
+    # 스무 자를 넘어가 탭이 머리글을 밀어냈다.
+    OPEN_DOCUMENT_TAB_LINE_LIMIT = 14
+
     _CLOSABLE_DOCUMENT_TABS = {
         "central": "central_tab",
         "expc": "expc_tab",
         "prec": "prec_tab",
+        # 조문검색으로 연 본문도 표시줄에서 바로 닫는다.
+        "ai_search": "ai_search_tab",
+        "ai_related": "ai_related_tab",
     }
 
     def _open_document_closable(self, index: int) -> bool:
@@ -1082,7 +1155,24 @@ class LawSearchWindow(QMainWindow):
                 self.resource_tab._reading_mode_exit_callback = restorer
                 self.resource_tab._set_reading_mode(True)
         elif source in {"ai_related", "ai_search"}:
+            # 법령 본문과 똑같이 크게 보기로 들어간다. 예전에는 목록
+            # 화면만 띄워, 열어 둔 조문을 다시 찾아 눌러야 했다.
+            tab = (
+                self.ai_related_tab
+                if source == "ai_related"
+                else self.ai_search_tab
+            )
+            existing_restorer = getattr(
+                tab, "_reading_mode_exit_callback", None
+            )
+            restorer = (
+                existing_restorer
+                if tab._reading_mode and existing_restorer is not None
+                else self._current_page_restorer()
+            )
             self._show_keyword_category(source)
+            tab._reading_mode_exit_callback = restorer
+            tab._set_reading_mode(True)
         else:
             row = {"central": 2, "expc": 3, "prec": 4}.get(source)
             if row is not None:
@@ -1323,13 +1413,14 @@ class LawSearchWindow(QMainWindow):
             worker.deleteLater()
 
     def _select_keyword_page(self, target: str) -> None:
-        """카테고리 바가 고른 연관검색ㆍ직접검색 화면을 띄운다."""
+        """카테고리 바가 고른 조문검색 화면을 띄운다.
+
+        연관검색 화면은 고를 자리가 없어졌지만, 예전에 그 화면에서 저장해
+        둔 본문을 되살릴 때만 잠깐 앞으로 나온다.
+        """
         self.ai_tabs.setCurrentWidget(
             self.ai_related_tab if target == "ai_related" else self.ai_search_tab
         )
-        # 두 화면이 각자 스위치를 갖고 있으므로 고른 모드를 함께 맞춘다.
-        for tab in (self.ai_related_tab, self.ai_search_tab):
-            tab.mode_switch.set_current_value(target)
 
     def _show_keyword_category(self, target: str) -> None:
         """법령검색 탭으로 옮기고 연관검색ㆍ직접검색 카테고리를 고른다."""
@@ -1416,6 +1507,24 @@ class LawSearchWindow(QMainWindow):
         self.ai_review_button.setChecked(False)
         self.tabs.setCurrentIndex(0)
         self._sync_compact_navigation()
+
+    def _activate_home_page(self, *_args: object) -> None:
+        """머리글 로고를 누르면 시작 화면으로 돌아온다."""
+        self._reset_reading_modes_for_page_change()
+        self.navigation.blockSignals(True)
+        self.navigation.setCurrentRow(-1)
+        self.navigation.clearSelection()
+        self.navigation.blockSignals(False)
+        self.favorite_navigation_button.setChecked(False)
+        self.viewed_laws_button.setChecked(False)
+        self.ai_review_button.setChecked(False)
+        self.tabs.setCurrentIndex(self._home_page_index)
+        self.home_page.focus_query()
+
+    def _search_from_home(self, query: str) -> None:
+        """시작 화면에서 넣은 검색어를 법령검색의 통합검색으로 넘긴다."""
+        self.navigation.setCurrentRow(1)
+        self.resource_tab.run_integrated_search(query)
 
     def _activate_viewed_laws_page(self, *_args: object) -> None:
         self._reset_reading_modes_for_page_change()
@@ -2493,6 +2602,56 @@ class LawSearchWindow(QMainWindow):
             QWidget#favoriteCards {
                 background: transparent;
             }
+            QTabBar#favoriteProjectTabs {
+                background: transparent;
+            }
+            QTabBar#favoriteProjectTabs::tab {
+                min-width: 96px;
+                max-width: 180px;
+                min-height: 32px;
+                max-height: 32px;
+                margin: 0 2px 0 0;
+                padding: 0 12px;
+                background: transparent;
+                color: #666970;
+                border: 1px solid transparent;
+                border-bottom: 2px solid transparent;
+                border-radius: 0;
+                border-top-left-radius: 7px;
+                border-top-right-radius: 7px;
+                font-size: 9pt;
+                font-weight: 500;
+            }
+            QTabBar#favoriteProjectTabs::tab:hover:!selected {
+                background: #eeeeed;
+                border-color: #e5e5e4;
+                color: #242529;
+            }
+            QTabBar#favoriteProjectTabs::tab:selected {
+                background: #ffffff;
+                color: #1f57c8;
+                border: 1px solid #dedfdf;
+                border-bottom: 2px solid #2563eb;
+                font-weight: 600;
+            }
+            QToolButton#favoriteProjectAddButton {
+                min-width: 30px;
+                max-width: 30px;
+                min-height: 30px;
+                max-height: 30px;
+                margin: 0;
+                padding: 0;
+                background: transparent;
+                border: 1px solid transparent;
+                border-radius: 6px;
+            }
+            QToolButton#favoriteProjectAddButton:hover {
+                background: #eeeeed;
+                border-color: #dedfdf;
+            }
+            QToolButton#favoriteProjectAddButton:pressed {
+                background: #e3e3e2;
+            }
             QCheckBox#favoriteCategoryCheck {
                 background: transparent;
                 color: #40566b;
@@ -2526,6 +2685,14 @@ class LawSearchWindow(QMainWindow):
                 border: none;
                 font-size: 10pt;
                 font-weight: 700;
+            }
+            QLabel#favoriteUnionLabel {
+                background: transparent;
+                color: #445268;
+                border: none;
+                padding: 2px 0 0 0;
+                font-size: 9pt;
+                font-weight: 600;
             }
             QPushButton#favoriteAddFolderButton {
                 background: white;
@@ -2890,11 +3057,12 @@ class LawSearchWindow(QMainWindow):
             }
             QPushButton#referenceChipClose {
                 /* 전역 QPushButton의 min-height:38px를 덮어써야
-                   칩 안에서 정상 크기로 놓인다. */
-                min-width: 24px;
-                max-width: 24px;
-                min-height: 24px;
-                max-height: 24px;
+                   칩 안에서 정상 크기로 놓인다. 위젯 크기(14px)와 같은
+                   값을 줘야 ✕가 단추 한가운데에 놓인다. */
+                min-width: 14px;
+                max-width: 14px;
+                min-height: 14px;
+                max-height: 14px;
                 background: transparent;
                 border: none;
                 border-radius: 12px;
@@ -2935,13 +3103,11 @@ class LawSearchWindow(QMainWindow):
                 font-weight: 400;
             }
             /* 본문을 굴려도 남는 붙박이 제목 줄(법령명ㆍ약칭ㆍ시행일).
-               왼쪽 "조문 검색" 머리와 한 덩어리로 이어 보이도록 같은
-               바탕색을 깔고 모서리를 굴리지 않는다. 아래 선 하나만 두어
-               본문과 갈라 준다. */
+               테두리도 둥근 모서리도 두지 않는다. 아래 선을 두었더니
+               바로 밑 본문 제목과 두 겹으로 갈라져 보였다. */
             QLabel#pinnedDocumentHeadline {
                 background: __WB_CANVAS__;
                 border: none;
-                border-bottom: 1px solid __WB_BORDER__;
                 border-radius: 0;
                 color: #173b63;
                 /* 본문 머리글을 그대로 옮긴 줄이라 본문과 같은 글꼴을 쓴다. */
@@ -3466,17 +3632,6 @@ class LawSearchWindow(QMainWindow):
             QWidget#articleTocPanel {
                 background: transparent;
             }
-            /* 오른쪽 법령명 줄과 한 덩어리로 보이게 같은 바탕ㆍ같은 글꼴
-               규격을 쓴다. 굵기를 주면 옆 칸과 어긋나 보인다. */
-            QLabel#tocSearchLabel {
-                background: __WB_CANVAS__;
-                color: #445268;
-                font-family: "Malgun Gothic", "맑은 고딕";
-                font-size: 13px;
-                font-weight: 400;
-                border-bottom: 1px solid __WB_BORDER__;
-                padding: 6px 8px;
-            }
             QLineEdit#tocSearchInput {
                 min-height: 30px;
                 max-height: 30px;
@@ -3497,7 +3652,9 @@ class LawSearchWindow(QMainWindow):
                 color: #445268;
                 border: 1px solid #cfd8e3;
                 padding: 0 5px;
-                font-size: 9pt;
+                /* 글자가 화살표 하나뿐이라 9pt로는 눌러야 할 자리가
+                   잘 안 보였다. */
+                font-size: 13pt;
             }
             QPushButton#tocSearchButton:hover {
                 background: #e8f1fb;
@@ -4207,9 +4364,12 @@ class LawSearchWindow(QMainWindow):
                 font-weight: 600;
             }
             QLabel#pinnedDocumentHeadline {
-                background: #f7f7f6;
-                border-color: #dedfdf;
-                border-radius: 5px;
+                /* 왼쪽 조문 목차 칸과 같은 바탕이어야 한 줄로 이어져
+                   보인다. #f7f7f6은 그 칸(#f4f4f3)보다 한 톤 밝아
+                   경계가 눈에 띄었다. */
+                background: #f4f4f3;
+                border: none;
+                border-radius: 0;
             }
             QLabel#countBadge {
                 background: #eeeeed;
@@ -4322,11 +4482,86 @@ class LawSearchWindow(QMainWindow):
                 border: 1px solid #cbd8f5;
             }
 
+            /* 카드 안 안내 글은 카드와 같은 흰 바탕이어야 한다. 그냥 두면
+               라벨이 화면 바탕색(회색)을 그려 글줄마다 회색 띠가 생겼다. */
+            QLabel#sectionTitle,
+            QLabel#sectionDescription {
+                background: transparent;
+            }
+            /* 처음 보이는 시작 화면. 가운데 검색칸 하나만 두고, 둘레는
+               다른 화면과 같은 바탕으로 비워 둔다. */
+            QWidget#homePage {
+                background: #f4f4f3;
+            }
+            QLabel#homeLogo {
+                background: transparent;
+                border: none;
+            }
+            QLabel#homeTitle {
+                background: transparent;
+                color: #242529;
+                font-family: "Malgun Gothic";
+                font-size: 19pt;
+                font-weight: 600;
+            }
+            QLabel#homeCredit {
+                background: transparent;
+                color: #9a9da3;
+                font-family: "Malgun Gothic";
+                font-size: 8pt;
+                font-weight: 400;
+            }
+            QLabel#homeHint {
+                background: transparent;
+                color: #73767d;
+                font-family: "Malgun Gothic";
+                font-size: 9pt;
+                font-weight: 400;
+            }
+            QFrame#homeSearchBox {
+                background: #ffffff;
+                border: 1px solid #c9cacc;
+                border-radius: 14px;
+            }
+            QLineEdit#homeSearchInput {
+                background: transparent;
+                border: none;
+                min-height: 36px;
+                max-height: 36px;
+                padding: 0;
+                color: #242529;
+                font-family: "Malgun Gothic";
+                font-size: 11pt;
+            }
+            QPushButton#homeSearchButton {
+                background: #202124;
+                color: #ffffff;
+                border: none;
+                border-radius: 10px;
+                font-family: "Malgun Gothic";
+                font-size: 10pt;
+                font-weight: 600;
+                min-height: 36px;
+                max-height: 36px;
+            }
+            QPushButton#homeSearchButton:hover { background: #090a0b; }
+            QWidget#homeRecentSearchBar {
+                background: transparent;
+            }
+
             QFrame#aiChatPanel,
             QFrame#aiChatHistoryPanel {
                 background: #f7f7f6;
                 border: 1px solid #dedfdf;
                 border-radius: 8px;
+            }
+            /* 대화 목록은 이미 위 칸 안에 있다. 스스로 테두리와 다른
+               바탕을 또 두면 상자 안에 상자가 든 모양이 되고, 푸른
+               기가 도는 흰색이라 옆 칸과도 어긋나 보였다. */
+            QListWidget#aiChatHistoryList {
+                background: transparent;
+                border: none;
+                border-radius: 0;
             }
             QLabel#aiChatTitle,
             QLabel#aiChatQuestionBannerText {

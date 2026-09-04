@@ -17,6 +17,11 @@ SEARCH_API_REFRESH_TOOLTIP = (
 LOGO_PATH = APP_DIR / "molit_law_logo.svg"
 
 
+# 시작 화면 한가운데에서 도는 짧은 그림. 돋보기가 문서를 훑으며 글줄이
+# 물드는 모습으로, 이 프로그램이 무엇을 하는지 한눈에 보여 준다.
+HOME_ANIMATION_PATH = APP_DIR / "home_search.gif"
+
+
 # API 인증키 발급 안내. 물음표 단추가 기본 웹 브라우저로 연다.
 # onefile EXE에서는 APP_DIR이 실행 중 풀린 임시 폴더를 가리킨다.
 MANUAL_DIR = APP_DIR / "메뉴얼"
@@ -42,6 +47,14 @@ ANNEX_HWP_ICON_PATH = APP_DIR / "annex_hwp.svg"
 
 
 ANNEX_PDF_ICON_PATH = APP_DIR / "annex_pdf.svg"
+
+
+# 별표 목록 왼쪽에서 펼치고 접는 표시. 글자 +ㆍ−는 본문 글씨와 섞여
+# 눌러야 할 자리로 보이지 않았다.
+ANNEX_EXPAND_ICON_PATH = APP_DIR / "annex_expand.svg"
+
+
+ANNEX_COLLAPSE_ICON_PATH = APP_DIR / "annex_collapse.svg"
 
 
 # 닫기(×) 표시. 플랫폼 표준 아이콘은 네모 상자 안에 X가 든 모양이라

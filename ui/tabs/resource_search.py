@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from ui.assets import (
     ADMIN_RULE_PARSE_VERSION,
+    ANNEX_COLLAPSE_ICON_PATH,
+    ANNEX_EXPAND_ICON_PATH,
     ANNEX_HWP_ICON_PATH,
     ANNEX_PDF_ICON_PATH,
     SEARCH_API_REFRESH_TOOLTIP,
@@ -70,6 +72,7 @@ from models.law import (
     KEYWORD_CATEGORY_LABEL,
     KEYWORD_CATEGORY_LABELS,
     KEYWORD_DIRECT_TARGET,
+    KEYWORD_INTEGRATED_LABEL,
     KEYWORD_RELATED_TARGET,
     RESOURCE_ALL_TARGET,
     RESOURCE_CATEGORIES,
@@ -101,8 +104,10 @@ from utils.annex_notation import annex_hint_in_query, annex_related_law_name, ro
 from utils.annex_parse import parse_annex_bytes
 from utils.law_download import download_law_file
 from utils.constants import DETAIL_FONT_FAMILY
+from utils.images import trim_blank_bottom
 from utils.formatting import (
     BODY_LINE_HEIGHT,
+    BODY_PARAGRAPH_GAP_PX,
     body_to_html,
     detail_document_header,
     law_headline_text,
@@ -301,6 +306,9 @@ class ResourceSearchTab(QWidget):
         # 연관검색ㆍ직접검색 화면은 main_window가 만들어 넘겨 준다.
         self._keyword_page = None
         self._keyword_page_selector = None
+        # 저장 본문을 되살리며 연관검색 화면을 띄우는 중인지. 그때만
+        # 캡슐의 대상이 조문검색이 아닌 값으로 잠깐 바뀐다.
+        self._keyword_target_restoring = False
         self.current_detail_text = ""
         self.pending_row: dict[str, object] | None = None
         self._pending_reference_title = "인용 조문"
@@ -497,6 +505,10 @@ class ResourceSearchTab(QWidget):
             shared_index = self._keyword_tab_index
         if shared_index >= 0:
             already = self.category_tabs.currentIndex() == shared_index
+            self._keyword_target_restoring = (
+                shared_index == self._keyword_tab_index
+                and target != KEYWORD_DIRECT_TARGET
+            )
             self.category_tabs.setTabData(shared_index, target)
             self._sync_shared_category_controls()
             if already:
@@ -505,6 +517,7 @@ class ResourceSearchTab(QWidget):
                 self._category_changed()
             else:
                 self.category_tabs.setCurrentIndex(shared_index)
+            self._keyword_target_restoring = False
             return True
         for index in range(self.category_tabs.count()):
             if self.category_tabs.tabData(index) == target:
@@ -542,6 +555,16 @@ class ResourceSearchTab(QWidget):
                 self.category_tabs.setCurrentIndex(index)
                 break
         self.query_input.setText(name)
+        self.query_input.setFocus()
+        self.start_search()
+
+    def run_integrated_search(self, query: str) -> None:
+        """시작 화면에서 넘어온 검색어로 통합검색을 실행한다."""
+        query = str(query or "").strip()
+        if not query:
+            return
+        self.select_category(RESOURCE_ALL_TARGET)
+        self.query_input.setText(query)
         self.query_input.setFocus()
         self.start_search()
 
@@ -589,11 +612,13 @@ class ResourceSearchTab(QWidget):
         self.category_tabs.setObjectName("resourceSubTabs")
         integrated_index = self.category_tabs.addTab("통합검색")
         self.category_tabs.setTabData(integrated_index, RESOURCE_ALL_TARGET)
+        # 이 캡슐은 조문검색만 맡는다. 연관검색은 통합검색 결과에
+        # "AI추천" 구분으로 섞여 나오므로 고를 자리를 따로 두지 않는다.
         self._keyword_tab_index = self.category_tabs.addTab(
             KEYWORD_CATEGORY_LABEL
         )
         self.category_tabs.setTabData(
-            self._keyword_tab_index, KEYWORD_RELATED_TARGET
+            self._keyword_tab_index, KEYWORD_DIRECT_TARGET
         )
         default_category_index = integrated_index
         for target in ("law", "admrul", "ordin"):
@@ -694,8 +719,10 @@ class ResourceSearchTab(QWidget):
                 "ID",
                 "명칭",
                 "관련 법령·기관",
-                "공포·발령일자",
+                # 지금 효력이 있는 날짜를 먼저 본다. 공포ㆍ발령일자는
+                # 언제 만들어졌는지를 알려 주는 뒷받침 값이다.
                 "시행일자",
+                "공포·발령일자",
             ]
         )
         self.result_table.setSelectionBehavior(
@@ -715,6 +742,7 @@ class ResourceSearchTab(QWidget):
             self._toggle_favorite_at_row,
             self._is_favorite_at_row,
             self.result_table,
+            pending_callback=self._is_favorite_pending_at_row,
         )
         self.related_delegate = SearchHighlightDelegate(self.result_table)
         self.save_check_delegate = CenteredCheckDelegate(self.result_table)
@@ -947,15 +975,19 @@ class ResourceSearchTab(QWidget):
             "조문 이동으로 표시된 파란 음영을 지웁니다."
         )
         self.toc_shade_reset_button.clicked.connect(self._clear_toc_highlight)
-        self.toc_previous_button = QPushButton("이전")
+        # 글자 대신 화살표만 둔다. 좁은 왼쪽 칸에서 "이전ㆍ다음" 두
+        # 글자가 검색칸 폭을 눌렀다. 무슨 단추인지는 도움말로 남긴다.
+        self.toc_previous_button = QPushButton("‹")
         self.toc_previous_button.setObjectName("tocSearchButton")
-        self.toc_previous_button.setFixedWidth(48)
-        self.toc_next_button = QPushButton("다음")
+        self.toc_previous_button.setFixedWidth(30)
+        self.toc_previous_button.setToolTip("이전 조문 검색 결과")
+        self.toc_previous_button.setAccessibleName("이전 조문 검색 결과")
+        self.toc_next_button = QPushButton("›")
         self.toc_next_button.setObjectName("tocSearchButton")
-        self.toc_next_button.setFixedWidth(48)
+        self.toc_next_button.setFixedWidth(30)
+        self.toc_next_button.setToolTip("다음 조문 검색 결과")
+        self.toc_next_button.setAccessibleName("다음 조문 검색 결과")
 
-        toc_search_label = QLabel("조문 검색")
-        toc_search_label.setObjectName("tocSearchLabel")
         toc_navigation = QHBoxLayout()
         toc_navigation.setContentsMargins(0, 0, 0, 0)
         toc_navigation.setSpacing(5)
@@ -972,7 +1004,8 @@ class ResourceSearchTab(QWidget):
         # 않도록 본문 검색줄과 같은 여백을 준다.
         toc_panel_layout.setContentsMargins(8, 8, 0, 0)
         toc_panel_layout.setSpacing(6)
-        toc_panel_layout.addWidget(toc_search_label)
+        # "조문 검색" 제목 줄은 두지 않는다. 바로 아래 입력칸의 안내
+        # 글귀가 같은 말을 하고 있어 한 줄을 그냥 잡아먹었다.
         toc_panel_layout.addWidget(self.toc_search_input)
         toc_panel_layout.addLayout(toc_navigation)
         toc_panel_layout.addWidget(self.toc_tree, 1)
@@ -995,13 +1028,23 @@ class ResourceSearchTab(QWidget):
         detail_body_layout = QVBoxLayout(detail_body)
         detail_body_layout.setContentsMargins(0, 0, 0, 0)
         detail_body_layout.setSpacing(8)
-        detail_body_layout.addWidget(self.detail_search)
+        # 찾기 줄은 본문 위에 뜨는 창이라 레이아웃에 넣지 않는다.
         detail_body_layout.addWidget(self.pinned_headline)
-        self.inline_annex_preview = InlinePdfPreviewPanel(detail_body)
+        self.inline_annex_preview = InlinePdfPreviewPanel(
+            self.detail_view.viewport()
+        )
         self.inline_annex_preview.closeRequested.connect(
             self._close_inline_annex_preview
         )
-        detail_body_layout.addWidget(self.inline_annex_preview)
+        self.inline_annex_preview.expand_button.clicked.connect(
+            lambda: QTimer.singleShot(0, self._sync_inline_annex_preview_layout)
+        )
+        self.detail_view.verticalScrollBar().valueChanged.connect(
+            self._place_inline_annex_preview
+        )
+        self.detail_view.horizontalScrollBar().valueChanged.connect(
+            self._place_inline_annex_preview
+        )
         detail_view_row = QWidget()
         detail_view_row.setObjectName("detailViewRow")
         detail_view_row_layout = QHBoxLayout(detail_view_row)
@@ -1339,6 +1382,12 @@ class ResourceSearchTab(QWidget):
             ),
         )
         QTimer.singleShot(0, self.memo_marker_bar.refresh_after_layout_change)
+        # 크게 보기로 드나들면 본문 폭이 바뀌어 조문 줄의 자리도 바뀐다.
+        # 다시 잡지 않으면 3단ㆍ즐겨찾기 단추가 옛 자리에 남아 제목 옆
+        # 엉뚱한 곳에 떠 있었다.
+        QTimer.singleShot(0, self._schedule_three_stage_button_positions)
+        QTimer.singleShot(60, self._schedule_three_stage_button_positions)
+        QTimer.singleShot(0, self._place_inline_annex_preview)
 
     def _apply_result_table_font(self) -> None:
         size = 9.0
@@ -1356,17 +1405,30 @@ class ResourceSearchTab(QWidget):
         resize_adaptive_result_rows(self.result_table)
         self.result_table.viewport().update()
 
-    @staticmethod
     def _scale_document_font_sizes(
-        html: str, source_size: float, target_size: float
+        self, html: str, source_size: float, target_size: float
     ) -> str:
-        return scale_document_font_sizes(html, source_size, target_size)
+        # 고른 글꼴을 함께 넘긴다. 넘기지 않으면 저장 HTML의 글꼴이 늘
+        # 기본 글꼴로 덮여, 글꼴 칸에서 다른 글꼴을 골라도 본문은 그대로다.
+        return scale_document_font_sizes(
+            html, source_size, target_size, self.detail_font_family
+        )
 
     def _set_detail_font_size(self, size: float, *, persist: bool = True) -> None:
         size = normalize_detail_font_size(size)
         previous_size = self.detail_font_size
         if size != previous_size:
-            html = self.detail_view.toHtml()
+            state = self._document_states.get(self._active_document_key)
+            source = (
+                str(state.get("source_html") or "")
+                if isinstance(state, dict)
+                else ""
+            )
+            # Qt toHtml()은 문단 여백과 자리 그림을 부풀려 조문 사이에
+            # 큰 빈칸을 만든다. 처음 만든 원본 HTML을 10pt 기준으로
+            # 다시 스케일한다.
+            html = source or self.detail_view.toHtml()
+            source_font_size = 10.0 if source else previous_size
             scroll_bar = self.detail_view.verticalScrollBar()
             scroll_ratio = (
                 scroll_bar.value() / scroll_bar.maximum()
@@ -1375,8 +1437,13 @@ class ResourceSearchTab(QWidget):
             )
             self.detail_font_size = size
             self._replace_detail_content(
-                html=html, source_font_size=previous_size
+                html=html, source_font_size=source_font_size
             )
+            self._apply_annex_text_font()
+            articles = list(self._current_three_stage_articles)
+            if articles:
+                self._set_three_stage_articles(articles)
+            self._place_inline_annex_preview()
             scroll_bar.setValue(round(scroll_ratio * scroll_bar.maximum()))
             self._save_active_document_state()
 
@@ -1424,6 +1491,8 @@ class ResourceSearchTab(QWidget):
             # 별표 목록은 화면 하나가 아니라 탭마다 다르다. 함께 저장해
             # 두지 않으면 다른 탭을 다녀온 뒤 별표를 눌러도 반응이 없다.
             "annex_entries": [],
+            # 펼쳐 둔 별표. 탭을 다녀와도 미리보기를 그대로 되살린다.
+            "annex_preview_key": "",
             "render_highlight_terms": [],
             "document": None,
             # 탭의 별표(즐겨찾기)를 켜고 끄려면 어떤 문서인지 알아야 한다.
@@ -1601,6 +1670,7 @@ class ResourceSearchTab(QWidget):
                 "annex_entries": [
                     dict(entry) for entry in self._annex_section_entries
                 ],
+                "annex_preview_key": self._active_annex_preview_key,
                 "prefer_source_html": False,
             }
         )
@@ -1726,6 +1796,9 @@ class ResourceSearchTab(QWidget):
             for entry in (state.get("annex_entries") or [])
             if isinstance(entry, dict)
         ]
+        # 펼쳐 둔 별표도 되살린다. 본문 HTML에는 미리보기 자리가 그대로
+        # 남아 있어서, 되살리지 않으면 그 자리가 흰 빈칸으로만 남았다.
+        self._restore_inline_annex_preview(state)
         self._restoring_document = True
         # 탭을 바꿀 때마다 detail_view 하나에 새 문서 HTML을 다시
         # 불러오는데, 최종 폭이 자리 잡기 전에 한 번 그려졌다가 폭이
@@ -2972,6 +3045,7 @@ class ResourceSearchTab(QWidget):
             and event.type() in (QEvent.Type.Resize, QEvent.Type.Show)
         ):
             self._schedule_three_stage_button_positions()
+            self._place_inline_annex_preview()
         return super().eventFilter(watched, event)
 
     def _show_pdf_preview(self, url: str) -> None:
@@ -5250,6 +5324,7 @@ class ResourceSearchTab(QWidget):
                             else ""
                         ),
                         use_api_links=True,
+                        paragraph_gap_px=self.POPUP_PARAGRAPH_GAP_PX,
                         administrative_rule=target == "admrul",
                         administrative_rule_normalized=target == "admrul",
                         embedded_images=embedded_images,
@@ -5308,6 +5383,15 @@ class ResourceSearchTab(QWidget):
 
     ANNEX_SECTION_START = "<!--annex-section-->"
     ANNEX_SECTION_END = "<!--/annex-section-->"
+    ANNEX_PREVIEW_SLOT_NAME = "annex-preview-slot"
+    # QTextDocument는 빈 div의 height를 잘 안 받아서, 자리만 비우는
+    # 투명 그림으로 미리보기 높이를 확보한다.
+    ANNEX_PREVIEW_SPACER_IMAGE = (
+        "data:image/gif;base64,"
+        "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+    )
+    ANNEX_PREVIEW_COMPACT_HEIGHT = 340
+    ANNEX_PREVIEW_EXPANDED_HEIGHT = 560
     ANNEX_PREVIEW_ZOOM_STEPS = (60, 80, 100, 130, 160, 200)
     ANNEX_PREVIEW_DEFAULT_ZOOM = 100
     # 한 번에 본문에 끼워 넣는 최대 쪽수. 별표 하나가 수십 쪽인 경우가 있어
@@ -5324,7 +5408,15 @@ class ResourceSearchTab(QWidget):
         return index, self._annex_section_entries[index]
 
     def _toggle_annex_preview(self, raw_index: str) -> None:
-        """별표 제목을 누르면 그 자리에서 원문을 펼치거나 접는다."""
+        """별표 제목이나 왼쪽 + 를 누르면 그 자리에서 원문을 펼치거나 접는다."""
+        if not self._annex_section_entries:
+            state = self._document_states.get(self._active_document_key)
+            if isinstance(state, dict):
+                self._annex_section_entries = [
+                    dict(entry)
+                    for entry in (state.get("annex_entries") or [])
+                    if isinstance(entry, dict)
+                ]
         found = self._annex_entry_at(raw_index)
         if found is None:
             return
@@ -5343,23 +5435,62 @@ class ResourceSearchTab(QWidget):
             "error": "",
         }
         self._active_annex_preview_key = key
-        self._rerender_annex_section()
+        # 누른 별표 줄이 화면에서 움직이지 않게 그 줄을 기준으로 다시
+        # 그린다. 예전에는 scrollToAnchor로 목록 맨 위까지 끌어올려,
+        # 보고 있던 자리가 통째로 밀렸다.
+        self._rerender_annex_section(keep_anchor=f"annex-item-{index}")
         self.inline_annex_preview.show_loading(
             self._annex_display_title(entry)
         )
+        self._place_inline_annex_preview()
+        QTimer.singleShot(0, self._place_inline_annex_preview)
+        QTimer.singleShot(50, self._place_inline_annex_preview)
         self._start_annex_download(key, entry)
+
+    def _restore_inline_annex_preview(self, state: dict[str, object]) -> None:
+        """탭을 다녀왔을 때 펼쳐 둔 별표 미리보기를 다시 띄운다."""
+        key = str(state.get("annex_preview_key") or "")
+        self._annex_previews.clear()
+        self._active_annex_preview_key = ""
+        if not key:
+            self.inline_annex_preview.hide()
+            return
+        found = None
+        for index, entry in enumerate(self._annex_section_entries):
+            if self._annex_preview_key(entry, index) == key:
+                found = entry
+                break
+        if found is None:
+            self.inline_annex_preview.hide()
+            return
+        self._annex_previews[key] = {
+            "zoom": self.ANNEX_PREVIEW_DEFAULT_ZOOM,
+            "pages": self.ANNEX_PREVIEW_PAGE_LIMIT,
+            "data": None,
+            "error": "",
+        }
+        self._active_annex_preview_key = key
+        self.inline_annex_preview.show_loading(self._annex_display_title(found))
+        # 본문은 아직 그려지기 전이다. 자리는 그린 뒤에 잡는다.
+        QTimer.singleShot(0, self._place_inline_annex_preview)
+        QTimer.singleShot(50, self._place_inline_annex_preview)
+        self._start_annex_download(key, found)
 
     def _close_inline_annex_preview(self) -> None:
         key = self._active_annex_preview_key
         title = ""
+        keep_anchor = ""
         for index, entry in enumerate(self._annex_section_entries):
             if self._annex_preview_key(entry, index) == key:
                 title = self._annex_display_title(entry)
+                keep_anchor = f"annex-item-{index}"
                 break
         self._annex_previews.clear()
         self._active_annex_preview_key = ""
         self.inline_annex_preview.hide()
-        self._rerender_annex_section()
+        # 접을 때도 누른 별표 줄이 있던 자리를 그대로 지킨다. 스크롤
+        # 값만 되돌리면 미리보기 높이만큼 본문이 위로 튀어 올랐다.
+        self._rerender_annex_section(keep_anchor=keep_anchor)
         if title:
             self.status_label.setText(f"{title} 미리보기를 접었습니다.")
 
@@ -5411,8 +5542,9 @@ class ResourceSearchTab(QWidget):
             self._annex_preview_workers.pop(cache_key, None)
             if cache_key == self._active_annex_preview_key:
                 self.inline_annex_preview.show_pdf(
-                    bytes(data), self.inline_annex_preview.title_label.text()
+                    bytes(data), self.inline_annex_preview.current_title()
                 )
+                QTimer.singleShot(0, self._place_inline_annex_preview)
 
         def failed(message: str, cache_key: str = key) -> None:
             state = self._annex_previews.get(cache_key)
@@ -5423,34 +5555,197 @@ class ResourceSearchTab(QWidget):
                 self.inline_annex_preview.show_error(
                     f"PDF를 불러오지 못했습니다: {message}"
                 )
+                QTimer.singleShot(0, self._place_inline_annex_preview)
 
         worker.succeeded.connect(finished)
         worker.failed.connect(failed)
         worker.finished.connect(worker.deleteLater)
         worker.start()
 
-    def _rerender_annex_section(self) -> None:
-        """본문에서 별표 목록 구간만 새로 만들어 갈아 끼운다."""
+    def _anchor_viewport_top(self, anchor: str) -> int | None:
+        """이름 앵커가 지금 화면 어느 높이에 있는지 돌려준다."""
+        if not anchor:
+            return None
+        cursor = self._find_named_anchor_cursor(anchor)
+        if cursor is None:
+            return None
+        return int(self.detail_view.cursorRect(cursor).top())
+
+    def _rerender_annex_section(self, *, keep_anchor: str = "") -> None:
+        """본문에서 별표 목록 구간만 새로 만들어 갈아 끼운다.
+
+        ``keep_anchor``를 주면 그 줄이 화면에서 있던 높이를 그대로 지킨다.
+        """
         state = self._document_states.get(self._active_document_key)
         source = str(state.get("source_html") or "") if isinstance(state, dict) else ""
-        if self.ANNEX_SECTION_START not in source:
+        split = self._split_annex_section_html(source)
+        if split is None:
+            live = self.detail_view.toHtml()
+            split = self._split_annex_section_html(live)
+        if split is None:
             return
-        head, _, rest = source.partition(self.ANNEX_SECTION_START)
-        _, _, tail = rest.partition(self.ANNEX_SECTION_END)
+        head, tail = split
         parts: list[str] = []
         self._append_law_annex_section(parts, [], self._annex_section_entries)
         scroll_bar = self.detail_view.verticalScrollBar()
         position = scroll_bar.value()
+        anchor_top = self._anchor_viewport_top(keep_anchor)
         rendered = head + "".join(parts) + tail
         self._replace_detail_content(html=rendered)
         self._apply_annex_text_font()
         if isinstance(state, dict):
             state["source_html"] = rendered
+        # setHtml은 문서를 통째로 갈아 끼우므로 조문 첫 줄에 내 두었던
+        # 별 단추 자리(왼쪽 여백)와 앵커 위치까지 사라진다. 다시 잡지
+        # 않으면 즐겨찾기 별이 제OO조 글자 위에 겹쳐 그려졌다.
+        if self._current_three_stage_articles:
+            self._set_three_stage_articles(
+                list(self._current_three_stage_articles),
+                document_prepared=True,
+            )
         scroll_bar.setValue(min(position, scroll_bar.maximum()))
+        if anchor_top is not None:
+            new_top = self._anchor_viewport_top(keep_anchor)
+            if new_top is not None:
+                scroll_bar.setValue(
+                    max(
+                        0,
+                        min(
+                            scroll_bar.value() + new_top - anchor_top,
+                            scroll_bar.maximum(),
+                        ),
+                    )
+                )
+        QTimer.singleShot(0, self._place_inline_annex_preview)
+
+    @staticmethod
+    def _split_annex_section_html(source: str) -> tuple[str, str] | None:
+        """별표 구간 앞뒤를 나눈다. 주석이 빠진 저장 HTML도 찾는다."""
+        if not source:
+            return None
+        start = ResourceSearchTab.ANNEX_SECTION_START
+        end = ResourceSearchTab.ANNEX_SECTION_END
+        if start in source:
+            head, _, rest = source.partition(start)
+            _, _, tail = rest.partition(end)
+            return head, tail
+        match = re.search(
+            r'<a\b[^>]*\bname=["\']law-annexes["\'][^>]*>',
+            source,
+            flags=re.IGNORECASE,
+        )
+        if match is None:
+            return None
+        return source[: match.start()], ""
+
+    def _annex_preview_slot_height(self) -> int:
+        # 패널 최소 높이를 그대로 따르면, 예전에 뷰포트 높이로 커진
+        # 값이 자리 표시까지 키워 본문 전체를 밀어 냈다. 접힘/크게
+        # 두 값만 쓴다.
+        panel = self.inline_annex_preview
+        if getattr(panel, "_expanded", False):
+            return self.ANNEX_PREVIEW_EXPANDED_HEIGHT
+        return self.ANNEX_PREVIEW_COMPACT_HEIGHT
 
     def _annex_preview_html(self, key: str, index: int) -> str:
-        """미리보기는 실제 Qt PDF 패널이 맡으므로 문서 HTML은 늘 가볍다."""
-        return ""
+        """펼친 별표 아래에 미리보기 높이를 비워 본문 흐름을 밀어 낸다."""
+        height = self._annex_preview_slot_height()
+        # 자리 이름을 붙인 빈 글자는 두지 않는다. Qt가 그 글자를 바로 위
+        # 별표 제목 줄에 붙여 버려, 미리보기가 제목 줄 높이에서 시작하고
+        # 아래에는 그만큼 빈 칸이 남았다. 자리는 아래 스페이서 그림으로만
+        # 찾는다(_find_named_anchor_cursor가 그림 주소로 같은 자리를 준다).
+        return (
+            f'<table width="100%" cellspacing="0" cellpadding="0" '
+            f'style="margin:0; padding:0; border:none;">'
+            f'<tr><td height="{height}" style="height:{height}px;">'
+            f'<img src="{self.ANNEX_PREVIEW_SPACER_IMAGE}" '
+            f'width="1" height="{height}" alt=" "></td></tr></table>'
+        )
+
+    def _find_named_anchor_cursor(self, name: str) -> QTextCursor | None:
+        document = self.detail_view.document()
+        block = document.begin()
+        while block.isValid():
+            iterator = block.begin()
+            while not iterator.atEnd():
+                fragment = iterator.fragment()
+                fmt = fragment.charFormat()
+                if name in fmt.anchorNames():
+                    cursor = QTextCursor(document)
+                    cursor.setPosition(fragment.position())
+                    return cursor
+                # 자리 표시 그림에 감싼 name은 Qt가 버려서, 그림 주소로
+                # 같은 자리를 찾는다.
+                if (
+                    name == self.ANNEX_PREVIEW_SLOT_NAME
+                    and fmt.isImageFormat()
+                    and self.ANNEX_PREVIEW_SPACER_IMAGE in fmt.toImageFormat().name()
+                ):
+                    cursor = QTextCursor(document)
+                    cursor.setPosition(fragment.position())
+                    return cursor
+                iterator += 1
+            block = block.next()
+        return None
+
+    def _active_annex_preview_index(self) -> int | None:
+        key = self._active_annex_preview_key
+        if not key:
+            return None
+        for index, entry in enumerate(self._annex_section_entries):
+            if self._annex_preview_key(entry, index) == key:
+                return index
+        return None
+
+    def _place_inline_annex_preview(self) -> None:
+        """미리보기를 별표 제목 아래 비워 둔 자리에 맞춘다."""
+        panel = self.inline_annex_preview
+        if not self._active_annex_preview_key:
+            panel.hide()
+            return
+        viewport = self.detail_view.viewport()
+        cursor = self._find_named_anchor_cursor(self.ANNEX_PREVIEW_SLOT_NAME)
+        top = None
+        if cursor is not None:
+            top = self.detail_view.cursorRect(cursor).top()
+        else:
+            index = self._active_annex_preview_index()
+            if index is not None:
+                title_cursor = self._find_named_anchor_cursor(f"annex-item-{index}")
+                if title_cursor is not None:
+                    top = self.detail_view.cursorRect(title_cursor).bottom() + 4
+        if top is None:
+            index = self._active_annex_preview_index()
+            entry = (
+                self._annex_section_entries[index]
+                if index is not None and 0 <= index < len(self._annex_section_entries)
+                else None
+            )
+            if entry is not None:
+                found = self.detail_view.document().find(
+                    self._annex_display_title(entry)
+                )
+                if not found.isNull():
+                    top = self.detail_view.cursorRect(found).bottom() + 4
+        if top is None:
+            panel.hide()
+            return
+        margin = int(self.detail_view.document().documentMargin())
+        width = max(80, viewport.width() - margin)
+        height = self._annex_preview_slot_height()
+        panel.setParent(viewport)
+        panel.setFixedHeight(height)
+        panel.setGeometry(
+            QRect(max(0, margin // 2), int(top), width, height)
+        )
+        panel.raise_()
+        panel.show()
+
+    def _sync_inline_annex_preview_layout(self) -> None:
+        if not self._active_annex_preview_key:
+            return
+        self._rerender_annex_section()
+        self._place_inline_annex_preview()
 
     def _legacy_annex_preview_html(self, key: str, index: int) -> str:
         """이전 그림 변환 미리보기. 저장 구버전 호환 참고용."""
@@ -5549,7 +5844,10 @@ class ResourceSearchTab(QWidget):
 
     def _detail_link_clicked(self, url: QUrl) -> None:
         if url.scheme() == "annex":
-            self._toggle_annex_preview(url.toString()[len("annex:") :])
+            raw = (url.path() or "").strip("/")
+            if not raw:
+                raw = url.toString()[len("annex:") :]
+            self._toggle_annex_preview(raw)
             return
         if url.scheme() == "annexzoom":
             self._change_annex_preview_zoom(url.toString()[len("annexzoom:") :])
@@ -6496,6 +6794,18 @@ class ResourceSearchTab(QWidget):
         dialog.activateWindow()
 
     def _category_changed(self) -> None:
+        # 이 캡슐은 조문검색만 맡는다. 저장 본문을 되살리며 연관검색
+        # 화면을 띄운 적이 있으면 대상이 그대로 남아, 나중에 캡슐을 눌러
+        # 들어올 때 조문검색이 아니라 연관검색 화면이 떴다.
+        if (
+            not self._keyword_target_restoring
+            and self.category_tabs.currentIndex() == self._keyword_tab_index
+            and self.category_tabs.tabData(self._keyword_tab_index)
+            != KEYWORD_DIRECT_TARGET
+        ):
+            self.category_tabs.setTabData(
+                self._keyword_tab_index, KEYWORD_DIRECT_TARGET
+            )
         previous_target = getattr(
             self, "_active_resource_category", self.category_target
         )
@@ -6718,6 +7028,8 @@ class ResourceSearchTab(QWidget):
     def _start_worker(self, worker: ResourceApiWorker, message: str) -> None:
         if self.worker and self.worker.isRunning():
             return
+        if self._pending_favorite_row is not None:
+            message = f"{message} · 저장을 마치면 즐겨찾기에 겁니다"
         self.worker = worker
         self.search_button.setEnabled(False)
         self.search_refresh_button.setEnabled(False)
@@ -6745,6 +7057,8 @@ class ResourceSearchTab(QWidget):
         if self.worker:
             self.worker.deleteLater()
         self.worker = None
+        # 대기 중이던 즐겨찾기 별(파란 표시)을 지금 상태로 다시 그린다.
+        self.result_table.viewport().update()
         if operation == "resource_search":
             self._selection_changed()
         else:
@@ -6844,13 +7158,13 @@ class ResourceSearchTab(QWidget):
         if operation == "resource_detail":
             self._pending_cached_article_open = None
             self._refresh_cache_checkmarks()
-            if (
-                self._pending_article_favorite is not None
-                and not self._article_favorite_waiting_for_worker
-            ):
-                self._pending_article_favorite = None
+            if not self._article_favorite_waiting_for_worker:
+                # 실패하면 기다리던 즐겨찾기도 접는다. 남겨 두면 목록의
+                # 별이 파란 "처리 중" 표시인 채로 굳는다.
                 self._pending_favorite_row = None
-                self._refresh_reference_popup_favorites()
+                if self._pending_article_favorite is not None:
+                    self._pending_article_favorite = None
+                    self._refresh_reference_popup_favorites()
         QMessageBox.critical(
             self,
             f"{action} 실패",
@@ -6939,6 +7253,7 @@ class ResourceSearchTab(QWidget):
                     current_law_name=title,
                     current_law_id=str(source_row.get("id") or ""),
                     use_api_links=True,
+                    paragraph_gap_px=self.POPUP_PARAGRAPH_GAP_PX,
                     embedded_images=self._admin_rule_images(payload),
                 )
                 + "</div>"
@@ -7304,6 +7619,27 @@ class ResourceSearchTab(QWidget):
             self.three_stage_popup._close_popup()
         self.reference_tabs.removeTab(index)
 
+    # 통합검색 목록에서 구분을 모으는 순서. 법령을 맨 앞에 둔다.
+    # 지능형 검색(AI추천)은 법령이 아니라 조문 단위로 결과를 주기 때문에,
+    # 앞에 두면 찾던 법령 자체가 한참 아래로 밀렸다.
+    INTEGRATED_GROUP_ORDER = {
+        "law": 0,
+        "admrul": 2,
+        "ordin": 3,
+        "licbyl": 4,
+        "admbyl": 5,
+        "ordinbyl": 6,
+    }
+    # 법령 바로 다음 자리. 조문 단위 추천이라 법령 목록보다는 뒤에,
+    # 나머지 자료보다는 앞에 둔다.
+    INTEGRATED_AI_ORDER = 1
+
+    @classmethod
+    def _integrated_group_order(cls, row: dict[str, object]) -> int:
+        if row.get("ai_recommended"):
+            return cls.INTEGRATED_AI_ORDER
+        return cls.INTEGRATED_GROUP_ORDER.get(str(row.get("target") or ""), 9)
+
     def _show_search_results(self, payload: object) -> None:
         if not isinstance(payload, dict):
             raise ValueError("목록 응답 형식이 올바르지 않습니다.")
@@ -7362,13 +7698,27 @@ class ResourceSearchTab(QWidget):
             )
 
         saved_keys = self.law_cache.saved_keys_for_rows(rows)
-        rows.sort(
-            key=lambda row: (
-                0
-                if self.law_cache.key_for_row(row) in saved_keys
-                else 1
+        if self.category_target == RESOURCE_ALL_TARGET:
+            # 통합검색은 구분끼리 모아 보여 준다. AI가 골라 준 조문을 맨
+            # 앞에 두고, 그다음은 법령 → 행정규칙 → 자치법규 → 별표ㆍ서식
+            # 순이다. 여러 API 결과가 뒤섞여 있으면 무엇을 보고 있는지
+            # 가늠하기 어려웠다.
+            rows.sort(
+                key=lambda row: (
+                    self._integrated_group_order(row),
+                    0
+                    if self.law_cache.key_for_row(row) in saved_keys
+                    else 1,
+                )
             )
-        )
+        else:
+            rows.sort(
+                key=lambda row: (
+                    0
+                    if self.law_cache.key_for_row(row) in saved_keys
+                    else 1
+                )
+            )
         self.result_rows = rows
         self.result_filter_input.clear()
         self._sort_column = -1
@@ -7405,8 +7755,8 @@ class ResourceSearchTab(QWidget):
                         str(row["id"]),
                         str(row.get("display_name") or row["name"]),
                         str(row["related"]),
-                        str(row["date"]),
                         str(row["effective"]),
+                        str(row["date"]),
                     )
                     for column, value in enumerate(values, start=1):
                         item = QTableWidgetItem(" ".join(value.split()))
@@ -7444,8 +7794,8 @@ class ResourceSearchTab(QWidget):
                 self._law_level_priority(str(row.get("related") or "")),
                 str(row.get("related") or ""),
             ),
-            5: lambda row: str(row.get("date") or ""),
-            6: lambda row: str(row.get("effective") or ""),
+            5: lambda row: str(row.get("effective") or ""),
+            6: lambda row: str(row.get("date") or ""),
         }
         key_func = key_funcs.get(logical_index)
         if key_func is None:
@@ -7494,6 +7844,22 @@ class ResourceSearchTab(QWidget):
             return False
         return self.law_cache.is_favorite(self.result_rows[row_index])
 
+    def _is_favorite_pending_at_row(self, row_index: int) -> bool:
+        """저장본을 받는 중이라 즐겨찾기가 아직 걸리지 않은 줄인지."""
+        pending = self._pending_favorite_row
+        if not isinstance(pending, dict):
+            return False
+        if not (0 <= row_index < len(self.result_rows)):
+            return False
+        row = self.result_rows[row_index]
+        return (
+            str(row.get("target") or ""),
+            str(row.get("id") or ""),
+        ) == (
+            str(pending.get("target") or ""),
+            str(pending.get("id") or ""),
+        )
+
     def _toggle_favorite_at_row(self, row_index: int) -> None:
         if not (0 <= row_index < len(self.result_rows)):
             return
@@ -7513,10 +7879,20 @@ class ResourceSearchTab(QWidget):
                 )
                 return
             # 저장본이 없으면 먼저 본문을 받아 저장한 뒤 즐겨찾기를 건다.
+            # 몇 초가 걸리는 일이라, 누른 즉시 무엇을 하고 있는지 알린다.
             self._pending_favorite_row = row
             if select_row_index >= 0:
                 self.result_table.selectRow(select_row_index)
-            self._request_resource_detail(row, force_api=False)
+            name = str(row.get("name") or "이 항목")
+            self.status_label.setText(
+                f"{name} 본문을 받는 중입니다 — 저장이 끝나면 즐겨찾기에 겁니다."
+            )
+            self._progress_opacity.setOpacity(1.0)
+            self.result_table.viewport().update()
+            if not self._request_resource_detail(row, force_api=False):
+                self._pending_favorite_row = None
+                self._progress_opacity.setOpacity(0.0)
+                self.result_table.viewport().update()
             return
         if self.law_cache.set_favorite(row, wants_favorite):
             self.status_label.setText(
@@ -7612,9 +7988,16 @@ class ResourceSearchTab(QWidget):
             return
         self._pending_article_favorite = (row, jo, hang, ho, mok, label)
         self._pending_favorite_row = row
+        self.status_label.setText(
+            f"{label} 본문을 받는 중입니다 — 저장이 끝나면 즐겨찾기에 겁니다."
+        )
+        self._progress_opacity.setOpacity(1.0)
+        self.result_table.viewport().update()
         if not self._request_resource_detail(row, force_api=False):
             self._pending_article_favorite = None
             self._pending_favorite_row = None
+            self._progress_opacity.setOpacity(0.0)
+            self.result_table.viewport().update()
             self._refresh_reference_popup_favorites()
 
     def _resume_pending_article_favorite(self) -> None:
@@ -7898,12 +8281,9 @@ class ResourceSearchTab(QWidget):
                 agency, root = entry
             except (TypeError, ValueError):
                 continue
-            label = KEYWORD_CATEGORY_LABELS.get(
-                KEYWORD_RELATED_TARGET
-                if agency.target == "aiRltLs"
-                else KEYWORD_DIRECT_TARGET,
-                str(agency.name),
-            )
+            # 연관ㆍ조문 어느 API에서 왔든 목록에서는 "AI추천" 한 가지
+            # 구분으로 묶는다. 이용자에게는 둘 다 AI가 골라 준 조문이다.
+            label = KEYWORD_INTEGRATED_LABEL
             for node in root.iter():
                 if "id" not in node.attrib:
                     continue
@@ -7932,6 +8312,8 @@ class ResourceSearchTab(QWidget):
                     {
                         "target": target,
                         "label": label,
+                        # 통합 목록에서 맨 앞에 모으기 위한 표시.
+                        "ai_recommended": True,
                         "id": item_id,
                         "name": name,
                         # 내부 본문ㆍ저장 경로는 실제 법령명을 계속 쓰고,
@@ -9034,8 +9416,10 @@ class ResourceSearchTab(QWidget):
             raw = source.get("administrative_rule_images")
         if not isinstance(raw, dict):
             return {}
+        # 아래에 빈 종이가 붙어 온 그림은 잘라서 넣는다. 그대로 두면
+        # 그림 아래에 흰 칸이 남아 다음 항목이 한참 밑으로 밀린다.
         return {
-            str(image_id): str(uri)
+            str(image_id): trim_blank_bottom(str(uri))
             for image_id, uri in raw.items()
             if str(image_id).isdigit()
             and str(uri).casefold().startswith("data:image/")
@@ -9110,8 +9494,10 @@ class ResourceSearchTab(QWidget):
         if headline:
             parts = [f'<span style="font-size:13px;">{escape(title)}</span>']
             if short_name:
+                # 약칭도 제목과 같은 13px이다. 짧은 이름만 7px로 줄였더니
+                # 한 줄 가운데서 글자가 뚝 작아져 읽기 나빴다.
                 parts.append(
-                    '<span style="font-size:7px; color:#62666f;">'
+                    '<span style="font-size:13px;">'
                     f"( 약칭: {escape(short_name)} )</span>"
                 )
             if subtitle:
@@ -9205,6 +9591,10 @@ class ResourceSearchTab(QWidget):
             subtitle=subtitle,
         )
 
+    # 조문 팝업은 본문보다 글씨가 작다. 본문과 같은 여백을 그대로 쓰면
+    # 줄 사이만 유난히 벌어져 글이 성글어 보였다.
+    POPUP_PARAGRAPH_GAP_PX = 2
+
     def _popup_detail_header(self, title: str, metadata: list) -> list[str]:
         """조문 팝업용 작은 제목과 3칸×2줄 기본정보 헤더."""
         html_parts = [
@@ -9212,7 +9602,7 @@ class ResourceSearchTab(QWidget):
             "body { font-family:'Malgun Gothic'; font-weight:400; "
             "color:#172033; line-height:1.65; margin:0; }",
             ".popup-law-title { font-family:'Malgun Gothic'; font-size:14px; "
-            "font-weight:700; color:#173b63; margin:0 0 7px 0; }",
+            f"font-weight:700; color:#173b63; margin:0 0 {BODY_PARAGRAPH_GAP_PX}px 0; }}",
             ".meta { background:#f3f7fb; border:1px solid #cfdcea; "
             "border-radius:6px; padding:8px 10px; margin-bottom:11px; }",
             ".meta table { width:100%; border-collapse:collapse; "
@@ -9226,7 +9616,7 @@ class ResourceSearchTab(QWidget):
             "padding-bottom:4px; margin:11px 0 7px 0; }",
             ".content { font-family:'Malgun Gothic'; font-weight:400; "
             f"font-size:13px; line-height:{BODY_LINE_HEIGHT}; }}",
-            ".paragraph { margin:0 0 7px 0; }",
+            f".paragraph {{ margin:0 0 {self.POPUP_PARAGRAPH_GAP_PX}px 0; }}",
             ".bullet { margin:0 0 5px 0; border-collapse:collapse; }",
             ".bullet-marker { font-weight:400; padding:0; }",
             ".bullet-text { font-weight:400; padding:0; }",
@@ -9390,6 +9780,10 @@ class ResourceSearchTab(QWidget):
         # 별표 사이에 큰 제목이 하나 더 끼면 본문 흐름이 끊긴다. 목차에서
         # 찾아올 수 있게 자리 표시만 남긴다.
         html_parts.append(f'<a name="{section_anchor}"></a>')
+        # 본문 끝에 붙은 별표는 조문 목차에서도 찾아갈 수 있어야 한다.
+        # 조문만 있던 때는 목차 끝에서 별표로 갈 길이 없었다.
+        if toc_entries is not None:
+            toc_entries.append((0, section_label, section_anchor))
         html_parts.append(
             '<div class="content" style="margin-top:28px; '
             'font-family:\'Malgun Gothic\',\'맑은 고딕\';">'
@@ -9425,17 +9819,28 @@ class ResourceSearchTab(QWidget):
 
             title_html = escape(shown)
             if pdf_url:
-                # 제목 자체가 펼치고 접는 자리다. 앞에 ⊞ 같은 기호를 두면
-                # 목록이 어수선해지고, 눌러야 할 곳이 기호인지 제목인지도
-                # 헷갈린다. 펼친 것은 아래 미리보기로 알 수 있다.
+                # 왼쪽 +/− 와 제목이 같은 annex: 링크다. 글씨를 눌러도
+                # 펼치고 접는다.
                 toggle = f"annex:{index}"
+                # 글자 +ㆍ−는 본문 글씨와 섞여 눌러야 할 자리로 보이지
+                # 않았다. 네모 단추 모양 그림으로 바꾼다.
+                marker_icon = (
+                    ANNEX_COLLAPSE_ICON_PATH if expanded
+                    else ANNEX_EXPAND_ICON_PATH
+                )
                 color = "#1f57c8" if expanded else "#242529"
                 title_html = (
                     f'<a href="{escape(toggle, quote=True)}" '
                     f'style="color:{color}; text-decoration:none; '
                     'font-weight:400; vertical-align:middle;">'
-                    f"{escape(shown)}</a>"
+                    f'<img src="{marker_icon.as_uri()}" width="14" '
+                    'height="14" style="vertical-align:middle;" '
+                    f'alt="{"접기" if expanded else "펼치기"}">'
+                    f"&nbsp;{escape(shown)}</a>"
                 )
+            html_parts.append(f'<a name="annex-item-{index}"></a>')
+            if toc_entries is not None:
+                toc_entries.append((4, shown, f"annex-item-{index}"))
             html_parts.append(
                 '<div class="annex-item" style="margin:0; padding:10px 0; '
                 f'line-height:{BODY_LINE_HEIGHT}; '

@@ -13,7 +13,13 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QSettings
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import (
+    QApplication,
+    QAbstractItemView,
+    QLabel,
+    QMessageBox,
+    QToolButton,
+)
 
 from llm import extract_cited_articles
 from storage.cache import LawDocumentCache
@@ -201,6 +207,7 @@ def test_article_favorite_has_own_column_and_can_be_unstarred(tmp_path) -> None:
     item = tree.topLevelItem(0)
     assert item.data(0, tab.FAVORITE_KIND_ROLE) == "article"
     assert item.data(0, tab.FAVORITE_ARTICLE_ROLE) == "25"
+    assert item.text(0) == f"{ROW['name']} · 제25조"
     assert item.data(0, tab.FAVORITE_UNIT_ROLE)["jo"] == "25"
     assert item.parent() is None
 
@@ -435,3 +442,134 @@ def test_adding_a_document_to_a_project_is_idempotent(tmp_path) -> None:
 
     entry = cache.all_project_favorite_entries()[0]
     assert entry["favorite_project_ids"].count("project-b") == 1
+
+
+def test_project_strip_uses_plus_and_context_actions_for_target_tab(
+    tmp_path, monkeypatch
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    settings = QSettings(
+        str(tmp_path / "project-strip.ini"), QSettings.Format.IniFormat
+    )
+    settings.setValue(
+        ViewedLawsTab.FAVORITE_PROJECTS_SETTINGS_KEY,
+        json.dumps(
+            [
+                {"id": "default", "name": "기본 프로젝트"},
+                {"id": "project-b", "name": "검토 B"},
+            ],
+            ensure_ascii=False,
+        ),
+    )
+    tab = ViewedLawsTab(
+        LawDocumentCache(tmp_path / "project-saved"),
+        favorites_only=True,
+        settings=settings,
+    )
+    tab.show()
+    app.processEvents()
+
+    assert isinstance(tab.project_add_button, QToolButton)
+    assert tab.project_add_button.text() == ""
+    assert tab.project_add_button.accessibleName() == "새 프로젝트"
+    default_index = tab._project_tab_index("default")
+    project_b_index = tab._project_tab_index("project-b")
+    assert tab._project_tab_index(tab.COMMON_FAVORITES_VIEW_ID) == -1
+    assert default_index == 0
+
+    default_menu = tab._build_favorite_project_context_menu(default_index)
+    assert default_menu is not None
+    assert [action.text() for action in default_menu.actions()] == [
+        "이름 변경",
+        "프로젝트 삭제",
+    ]
+    assert not default_menu.actions()[1].isEnabled()
+
+    project_menu = tab._build_favorite_project_context_menu(project_b_index)
+    assert project_menu is not None
+    assert project_menu.actions()[1].isEnabled()
+    tab.project_tabs.setCurrentIndex(default_index)
+    monkeypatch.setattr(
+        "ui.tabs.viewed_laws.QInputDialog.getText",
+        lambda *_args, **_kwargs: ("이름을 바꾼 B", True),
+    )
+    tab._rename_favorite_project(project_b_index)
+    assert tab.project_tabs.currentIndex() == default_index
+    assert tab.project_tabs.tabText(project_b_index) == "이름을 바꾼 B"
+
+    monkeypatch.setattr(
+        "ui.tabs.viewed_laws.QMessageBox.question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes,
+    )
+    tab._delete_favorite_project(project_b_index)
+    assert tab._project_tab_index("project-b") == -1
+    assert tab._current_project_id() == "default"
+    tab.close()
+
+
+def test_union_favorites_list_shows_once_and_copies_to_project(tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    cache = _cache(tmp_path)
+    assert cache.set_favorite(ROW, True)
+    cache.set_active_favorite_project("project-b")
+    assert cache.set_favorite(ROW, True)
+    cache.set_active_favorite_project("default")
+    settings = QSettings(
+        str(tmp_path / "common-view.ini"), QSettings.Format.IniFormat
+    )
+    settings.setValue(
+        ViewedLawsTab.FAVORITE_PROJECTS_SETTINGS_KEY,
+        json.dumps(
+            [
+                {"id": "default", "name": "기본 프로젝트"},
+                {"id": "project-b", "name": "검토 B"},
+                {"id": "project-c", "name": "검토 C"},
+            ],
+            ensure_ascii=False,
+        ),
+    )
+    tab = ViewedLawsTab(
+        cache, favorites_only=True, settings=settings
+    )
+    tab.show()
+    app.processEvents()
+    assert tab.union_panel.isHidden()
+    tab.union_check.setChecked(True)
+    app.processEvents()
+
+    assert tab.union_panel.isVisible()
+    assert tab.findChild(QLabel, "favoriteUnionLabel").text() == "즐겨찾기 모아보기"
+    assert tab.union_check.text() == "즐겨찾기 모아보기"
+    assert tab.union_check.objectName() == "favoriteCategoryCheck"
+    assert tab.count_label.text() == "즐겨찾기 1건"
+    assert tab.favorite_trees["law"].topLevelItemCount() == 1
+    assert tab.favorite_add_buttons["law"].isVisible()
+    assert tab.favorite_category_titles["law"].text() == "법령검색"
+    assert tab.union_splitter is not None
+    assert tab.union_splitter.count() == len(tab.FAVORITE_CATEGORIES)
+    tree = tab.union_tree
+    assert tree.topLevelItemCount() == 1
+    item = tree.topLevelItem(0)
+    assert set(
+        item.data(0, tab.FAVORITE_PROJECT_IDS_ROLE)
+    ) == {"default", "project-b"}
+    assert tree.dragDropMode() == QAbstractItemView.DragDropMode.DragOnly
+    assert not bool(tree.property("favoriteRemoveEnabled"))
+    mime_data = tree.mimeData([item])
+    assert mime_data.hasFormat("application/x-law-favorite-items")
+    payloads = json.loads(
+        bytes(mime_data.data("application/x-law-favorite-items")).decode(
+            "utf-8"
+        )
+    )
+    tab.project_tabs.setCurrentIndex(tab._project_tab_index("project-c"))
+    app.processEvents()
+    assert tab.favorite_trees["law"].topLevelItemCount() == 0
+    tab.favorite_trees["law"].externalFavoritesDropped.emit(payloads)
+    app.processEvents()
+    assert tab.favorite_trees["law"].topLevelItemCount() == 1
+    memberships = cache.all_project_favorite_entries()[0][
+        "favorite_project_ids"
+    ]
+    assert set(memberships) == {"default", "project-b", "project-c"}
+    tab.close()

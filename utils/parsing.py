@@ -25,6 +25,7 @@ from .patterns import (
     _ADMIN_CLAUSE_REFERENCE_TAIL_PATTERN,
     _PAREN_ITEM_REFERENCE_TAIL_PATTERN,
     _PAREN_ITEM_RANGE_TAIL_PATTERN,
+    _PAREN_ITEM_ENUMERATION_TAIL_PATTERN,
     _PAREN_ITEM_RANGE_PREFIX_PATTERN,
     _PAREN_ITEM_PARTICLE_TAIL_PATTERN,
     _PAREN_ITEM_PART_REFERENCE_PATTERN,
@@ -357,6 +358,10 @@ def split_inline_paren_items(line: str) -> list[str]:
         if not _PAREN_ITEM_REFERENCE_TAIL_PATTERN.match(line, match.end())
         # ``※ (1) 단서 중``은 목록이 아니라 각주 번호다.
         and not _FOOTNOTE_MARK_TAIL_PATTERN.search(line, 0, match.start())
+        # ``(1), (2), (3) 및 (4)의 개정규정은``처럼 번호만 이어 적는
+        # 나열도 목록이 아니라 인용이다. 부칙에서 흔한 표기라, 쪼개면
+        # 부칙 한 문장이 번호마다 토막 나 화면에 흩어졌다.
+        and not _PAREN_ITEM_ENUMERATION_TAIL_PATTERN.match(line, match.end())
     ]
     for first_index, first in enumerate(matches):
         # ``(1)부터(3)까지``, ``(1) 부터 (4)까지``는 연속 목록이 아니라
@@ -732,6 +737,10 @@ def insert_admin_clause_breaks(text: str) -> str:
         # 꼬리를 슬라이스로 떠서 넘기면 매치마다 본문 나머지를 통째로
         # 복사한다. 조문이 길수록 제곱으로 늘어나므로 위치만 넘긴다.
         if _ADMIN_CLAUSE_REFERENCE_TAIL_PATTERN.match(text, match.end()):
+            return match.group(1)
+        # ``4-2-1-8., 8-1-2-5 및 8-1-3-3의 개정규정``처럼 번호만 이어
+        # 적는 나열도 인용이다. 부칙 한 문장이 번호마다 토막 났다.
+        if _PAREN_ITEM_ENUMERATION_TAIL_PATTERN.match(text, match.end()):
             return match.group(1)
         return f"\n{match.group(1)}"
 

@@ -18,6 +18,7 @@ APP_NAME = "국가법령정보 통합검색"
 
 datas = [
     ("molit_law_logo.svg", "."),
+    ("home_search.gif", "."),
     # LGPL v3ㆍOFL 1.1이 요구하는 라이선스 사본. ui/assets.py의
     # LICENSE_DIR이 이 위치를 가리킨다.
     ("licenses/LICENSE.LGPLv3.txt", "licenses"),
@@ -47,6 +48,8 @@ datas = [
     ("spin_down.svg", "."),
     ("annex_hwp.svg", "."),
     ("annex_pdf.svg", "."),
+    ("annex_expand.svg", "."),
+    ("annex_collapse.svg", "."),
     ("close_mark.svg", "."),
     ("fonts/PretendardVariable.ttf", "fonts"),
     ("fonts/Pretendard-Thin.ttf", "fonts"),

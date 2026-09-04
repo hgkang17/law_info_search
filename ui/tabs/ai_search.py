@@ -28,7 +28,6 @@ from ui.widgets import (
     ResultHeaderView,
     ResultOverlayLabel,
     SearchHighlightDelegate,
-    SegmentedModeSwitch,
     StableHorizontalTableWidget,
     build_detail_header_controls,
     load_detail_font_preferences,
@@ -95,7 +94,6 @@ class AiLawSearchTab(QWidget):
     """지능형 직접검색 또는 연관법령 추천 결과를 표시하는 탭."""
 
     # 검색줄의 모드 스위치가 다른 API를 고르면 법령검색 탭에 알린다.
-    mode_requested = Signal(str)
 
     def __init__(
         self,
@@ -140,6 +138,9 @@ class AiLawSearchTab(QWidget):
         self._build_ui()
         install_text_color_shortcuts(self)
         self.law_cache.changed.connect(self._refresh_snapshot_checks)
+        # 조문 즐겨찾기는 법령검색 화면이 걸어 준다. 다 걸리면 이 화면의
+        # 별도 함께 채워져야 하므로 같은 신호로 다시 그린다.
+        self.law_cache.changed.connect(self._refresh_favorite_stars)
 
     def idle_status_text(self) -> str:
         """검색 전 하단 상태바에 띄우는 안내.
@@ -192,23 +193,9 @@ class AiLawSearchTab(QWidget):
         search_layout.setContentsMargins(10, 12, 10, 12)
         search_layout.setSpacing(8)
 
-        # 연관검색ㆍ직접검색은 카테고리 바에서 캡슐 하나로 묶였다. 어느
-        # API를 쓰는지는 여기서 고르고, 화면 전환은 법령검색 탭이 맡는다.
-        self.mode_switch = SegmentedModeSwitch(
-            (
-                (KEYWORD_CATEGORY_LABELS[KEYWORD_RELATED_TARGET],
-                 KEYWORD_RELATED_TARGET),
-                (KEYWORD_CATEGORY_LABELS[KEYWORD_DIRECT_TARGET],
-                 KEYWORD_DIRECT_TARGET),
-            )
-        )
-        self.mode_switch.set_current_value(self.service)
-        self.mode_switch.changed.connect(self.mode_requested)
-        self.mode_switch.setToolTip(
-            "연관검색은 키워드와 연관성이 높은 조문을 추천하고, "
-            "직접검색은 키워드가 그대로 들어간 조문을 찾습니다."
-        )
-
+        # 이 화면은 조문검색 하나만 맡는다. 연관검색은 고를 자리를 두지
+        # 않고 통합검색 결과에 "AI추천" 구분으로 섞여 나온다. 같은 키워드를
+        # 두 화면에 두 번 넣던 일을 없앤다.
         self.scope_combo = DropdownComboBox()
         if self.is_related:
             self.scope_combo.addItem("법령 조문", 0)
@@ -230,7 +217,6 @@ class AiLawSearchTab(QWidget):
         self.search_button.setFixedWidth(56)
         self.search_button.clicked.connect(self.start_search)
 
-        search_layout.addWidget(self.mode_switch, 0, Qt.AlignmentFlag.AlignVCenter)
         search_layout.addWidget(self.scope_combo)
         search_layout.addWidget(self.query_input, 1)
         search_layout.addWidget(self.search_button)
@@ -439,8 +425,8 @@ class AiLawSearchTab(QWidget):
         self.detail_view.verticalScrollBar().valueChanged.connect(
             self._position_inline_three_stage_button
         )
+        # 찾기 줄은 본문 위에 뜨는 창이라 레이아웃에 넣지 않는다.
         self.detail_search = DetailSearchBar(self.detail_view, self)
-        detail_layout.addWidget(self.detail_search)
         detail_view_row = QWidget()
         detail_view_row.setObjectName("detailViewRow")
         detail_view_row_layout = QHBoxLayout(detail_view_row)
@@ -809,7 +795,10 @@ class AiLawSearchTab(QWidget):
             if html is not None:
                 self.detail_view.setHtml(
                     scale_document_font_sizes(
-                        html, source_font_size, self.detail_font_size
+                        html,
+                        source_font_size,
+                        self.detail_font_size,
+                        self.detail_font_family,
                     )
                 )
             elif text is not None:
@@ -1699,6 +1688,13 @@ class AiLawSearchTab(QWidget):
         if self._is_favorite_at_row(row_index):
             self.status_label.setText(f"{label}은(는) 이미 즐겨찾기에 있습니다.")
             return
+        # 실제 처리는 법령검색 화면이 맡는다. 그 화면의 상태줄은 지금
+        # 보이지 않으므로, 무엇을 하고 있는지 이 화면에도 적는다. 저장본이
+        # 없으면 본문을 먼저 받아야 해서 몇 초가 걸린다.
+        self.status_label.setText(
+            f"{label} 즐겨찾기를 거는 중입니다. "
+            "저장본이 없으면 본문을 먼저 받습니다."
+        )
         self._resource_action(
             "add_article_favorite_by_id",
             target["law_id"],
@@ -1707,6 +1703,11 @@ class AiLawSearchTab(QWidget):
             target["law_name"],
         )
         self.result_table.viewport().update()
+
+    def _refresh_favorite_stars(self) -> None:
+        """저장ㆍ즐겨찾기가 바뀌면 목록의 별을 다시 그린다."""
+        if hasattr(self, "result_table"):
+            self.result_table.viewport().update()
 
     def _refresh_snapshot_checks(self) -> None:
         if not hasattr(self, "result_table"):
@@ -1982,16 +1983,21 @@ class AiLawSearchTab(QWidget):
                     f"{row.get('name', '')} {row.get('provision', '')} 저장된 본문 열기"
                 )
                 return
+        # 법령 본문 화면과 같은 머리 모양으로 맞춘다. 시행일ㆍ공포번호는
+        # 제목 아래 한 줄에 모으고, 기본정보에는 ID와 소관만 남긴다.
+        is_admin_kind = str(row.get("kind") or "").startswith("행정규칙")
         metadata = [
-            ("구분", row["kind"]),
-            ("조문·별표", row["provision"]),
-            ("시행일자", row["date"]),
-            ("소관기관", row["agency"]),
-            ("공포·발령일자", row["publication_date"]),
-            ("공포·발령번호", row["publication_number"]),
+            (
+                "행정규칙ID" if is_admin_kind else "법령ID",
+                str(row.get("source_id") or ""),
+            ),
+            ("소관부처", row["agency"]),
         ]
         html_parts, plain_parts = detail_document_header(
-            row["name"], metadata, self.highlight_terms
+            row["name"],
+            metadata,
+            self.highlight_terms,
+            subtitle=self._article_headline(row),
         )
         if row["content"]:
             # 법령검색 탭과 같은 규칙으로 링크를 건다. 행정규칙은 조문 번호
@@ -2013,7 +2019,8 @@ class AiLawSearchTab(QWidget):
                     else None
                 ),
             )
-            html_parts.append("<h2>조문내용</h2>")
+            # "조문내용"이라는 제목은 알려 주는 것이 없다. 바로 아래가
+            # 조문이라는 것은 본문만 봐도 안다.
             html_parts.append(f'<div class="content">{content_html}</div>')
             plain_parts.extend(
                 (
@@ -2104,6 +2111,32 @@ class AiLawSearchTab(QWidget):
             "label": str(row.get("provision") or "").strip(),
         }
 
+    @staticmethod
+    def _headline_date(value: object) -> str:
+        """``20260517``ㆍ``2026.05.17``을 ``2026. 5. 17.``로."""
+        digits = re.sub(r"\D", "", str(value or ""))
+        if len(digits) >= 8:
+            return (
+                f"{int(digits[:4])}. {int(digits[4:6])}. {int(digits[6:8])}."
+            )
+        return str(value or "").strip()
+
+    @classmethod
+    def _article_headline(cls, row: dict[str, object]) -> str:
+        """제목 아래에 둘 ``[시행 …] [제…호, …]`` 줄."""
+        parts: list[str] = []
+        effective = cls._headline_date(row.get("date"))
+        if effective:
+            parts.append(f"[시행 {effective}]")
+        number = str(row.get("publication_number") or "").strip()
+        promulgated = cls._headline_date(row.get("publication_date"))
+        inner = [f"제{number}호"] if number else []
+        if promulgated:
+            inner.append(promulgated)
+        if inner:
+            parts.append("[" + ", ".join(inner) + "]")
+        return " ".join(parts)
+
     def _update_three_stage_button(
         self, row: dict[str, object] | None
     ) -> None:
@@ -2117,7 +2150,14 @@ class AiLawSearchTab(QWidget):
             return
         provision = str(row.get("provision") or "").strip()
         plain_text = self.detail_view.toPlainText()
-        self._three_stage_position = plain_text.rfind(provision) if provision else -1
+        # 본문에서는 ``제77조(용도지역의 건폐율)``처럼 묶음표로 적히므로
+        # 목록 표기(``제77조 용도지역의 건폐율``)를 그대로 찾으면 못 찾는다.
+        # 조문 번호만 떼어 첫 자리를 찾는다.
+        number_match = re.match(r"(제\d+조(?:의\d+)?)", provision)
+        needle = number_match.group(1) if number_match else provision
+        self._three_stage_position = (
+            plain_text.find(needle) if needle else -1
+        )
         if self._three_stage_position < 0:
             self.three_stage_button.hide()
             return
@@ -2189,6 +2229,21 @@ class AiLawSearchTab(QWidget):
             QMessageBox.warning(
                 self, "링크 열기 실패", "법령 링크를 열지 못했습니다."
             )
+
+    def close_open_document(self) -> None:
+        """열린 본문 표시줄에서 이 화면의 본문을 닫는다.
+
+        조문검색은 화면 하나에 본문 칸이 붙어 있는 구조라 탭을 지우는
+        대신 본문 상태를 비운다. 그러면 ``_collect_open_documents``가
+        다음 갱신에서 이 화면을 표시줄에서 뺀다.
+        """
+        self._active_detail_row = None
+        self.current_detail_text = ""
+        self.detail_view.clear()
+        self.copy_button.setEnabled(False)
+        self._set_visible_memos([])
+        self._update_three_stage_button(None)
+        self._hide_detail_split()
 
     def copy_detail(self) -> None:
         if not self.current_detail_text:

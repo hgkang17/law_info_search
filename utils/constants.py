@@ -14,9 +14,8 @@ UI_FONT_PIXEL_SIZE = 14
 # 스타일시트에 그대로 넣을 수 있는 형태.
 UI_FONT_CSS_FAMILY = '"Malgun Gothic", "맑은 고딕"' 
 # 본문(법령ㆍ행정규칙 조문) 글꼴. 화면 UI 글꼴과 따로 두어 여기만 바꾸면
-# 본문 전체가 함께 바뀐다. 맑은 고딕으로 옮겼다가 실제 화면을 보고 굴림
-# 9pt로 되돌렸다. 본문 위 글꼴 칸에서 사용자가 다른 글꼴을 고를 수 있고,
-# 고른 값은 설정에 남는다.
+# 본문 전체가 함께 바뀐다. 본문 위 글꼴 칸에서 사용자가 다른 글꼴을 고를
+# 수 있고, 고른 값은 설정에 남는다.
 DETAIL_FONT_FAMILY = "Gulim"
 # 본문 HTML(QTextDocument)용 글꼴 목록. 글꼴이 없는 환경을 위해 대체 글꼴을
 # 함께 적는다. 위 DETAIL_FONT_FAMILY와 같은 글꼴을 첫머리에 둔다.
@@ -26,13 +25,13 @@ DETAIL_FONT_CSS_FAMILY = "'Gulim', '굴림', 'Malgun Gothic', '맑은 고딕'"
 DETAIL_FONT_FAMILIES = ("Gulim", "굴림", "Malgun Gothic", "맑은 고딕")
 # 본문을 처음 열 때의 글자 크기(pt). 사용자가 본문 위에서 조절하면 그 값이
 # 설정에 남아 다음부터는 그쪽을 쓴다.
-DEFAULT_DETAIL_FONT_POINT = 9.0
+DEFAULT_DETAIL_FONT_POINT = 9.5
 # 본문 머리줄의 글꼴ㆍ크기ㆍ색상ㆍ초기화ㆍ메모 도구 실제 높이. Qt QSS의
 # min-height는 테두리를 제외한 값이라 위젯과 부모 영역은 30px로 맞춘다.
 DETAIL_HEADER_CONTROL_HEIGHT = 30
 # 기본 본문 글꼴을 바꿀 때 기존 자동 저장값을 한 번만 새 기본값으로 옮긴다.
 # 사용자가 마이그레이션 뒤 직접 고른 글꼴과 크기는 다시 덮지 않는다.
-DETAIL_FONT_DEFAULTS_VERSION = 1
+DETAIL_FONT_DEFAULTS_VERSION = 3
 
 APP_TITLE = "국가법령정보 통합검색"
 APP_VERSION = "1.3.3"

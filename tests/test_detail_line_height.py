@@ -56,9 +56,9 @@ def test_content_line_height_actually_changes_layout(qt_app) -> None:
     )
 
 
-def test_body_line_height_is_125() -> None:
-    assert BODY_LINE_HEIGHT == "1.25"
-    assert "line-height:1.25;" in DETAIL_DOCUMENT_STYLE
+def test_body_line_height_is_135() -> None:
+    assert BODY_LINE_HEIGHT == "1.35"
+    assert "line-height:1.35;" in DETAIL_DOCUMENT_STYLE
 
 
 def test_body_line_height_would_not_reach_the_body_text(qt_app) -> None:
