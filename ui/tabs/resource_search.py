@@ -43,6 +43,7 @@ from ui.widgets import (
     TabStripScrollArea,
     batch_table_updates,
     build_detail_header_controls,
+    load_detail_font_preferences,
     build_restore_view_button,
     build_search_result_head,
     clamp_detail_font_size,
@@ -99,7 +100,7 @@ from molit_cgm_expc_api import (
 from utils.annex_notation import annex_hint_in_query, annex_related_law_name, row_matches_annex_hint
 from utils.annex_parse import parse_annex_bytes
 from utils.law_download import download_law_file
-from utils.constants import DEFAULT_DETAIL_FONT_POINT, DETAIL_FONT_FAMILY
+from utils.constants import DETAIL_FONT_FAMILY
 from utils.formatting import (
     BODY_LINE_HEIGHT,
     body_to_html,
@@ -343,14 +344,12 @@ class ResourceSearchTab(QWidget):
         self._pending_three_stage_link_request: dict[str, str] | None = None
         self._three_stage_link_request_in_flight: dict[str, str] | None = None
         self._updating_cache_checks = False
-        self.detail_font_size = self._saved_font_size(
-            "resource_detail_font_size", DEFAULT_DETAIL_FONT_POINT
-        )
-        self.detail_font_family = str(
-            self.recent_search_manager.settings.value(
-                "resource_detail_font_family", DETAIL_FONT_FAMILY
+        self.detail_font_size, self.detail_font_family = (
+            load_detail_font_preferences(
+                self.recent_search_manager.settings,
+                size_key="resource_detail_font_size",
+                family_key="resource_detail_font_family",
             )
-            or DETAIL_FONT_FAMILY
         )
         self._sort_column = -1
         self._sort_ascending = True

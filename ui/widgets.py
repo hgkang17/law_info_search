@@ -79,7 +79,11 @@ from PySide6.QtWidgets import (
 )
 from storage.recent import RecentSearchManager
 from ui.assets import CLOSE_MARK_ICON_PATH
-from utils.constants import DETAIL_FONT_FAMILY
+from utils.constants import (
+    DEFAULT_DETAIL_FONT_POINT,
+    DETAIL_FONT_DEFAULTS_VERSION,
+    DETAIL_FONT_FAMILY,
+)
 from utils.formatting import hwp_friendly_clipboard_html
 from utils.parsing import whitespace_flexible_pattern
 
@@ -489,7 +493,7 @@ DETAIL_FONT_SIZE_MIN = 7.0
 DETAIL_FONT_SIZE_MAX = 18.0
 DETAIL_FONT_SIZE_STEP = 0.5
 DETAIL_FONT_CONTROL_WIDTH = 80
-DETAIL_FONT_FAMILY_WIDTH = 126
+DETAIL_FONT_FAMILY_WIDTH = 184
 # 본문 머리줄의 글꼴 칸ㆍ글자 크기 칸 높이. 스타일시트의 max-height만으로는
 # 맞지 않는다. QDoubleSpinBox는 위아래 버튼 때문에 Qt가 잡는 최소 높이가
 # 38px이라 max-height 30px보다 커지고, 그러면 Qt는 최소 높이를 따른다.
@@ -513,6 +517,68 @@ def normalize_detail_font_size(value: float) -> float:
     return clamp_detail_font_size(snapped)
 
 
+_LEGACY_DEFAULT_DETAIL_FAMILIES = {
+    "pretendard",
+    "pretendard variable",
+    "malgun gothic",
+    "맑은 고딕",
+}
+
+
+def load_detail_font_preferences(
+    settings: QSettings, *, size_key: str, family_key: str
+) -> tuple[float, str]:
+    """저장된 본문 글꼴을 읽고 예전 자동 기본값만 한 번 교체한다."""
+    revision_key = f"{family_key}_defaults_version"
+    try:
+        revision = int(settings.value(revision_key, 0) or 0)
+    except (TypeError, ValueError):
+        revision = 0
+
+    raw_family = str(settings.value(family_key, "") or "").strip()
+    raw_size = settings.value(size_key, None)
+    try:
+        font_size = float(raw_size)
+    except (TypeError, ValueError):
+        font_size = DEFAULT_DETAIL_FONT_POINT
+
+    if revision < DETAIL_FONT_DEFAULTS_VERSION:
+        if not raw_family or raw_family.casefold() in _LEGACY_DEFAULT_DETAIL_FAMILIES:
+            raw_family = DETAIL_FONT_FAMILY
+            settings.setValue(family_key, raw_family)
+        settings.setValue(revision_key, DETAIL_FONT_DEFAULTS_VERSION)
+        settings.sync()
+
+    return clamp_detail_font_size(font_size), raw_family or DETAIL_FONT_FAMILY
+
+
+class LeadingFontComboBox(QFontComboBox):
+    """긴 글꼴명이 잘릴 때 이름의 뒷부분 대신 앞부분을 보여 주는 선택칸."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.currentFontChanged.connect(self._queue_leading_text)
+
+    def setCurrentFont(self, font: QFont) -> None:
+        super().setCurrentFont(font)
+        self._reveal_leading_text()
+        self._queue_leading_text()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._queue_leading_text()
+
+    def _queue_leading_text(self, *_args) -> None:
+        QTimer.singleShot(0, self._reveal_leading_text)
+
+    def _reveal_leading_text(self) -> None:
+        editor = self.lineEdit()
+        if editor is None:
+            return
+        editor.deselect()
+        editor.setCursorPosition(0)
+
+
 @dataclass(frozen=True, slots=True)
 class DetailHeaderControls:
     """본문 머리글에서 함께 쓰는 제목과 글자 크기 조절 묶음."""
@@ -530,7 +596,7 @@ def build_detail_header_controls(
     title.setObjectName("detailSectionTitle")
     title.setToolTip("더블클릭하면 본문 크게 보기로 전환합니다.")
 
-    font_combo = QFontComboBox()
+    font_combo = LeadingFontComboBox()
     font_combo.setObjectName("detailFontCombo")
     font_combo.setToolTip("본문에 사용할 글꼴을 선택합니다.")
     font_combo.setFixedWidth(DETAIL_FONT_FAMILY_WIDTH)

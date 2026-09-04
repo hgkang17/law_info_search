@@ -30,6 +30,7 @@ from ui.widgets import (
     StableHorizontalTableWidget,
     batch_table_updates,
     build_detail_header_controls,
+    load_detail_font_preferences,
     build_restore_view_button,
     build_search_result_head,
     clamp_detail_font_size,
@@ -58,7 +59,6 @@ from workers.search_worker import (
     ApiWorker,
 )
 from utils.constants import (
-    DEFAULT_DETAIL_FONT_POINT,
     DETAIL_FONT_FAMILY,
     FONT_FAMILY,
 )
@@ -120,14 +120,12 @@ class LawSearchTab(QWidget):
         self.is_central = service == "central"
         self.is_expc = service == "expc"
         self.is_prec = service == "prec"
-        self.detail_font_size = self._saved_font_size(
-            f"{service}_detail_font_size", DEFAULT_DETAIL_FONT_POINT
-        )
-        self.detail_font_family = str(
-            self.recent_search_manager.settings.value(
-                f"{service}_detail_font_family", DETAIL_FONT_FAMILY
+        self.detail_font_size, self.detail_font_family = (
+            load_detail_font_preferences(
+                self.recent_search_manager.settings,
+                size_key=f"{service}_detail_font_size",
+                family_key=f"{service}_detail_font_family",
             )
-            or DETAIL_FONT_FAMILY
         )
         self._reading_mode = False
         self._normal_window_margins: tuple[int, int, int, int] | None = None

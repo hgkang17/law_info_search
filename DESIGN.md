@@ -25,8 +25,8 @@ typography:
     fontSize: "10pt"
     fontWeight: 400
   reader:
-    fontFamily: "Malgun Gothic, 맑은 고딕"
-    fontSize: "10pt"
+    fontFamily: "Gulim, 굴림, Malgun Gothic, 맑은 고딕"
+    fontSize: "9pt"
     fontWeight: 400
   label:
     fontFamily: "Pretendard, Malgun Gothic"

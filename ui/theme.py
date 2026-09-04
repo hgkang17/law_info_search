@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
+from pathlib import Path
 import sys
 from typing import Callable
 from PySide6.QtCore import QSize, Qt
@@ -130,12 +132,29 @@ _PRETENDARD_FONTS_REGISTERED = False
 _PRETENDARD_FONT_IDS: list[int] = []
 
 
+_SYSTEM_DETAIL_FONT_IDS: list[int] = []
+
+
+def _register_windows_detail_font() -> None:
+    """Qt가 Windows 기본 굴림을 열거하지 못한 경우 OS 파일로 보완한다."""
+    if sys.platform != "win32" or QFontDatabase.hasFamily(DETAIL_FONT_FAMILY):
+        return
+    windows_dir = Path(os.environ.get("WINDIR", r"C:\Windows"))
+    font_path = windows_dir / "Fonts" / "gulim.ttc"
+    if not font_path.is_file():
+        return
+    font_id = QFontDatabase.addApplicationFont(str(font_path))
+    if font_id >= 0:
+        _SYSTEM_DETAIL_FONT_IDS.append(font_id)
+
+
 def register_bundled_pretendard_fonts() -> bool:
-    """Pretendard Variable 및 정적 두께 파일을 Qt 앱 전용 폰트로 등록."""
+    """UI용 Pretendard와 Windows 본문용 굴림을 Qt 앱에 등록."""
     global _PRETENDARD_FONTS_REGISTERED
     if _PRETENDARD_FONTS_REGISTERED:
         return bool(_PRETENDARD_FONT_IDS)
     _PRETENDARD_FONTS_REGISTERED = True
+    _register_windows_detail_font()
     if PRETENDARD_VARIABLE_FONT_PATH.is_file():
         font_id = QFontDatabase.addApplicationFont(
             str(PRETENDARD_VARIABLE_FONT_PATH)

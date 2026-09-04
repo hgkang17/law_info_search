@@ -31,6 +31,7 @@ from ui.widgets import (
     SegmentedModeSwitch,
     StableHorizontalTableWidget,
     build_detail_header_controls,
+    load_detail_font_preferences,
     build_restore_view_button,
     build_search_result_head,
     clamp_detail_font_size,
@@ -62,7 +63,7 @@ from workers.search_worker import (
     ApiWorker,
     RelatedArticleWorker,
 )
-from utils.constants import DEFAULT_DETAIL_FONT_POINT, DETAIL_FONT_FAMILY
+from utils.constants import DETAIL_FONT_FAMILY
 from utils.formatting import (
     body_to_html,
     detail_document_header,
@@ -121,14 +122,12 @@ class AiLawSearchTab(QWidget):
         self._updating_cache_checks = False
         self._active_detail_row: dict[str, object] | None = None
         self._visible_memos: list[dict[str, object]] = []
-        self.detail_font_size = self._saved_font_size(
-            f"{service}_detail_font_size", DEFAULT_DETAIL_FONT_POINT
-        )
-        self.detail_font_family = str(
-            self.recent_search_manager.settings.value(
-                f"{service}_detail_font_family", DETAIL_FONT_FAMILY
+        self.detail_font_size, self.detail_font_family = (
+            load_detail_font_preferences(
+                self.recent_search_manager.settings,
+                size_key=f"{service}_detail_font_size",
+                family_key=f"{service}_detail_font_family",
             )
-            or DETAIL_FONT_FAMILY
         )
         self._reading_mode = False
         self._sort_column = -1
