@@ -27,6 +27,9 @@ DETAIL_FONT_FAMILIES = ("Gulim", "굴림", "Malgun Gothic", "맑은 고딕")
 # 본문을 처음 열 때의 글자 크기(pt). 사용자가 본문 위에서 조절하면 그 값이
 # 설정에 남아 다음부터는 그쪽을 쓴다.
 DEFAULT_DETAIL_FONT_POINT = 9.0
+# 본문 머리줄의 글꼴ㆍ크기ㆍ색상ㆍ초기화ㆍ메모 도구 실제 높이. Qt QSS의
+# min-height는 테두리를 제외한 값이라 위젯과 부모 영역은 30px로 맞춘다.
+DETAIL_HEADER_CONTROL_HEIGHT = 30
 # 기본 본문 글꼴을 바꿀 때 기존 자동 저장값을 한 번만 새 기본값으로 옮긴다.
 # 사용자가 마이그레이션 뒤 직접 고른 글꼴과 크기는 다시 덮지 않는다.
 DETAIL_FONT_DEFAULTS_VERSION = 1

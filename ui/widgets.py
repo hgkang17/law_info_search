@@ -83,6 +83,7 @@ from utils.constants import (
     DEFAULT_DETAIL_FONT_POINT,
     DETAIL_FONT_DEFAULTS_VERSION,
     DETAIL_FONT_FAMILY,
+    DETAIL_HEADER_CONTROL_HEIGHT,
 )
 from utils.formatting import hwp_friendly_clipboard_html
 from utils.parsing import whitespace_flexible_pattern
@@ -494,11 +495,6 @@ DETAIL_FONT_SIZE_MAX = 18.0
 DETAIL_FONT_SIZE_STEP = 0.5
 DETAIL_FONT_CONTROL_WIDTH = 80
 DETAIL_FONT_FAMILY_WIDTH = 184
-# 본문 머리줄의 글꼴 칸ㆍ글자 크기 칸 높이. 스타일시트의 max-height만으로는
-# 맞지 않는다. QDoubleSpinBox는 위아래 버튼 때문에 Qt가 잡는 최소 높이가
-# 38px이라 max-height 30px보다 커지고, 그러면 Qt는 최소 높이를 따른다.
-# 두 칸의 높이를 코드에서 직접 같게 고정한다.
-DETAIL_HEADER_CONTROL_HEIGHT = 30
 # 조문 첫 줄 오른쪽에 얹는 3단비교 버튼 너비. 본문 문서의 오른쪽 여백을
 # 이 값에 맞춰 잡으므로 한곳에서 관리한다.
 THREE_STAGE_BUTTON_WIDTH = 40

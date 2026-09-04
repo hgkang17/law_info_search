@@ -37,6 +37,7 @@ from utils.constants import (
     DETAIL_FONT_CSS_FAMILY,
     DETAIL_FONT_FAMILIES,
     DETAIL_FONT_FAMILY,
+    DETAIL_HEADER_CONTROL_HEIGHT,
     FONT_FAMILY,
     UI_FONT_FAMILIES,
     UI_FONT_PIXEL_SIZE,
@@ -492,7 +493,7 @@ def build_color_palette_toolbar(
     """
     color_tools = QWidget()
     color_tools.setObjectName("colorTools")
-    color_tools.setFixedSize(78, 28)
+    color_tools.setFixedSize(78, DETAIL_HEADER_CONTROL_HEIGHT)
     color_tools.setSizePolicy(
         QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
     )
@@ -531,7 +532,9 @@ def build_color_palette_toolbar(
         current = {"value": "#fde047" if is_background else "#ef4444"}
         button = QToolButton()
         button.setObjectName("colorPaletteToolButton")
-        button.setFixedSize(37, 28)
+        # QSS의 좌우 1px 테두리까지 합친 실제 크기다. 부모 영역과 같은
+        # 수치로 잡아 아래ㆍ오른쪽 테두리가 잘리지 않게 한다.
+        button.setFixedSize(39, DETAIL_HEADER_CONTROL_HEIGHT)
         button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         button.setIconSize(QSize(22, 20))
@@ -576,20 +579,20 @@ def build_color_palette_toolbar(
 
     color_reset_tools = QWidget()
     color_reset_tools.setObjectName("colorResetTools")
-    color_reset_tools.setFixedSize(124, 28)
+    color_reset_tools.setFixedSize(124, DETAIL_HEADER_CONTROL_HEIGHT)
     color_reset_layout = QHBoxLayout(color_reset_tools)
     color_reset_layout.setContentsMargins(0, 0, 0, 0)
     color_reset_layout.setSpacing(4)
     color_reset_button = QPushButton("선택초기화")
     color_reset_button.setObjectName("colorResetButton")
-    color_reset_button.setFixedSize(60, 28)
+    color_reset_button.setFixedSize(60, DETAIL_HEADER_CONTROL_HEIGHT)
     color_reset_button.setToolTip(
         "선택한 본문의 음영색과 글자색을 모두 지웁니다."
     )
     color_reset_button.clicked.connect(reset_selected)
     all_color_reset_button = QPushButton("전체초기화")
     all_color_reset_button.setObjectName("colorResetButton")
-    all_color_reset_button.setFixedSize(60, 28)
+    all_color_reset_button.setFixedSize(60, DETAIL_HEADER_CONTROL_HEIGHT)
     all_color_reset_button.setToolTip(
         "현재 본문의 사용자 음영색과 글자색을 모두 지웁니다."
     )
@@ -599,7 +602,7 @@ def build_color_palette_toolbar(
 
     memo_button = QPushButton("메모")
     memo_button.setObjectName("memoButton")
-    memo_button.setFixedSize(40, 28)
+    memo_button.setFixedSize(40, DETAIL_HEADER_CONTROL_HEIGHT)
     memo_button.setToolTip("본문을 드래그해 선택한 뒤 메모를 작성합니다.")
     memo_button.clicked.connect(lambda _checked=False: edit_memo())
 

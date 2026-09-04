@@ -41,3 +41,38 @@ def test_font_family_and_size_boxes_share_one_height(qt_app) -> None:
         assert spin_height == DETAIL_HEADER_CONTROL_HEIGHT
     finally:
         window.close()
+
+
+def test_formatting_tools_fit_their_parent_without_clipped_borders(qt_app) -> None:
+    window = LawSearchWindow()
+    try:
+        window.resize(1400, 900)
+        window.show()
+        qt_app.processEvents()
+        tab = window.resource_tab
+
+        controls = [
+            *tab.palette_buttons,
+            tab.color_reset_button,
+            tab.all_color_reset_button,
+            tab.memo_button,
+        ]
+        assert all(
+            control.height() == DETAIL_HEADER_CONTROL_HEIGHT
+            for control in controls
+        )
+        assert tab.color_tools.height() == DETAIL_HEADER_CONTROL_HEIGHT
+        assert tab.color_reset_tools.height() == DETAIL_HEADER_CONTROL_HEIGHT
+        assert all(
+            tab.color_tools.rect().contains(button.geometry())
+            for button in tab.palette_buttons
+        )
+        assert all(
+            tab.color_reset_tools.rect().contains(button.geometry())
+            for button in (
+                tab.color_reset_button,
+                tab.all_color_reset_button,
+            )
+        )
+    finally:
+        window.close()
