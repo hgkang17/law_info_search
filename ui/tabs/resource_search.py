@@ -101,6 +101,7 @@ from utils.annex_parse import parse_annex_bytes
 from utils.law_download import download_law_file
 from utils.constants import DEFAULT_DETAIL_FONT_POINT, DETAIL_FONT_FAMILY
 from utils.formatting import (
+    BODY_LINE_HEIGHT,
     body_to_html,
     detail_document_header,
     law_headline_text,
@@ -9225,7 +9226,7 @@ class ResourceSearchTab(QWidget):
             "font-size:15px; font-weight:700; border-bottom:1px solid #dbeaf7; "
             "padding-bottom:4px; margin:11px 0 7px 0; }",
             ".content { font-family:'Malgun Gothic'; font-weight:400; "
-            "font-size:13px; }",
+            f"font-size:13px; line-height:{BODY_LINE_HEIGHT}; }}",
             ".paragraph { margin:0 0 7px 0; }",
             ".bullet { margin:0 0 5px 0; border-collapse:collapse; }",
             ".bullet-marker { font-weight:400; padding:0; }",
@@ -9438,7 +9439,8 @@ class ResourceSearchTab(QWidget):
                 )
             html_parts.append(
                 '<div class="annex-item" style="margin:0; padding:10px 0; '
-                'line-height:1.75; font-family:\'Malgun Gothic\',\'맑은 고딕\'; '
+                f'line-height:{BODY_LINE_HEIGHT}; '
+                'font-family:\'Malgun Gothic\',\'맑은 고딕\'; '
                 'font-size:9.5pt; font-weight:400; color:#242529;">'
                 f"{title_html}"
                 + (f"&nbsp;&nbsp;{icon_html}" if icon_html else "")

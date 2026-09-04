@@ -52,6 +52,16 @@ from .parsing import (
 REPEAL_NOTICE_LABEL = "현행여부"
 
 
+# 한 문단이 여러 줄로 접힐 때의 줄 간격과, 단락 사이 여백.
+#
+# 둘은 하는 일이 다르다. 줄 간격은 "제2조제4항이 두 줄로 접혔을 때 그 두
+# 줄 사이"를 벌리고, 단락 여백은 "제2조와 제3조 사이"를 벌린다. 줄 간격만
+# 올리면 한 줄짜리 항목의 높이까지 함께 커져 본문 문단이 많은 문서(법률)가
+# 유난히 성글어 보이므로, 단락 여백은 번호 항목과 같은 값으로 눌러 둔다.
+BODY_LINE_HEIGHT = "1.25"
+BODY_PARAGRAPH_GAP_PX = 7
+
+
 DETAIL_DOCUMENT_STYLE = (
     "<style>"
     # 줄간격은 body가 아니라 실제 글이 담기는 .content에 준다. Qt는 body에
@@ -88,8 +98,12 @@ DETAIL_DOCUMENT_STYLE = (
     # 조절칸 값을 그대로 들고 있으므로 그것을 따르게 둔다.
     # 한 문단이 여러 줄로 접힐 때의 줄 간격. 여기 준 값만 실제로 먹는다.
     ".content { font-family:" + DETAIL_FONT_CSS_FAMILY + "; font-weight:400; "
-    "line-height:1.75; }"
-    ".paragraph { margin:0 0 12px 0; }"
+    "line-height:" + BODY_LINE_HEIGHT + "; }"
+    # 단락 사이 여백은 번호 항목(legal-indent, margin-bottom 7px)과 같게
+    # 둔다. 조문 본문만 12px을 쓰면 줄 간격을 넓혔을 때 법률처럼 본문
+    # 문단이 많은 문서만 유난히 성글어 보였다. 한 문단 안에서 줄이 접힐
+    # 때의 간격은 line-height가 맡고, 단락 사이는 이 값이 맡는다.
+    ".paragraph { margin:0 0 " + str(BODY_PARAGRAPH_GAP_PX) + "px 0; }"
     ".bullet { margin:0 0 7px 0; border-collapse:collapse; }"
     ".bullet-marker { font-weight:400; padding:0; }"
     ".bullet-text { font-weight:400; padding:0; }"
