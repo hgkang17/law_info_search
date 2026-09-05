@@ -9,7 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 from PySide6.QtCore import QPoint
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QHeaderView
 
 import molit_cgm_expc_api as api_module
 from models.law import (
@@ -47,6 +47,42 @@ def test_keyword_categories_sit_next_to_integrated_search(window) -> None:
     assert targets[:2] == ["__all__", "ai_search"]
     # 별표·서식 캡슐은 세 대상을 한 번에 찾는 전체가 기본이다.
     assert targets[2:] == ["law", "admrul", "ordin", "__annex_all__"]
+
+
+def test_integrated_results_put_admin_rules_before_ai_recommendations(
+    window,
+) -> None:
+    resource = window.resource_tab
+    rows = [
+        {"target": "ordin"},
+        {"target": "law", "ai_recommended": True},
+        {"target": "admrul"},
+        {"target": "law"},
+        {"target": "licbyl"},
+    ]
+
+    rows.sort(key=resource._integrated_group_order)
+
+    assert [
+        (row["target"], bool(row.get("ai_recommended"))) for row in rows
+    ] == [
+        ("law", False),
+        ("admrul", False),
+        ("law", True),
+        ("ordin", False),
+        ("licbyl", False),
+    ]
+
+
+def test_result_columns_are_resizable_from_the_header(window) -> None:
+    header = window.resource_tab.result_table.horizontalHeader()
+
+    # 저장 체크 칸만 고정폭이고 나머지는 손으로 끌어 조절한다.
+    assert header.sectionResizeMode(0) == QHeaderView.ResizeMode.Fixed
+    assert all(
+        header.sectionResizeMode(column) == QHeaderView.ResizeMode.Interactive
+        for column in range(1, header.count())
+    )
 
 
 def test_annex_capsule_carries_the_chosen_annex_target(window) -> None:

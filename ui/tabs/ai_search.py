@@ -18,6 +18,7 @@ from ui.theme import (
     user_format_color,
 )
 from ui.widgets import (
+    configure_expanding_column,
     CenteredCheckDelegate,
     DropdownComboBox,
     DeferredWrapTextBrowser,
@@ -293,12 +294,17 @@ class AiLawSearchTab(QWidget):
         configure_adaptive_result_rows(self.result_table, (2, 3))
         table_header = self.result_table.horizontalHeader()
         table_header.setStretchLastSection(False)
-        table_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        table_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        table_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        table_header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        table_header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        table_header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        # 자동 맞춤ㆍ늘림 모드는 헤더 경계를 끌어도 폭을 곧바로 되돌린다.
+        # 처음 폭만 정해 두고 이후에는 사용자가 각 열을 직접 조절한다.
+        table_header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        for column, width in enumerate((56, 90, 300, 260, 105, 130)):
+            self.result_table.setColumnWidth(column, width)
+        table_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        # 표가 넓어지면 조문 열이 남는 폭을 먹어 오른쪽 빈 바탕을 없앤다.
+        # 열 경계를 끌면 그 좌우 두 칸만 폭을 주고받는다.
+        configure_expanding_column(
+            self.result_table, 2, 220, fixed_columns=(0,)
+        )
         table_header.setSectionsClickable(True)
         table_header.setSortIndicatorShown(False)
         table_header.sectionClicked.connect(self._sort_by_column)
@@ -1281,7 +1287,7 @@ class AiLawSearchTab(QWidget):
         self.result_table.setRowCount(0)
         self.result_rows.clear()
         self.result_count.setText("0건")
-        self.result_empty_label.show_message("검색 중…")
+        self.result_empty_label.show_message("검색 중", animate_dots=True)
         self.detail_view.clear()
         self.current_detail_text = ""
         self.copy_button.setEnabled(False)
@@ -2098,11 +2104,23 @@ class AiLawSearchTab(QWidget):
             ),
             ("소관부처", row["agency"]),
         ]
+        # 조문검색 API가 약칭을 주지 않는 법령이 있다. 법령검색 본문과
+        # 머리글을 같게 하려고, 저장해 둔 본문에서 한 번 더 찾아본다.
+        short_name = str(row.get("short_name") or "")
+        if not short_name and not is_admin_kind:
+            short_name = str(
+                self._resource_action(
+                    "law_short_name_by_id", str(row.get("source_id") or "")
+                )
+                or ""
+            )
+            if short_name:
+                row["short_name"] = short_name
         html_parts, plain_parts = detail_document_header(
             row["name"],
             metadata,
             self.highlight_terms,
-            short_name=str(row.get("short_name") or ""),
+            short_name=short_name,
             subtitle=self._article_headline(row),
         )
         if row["content"]:

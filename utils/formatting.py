@@ -795,7 +795,12 @@ def body_to_html(
                 anchor = f"{anchor_prefix}-{anchor_counter}"
                 anchor_counter += 1
                 toc_entries.append((depth, heading_text, anchor))
-                anchor_open = f'<a name="{escape(anchor)}">'
+                # 전역 a 색상(#1768aa)이 안쪽 이름 앵커에도 적용되면 div의
+                # 장ㆍ절 제목색을 덮는다. 이름 앵커 자체에도 제목색을 준다.
+                anchor_open = (
+                    f'<a name="{escape(anchor)}" '
+                    f'style="color:{LAW_HEADING_COLOR}; text-decoration:none;">'
+                )
                 anchor_close = "</a>"
             parts.append(
                 '<div class="law-heading" '
@@ -974,9 +979,11 @@ def detail_document_header(
             value_class = "meta-warning" if is_warning else "meta-value"
             value_color = META_WARNING_COLOR if is_warning else META_VALUE_COLOR
             cells.append(
-                f'<span class="meta-label" style="color:{META_LABEL_COLOR};">'
+                f'<span class="meta-label" style="font-size:8pt; '
+                f'color:{META_LABEL_COLOR};">'
                 f"{escape(label)}</span>&nbsp;"
-                f'<span class="{value_class}" style="color:{value_color}; '
+                f'<span class="{value_class}" style="font-size:8pt; '
+                f'color:{value_color}; '
                 f'font-weight:{"700" if is_warning else "400"};">'
                 f"{highlight_html_text(value, terms)}</span>"
             )

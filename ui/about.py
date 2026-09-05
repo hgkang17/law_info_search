@@ -109,6 +109,21 @@ LICENSE_NOTICES = (
         ),
     },
     {
+        "role": "한글 문서 저장",
+        "name": "python-hwpx",
+        "holder": "python-hwpx 기여자",
+        "license": "Apache License 2.0",
+        "note": (
+            "법령 전문을 한글 문서(HWPX)로 내보낼 때 씁니다. 법제처 OPEN "
+            "API는 별표·서식만 원본 파일을 주므로 전문은 이 라이브러리로 "
+            "만들어 저장합니다."
+        ),
+        "links": (
+            ("소스", "https://github.com/airmang/python-hwpx"),
+            ("라이선스 전문", "https://www.apache.org/licenses/LICENSE-2.0"),
+        ),
+    },
+    {
         "role": "프로그램 소스",
         "name": "law_search_AI",
         "holder": "Copyright (c) 2026 hgkang",

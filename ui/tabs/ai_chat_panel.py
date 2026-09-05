@@ -77,7 +77,6 @@ from llm import (
     extract_cited_articles,
 )
 from ui.assets import GEMINI_KEY_MANUAL_PATH
-from ui.widgets import apply_close_icon
 from llm.document_labels import lookup_cached_document_label
 from llm.inquiries import is_inquiry_target, split_doc_reference
 from llm.ai_cli_setup import (
@@ -283,7 +282,7 @@ CLI_SPECS = {
 # 38px라서 그대로 두면 CLI 탭에서만 헤더가 높아져 화면이 밀린다.
 _HEADER_CONTROL_HEIGHT = 29
 # 본문 옆 패널의 AI 선택 목록. 글자 폭 + 화살표·패딩만 남긴다.
-_PROVIDER_COMBO_WIDTH_MARGIN = 32
+_PROVIDER_COMBO_WIDTH_MARGIN = 42
 # API 키 상태 단추. 가장 긴 문구에 맞추되 좌우 빈칸은 최소만 둔다.
 _API_SETTINGS_BUTTON_WIDTH_MARGIN = 8
 
@@ -1022,18 +1021,13 @@ class AiChatPanel(QFrame):
         layout.setSpacing(8)
 
         if not self.standalone:
-            # 탭 전체를 채울 때는 왼쪽 메뉴에 이미 "AI 검토"가 적혀 있고
-            # 닫을 대상도 없다. 좁은 사이드 패널일 때만 제목과 닫기를 둔다.
+            # 탭 전체를 채울 때는 왼쪽 메뉴에 이미 "AI 검토"가 적혀 있다.
+            # 본문 옆 패널도 바깥 에이전트 버튼으로 접을 수 있으므로 중복
+            # 닫기 단추는 두지 않고 채팅 목록 단추만 둔다.
             header = QHBoxLayout()
             header.setSpacing(6)
             title = QLabel("AI 에이전트", self)
             title.setObjectName("aiChatTitle")
-            self.close_button = QPushButton(self)
-            self.close_button.setObjectName("aiChatClose")
-            apply_close_icon(self.close_button)
-            self.close_button.setFixedSize(24, 24)
-            self.close_button.setToolTip("대화 패널 닫기")
-            self.close_button.clicked.connect(self.closeRequested.emit)
             self.history_toggle_button = ChatListButton()
             self.history_toggle_button.setObjectName("aiChatHistoryToggle")
             # 정원으로 그리므로 가로세로를 같게 둔다.
@@ -1047,8 +1041,6 @@ class AiChatPanel(QFrame):
             header.addWidget(title)
             header.addStretch(1)
             # 채팅 목록이 이 줄의 주 동작이므로 맨 오른쪽 끝에 둔다.
-            header.addWidget(self.close_button)
-            header.addSpacing(2)
             header.addWidget(self.history_toggle_button)
             header.setContentsMargins(0, 0, 0, 0)
             layout.addLayout(header)

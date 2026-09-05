@@ -7,12 +7,34 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PySide6.QtCore import QSettings, QUrl, Qt
+from PySide6.QtCore import QEvent, QPoint, QSettings, QUrl, Qt
 from PySide6.QtWidgets import QApplication
 
 from storage.cache import LawDocumentCache
+from ui.assets import (
+    ANNEX_EXPAND_ICON_PATH,
+    ANNEX_HWP_ICON_PATH,
+    ANNEX_PDF_ICON_PATH,
+    icon_data_uri,
+)
 from storage.recent import RecentSearchManager
 from ui.tabs.resource_search import ResourceSearchTab
+
+
+class _ControlWheelEvent:
+    def __init__(self, delta: int) -> None:
+        self._delta = delta
+
+    @staticmethod
+    def type():
+        return QEvent.Type.Wheel
+
+    @staticmethod
+    def modifiers():
+        return Qt.KeyboardModifier.ControlModifier
+
+    def angleDelta(self):
+        return QPoint(0, self._delta)
 
 
 @pytest.fixture(scope="module")
@@ -66,6 +88,19 @@ def test_law_annex_entries_use_links_from_body_payload() -> None:
     assert entries[0]["pdf_url"].endswith("flDownload.do?flSeq=12")
 
 
+def test_inline_pdf_control_wheel_changes_zoom_only(qt_app) -> None:
+    from ui.dialogs import InlinePdfPreviewPanel
+
+    panel = InlinePdfPreviewPanel()
+    try:
+        assert panel.eventFilter(panel.pdf_view.viewport(), _ControlWheelEvent(120))
+        assert panel.zoom_spin.value() == 110
+        assert panel.eventFilter(panel.pdf_view.viewport(), _ControlWheelEvent(-120))
+        assert panel.zoom_spin.value() == 100
+    finally:
+        panel.close()
+
+
 def test_annex_links_are_rendered_after_articles(qt_app, tmp_path) -> None:
     settings = QSettings(
         str(tmp_path / "annex-links.ini"), QSettings.Format.IniFormat
@@ -101,9 +136,13 @@ def test_annex_links_are_rendered_after_articles(qt_app, tmp_path) -> None:
     assert "[별표1] 시험 기준(제1조 관련)" in html
     assert "[별지제2호의3서식] 시험 신청서" in html
     assert 'href="annex:0"' in html
-    # 펼침 표시는 글자가 아니라 단추 모양 그림이다.
-    assert "annex_expand.svg" in html
-    assert "annex_hwp.svg" in html and "annex_pdf.svg" in html
+    # 펼침 표시는 글자가 아니라 단추 모양 그림이다. 그림은 파일 경로가
+    # 아니라 주소 안에 담아 넣는다. 저장본을 다음 실행에서 열 때
+    # onefile EXE의 임시 폴더 경로가 달라 그림이 사라지던 자리다.
+    assert icon_data_uri(ANNEX_EXPAND_ICON_PATH) in html
+    assert icon_data_uri(ANNEX_HWP_ICON_PATH) in html
+    assert icon_data_uri(ANNEX_PDF_ICON_PATH) in html
+    assert "file:" not in html
     assert "flDownload.do?flSeq=11" in html
     assert "flDownload.do?flSeq=12" in html
     # 굵은 글씨와 세 줄짜리 링크 묶음은 없앴다.
@@ -199,8 +238,8 @@ def test_annex_title_opens_constrained_inline_pdf_panel(
         assert not tab.inline_annex_preview.isHidden()
         assert tab.inline_annex_preview.parent() is tab.detail_view.viewport()
         assert tab.inline_annex_preview.minimumHeight() >= 320
-        assert tab.inline_annex_preview.maximumHeight() <= 600
-        assert tab.inline_annex_preview.height() <= 560
+        assert tab.inline_annex_preview.maximumHeight() <= 680
+        assert tab.inline_annex_preview.height() <= 680
         viewport_height = tab.detail_view.viewport().height()
         if viewport_height > 360:
             assert tab.inline_annex_preview.height() < viewport_height
@@ -220,14 +259,14 @@ def test_annex_title_opens_constrained_inline_pdf_panel(
         assert slot_cursor is not None
         assert title_cursor.position() < slot_cursor.position()
         assert tab.inline_annex_preview.geometry().height() >= 320
-        assert tab.inline_annex_preview.geometry().width() <= 800
+        assert tab.inline_annex_preview.geometry().width() <= 900
         assert tab.inline_annex_preview.geometry().left() <= 10
         assert tab.inline_annex_preview.geometry().top() >= (
             tab.detail_view.cursorRect(title_cursor).top() - 2
         )
         tab.inline_annex_preview._toggle_expanded()
         assert tab.inline_annex_preview.expand_button.text() == "축소"
-        assert tab.inline_annex_preview.height() == 560
+        assert tab.inline_annex_preview.height() == 680
         tab.inline_annex_preview._toggle_expanded()
         assert tab.inline_annex_preview.expand_button.text() == "크게"
         assert tab.inline_annex_preview.height() == 340
@@ -455,6 +494,61 @@ def test_saved_law_keeps_annex_list_clickable_after_reopen(
         assert not tab.inline_annex_preview.isHidden()
     finally:
         tab.close()
+
+
+def test_saved_law_annex_list_works_in_a_fresh_session(
+    qt_app, tmp_path, monkeypatch
+) -> None:
+    """프로그램을 껐다 켠 뒤 저장 본문을 열어도 별표가 펼쳐져야 한다.
+
+    저장 화면 복원(_restore_cached_law_render)은 문서 상태를 통째로
+    갈아 끼운 뒤 _restore_document_state를 부른다. 그 상태에 별표 목록을
+    함께 담지 않으면, 방금 원문에서 만들어 둔 목록이 빈 목록으로 덮여
+    화면에는 별표가 보이는데 눌러도 아무 일이 없었다. 새 인스턴스로
+    여는 이 시험만 그 경로를 지난다.
+    """
+    settings = QSettings(
+        str(tmp_path / "fresh-annex.ini"), QSettings.Format.IniFormat
+    )
+    cache_dir = tmp_path / "saved"
+    row = {
+        "target": "law",
+        "id": "000001",
+        "label": "법령",
+        "name": "표시 시험법 시행령",
+    }
+    first = ResourceSearchTab(
+        lambda: "", RecentSearchManager(settings), LawDocumentCache(cache_dir)
+    )
+    try:
+        monkeypatch.setattr(first, "_start_annex_download", lambda *_args: None)
+        first.pending_row = dict(row)
+        first._show_detail(_payload(), save_cache=False)
+        qt_app.processEvents()
+        assert first._annex_section_entries
+        record = {"row": row, "payload": _payload(), "name": row["name"]}
+        record.update(first._active_law_render_snapshot())
+    finally:
+        first.close()
+
+    # 여기서부터가 프로그램을 다시 켠 상황이다. 저장 파일만 있고 화면
+    # 상태(_document_states)는 아무것도 없다.
+    second = ResourceSearchTab(
+        lambda: "", RecentSearchManager(settings), LawDocumentCache(cache_dir)
+    )
+    try:
+        monkeypatch.setattr(second, "_start_annex_download", lambda *_args: None)
+        second.open_cached_law(record)
+        qt_app.processEvents()
+
+        assert second._annex_section_entries, (
+            "새로 켠 뒤 저장 본문을 열었더니 별표 목록이 비었다"
+        )
+        second._detail_link_clicked(QUrl("annex:0"))
+        qt_app.processEvents()
+        assert not second.inline_annex_preview.isHidden()
+    finally:
+        second.close()
 
 
 def test_annex_list_survives_switching_document_tabs(

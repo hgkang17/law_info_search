@@ -92,6 +92,27 @@ def test_subarticle_favorite_is_distinct_and_survives_resave(tmp_path) -> None:
     assert cache.article_favorites(ROW) == []
 
 
+def test_article_favorite_is_found_without_the_law_title(tmp_path) -> None:
+    """법령ID만 아는 자리에서도 걸어 둔 조문 즐겨찾기가 보여야 한다.
+
+    저장 파일 이름은 제목으로 시작한다. 조문검색 목록의 별과 인용 팝업은
+    제목 없이 법령ID만으로 확인하기 때문에, 이름이 다르면 같은 자료를 못
+    찾아 별이 늘 꺼져 보이고 눌러도 아무 반응이 없는 것처럼 보였다.
+    """
+    cache = _cache(tmp_path)
+    assert cache.set_article_favorite(ROW, "000600", "제6조", True)
+
+    # ResourceSearchTab._law_row가 제목 없이 만드는 행과 같은 모양이다.
+    id_only = {
+        "target": "law",
+        "label": "법령",
+        "id": ROW["id"],
+        "name": ROW["id"],
+    }
+    assert cache.is_article_favorite(id_only, "000600")
+    assert cache.has(id_only)
+
+
 def test_article_favorite_can_be_removed_without_touching_the_law(
     tmp_path,
 ) -> None:
@@ -231,6 +252,36 @@ def test_article_favorite_has_own_column_and_can_be_unstarred(tmp_path) -> None:
     assert not cache.is_article_favorite(ROW, "25")
     assert tree.topLevelItemCount() == 0
     tab.close()
+
+
+def test_favorite_view_options_live_in_one_popup(tmp_path) -> None:
+    """표시 항목 체크박스는 줄이 아니라 ⋯ 단추 팝업에 모여야 한다.
+
+    체크박스를 한 줄에 늘어놓으면 좁은 창에서 오른쪽이 잘려, 창을 넓혀야
+    비로소 보였다. 줄이 사라지면서 프로젝트 탭과 목록 사이 여백도 준다.
+    """
+    QApplication.instance() or QApplication([])
+    tab = ViewedLawsTab(
+        _cache(tmp_path), None, favorites_only=True, settings=None
+    )
+    try:
+        button = tab.favorite_options_button
+        assert button is not None
+        assert button.menu() is tab.favorite_options_menu
+        checks = [tab.union_check, *tab.favorite_category_checks.values()]
+        assert checks and all(check is not None for check in checks)
+        # 체크박스는 메뉴 안에 위젯으로 들어간다. 화면 곳곳이 이 위젯을
+        # 직접 켜고 끄므로 QAction으로 바꾸지 않는다.
+        widgets = [
+            action.defaultWidget()
+            for action in tab.favorite_options_menu.actions()
+            if hasattr(action, "defaultWidget")
+        ]
+        for check in checks:
+            assert check in widgets
+            assert check.parent() is not None
+    finally:
+        tab.close()
 
 
 def test_article_favorite_can_be_moved_into_its_own_folder(

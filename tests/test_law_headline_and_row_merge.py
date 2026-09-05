@@ -124,6 +124,29 @@ def test_saved_chapter_heading_is_upgraded_to_current_color() -> None:
     assert "#333399" not in upgraded
 
 
+def test_chapter_anchor_does_not_override_the_heading_color() -> None:
+    html = body_to_html(
+        "제1장 총칙\n제1조(목적) 이 법의 목적을 정한다.",
+        (),
+        toc_entries=[],
+    )
+
+    assert 'class="law-heading"' in html
+    assert 'style="color:#1309aa; text-decoration:none;">제1장 총칙' in html
+
+
+def test_metadata_size_is_fixed_on_labels_and_values() -> None:
+    html_parts, _plain = detail_document_header(
+        "시험법",
+        [("법령ID", "000001"), ("소관부처", "국토교통부")],
+        (),
+    )
+    html = "".join(html_parts)
+
+    assert html.count('class="meta-label" style="font-size:8pt;') == 2
+    assert html.count('class="meta-value" style="font-size:8pt;') == 2
+
+
 def test_document_header_keeps_effective_date_when_there_is_no_subtitle() -> None:
     """행정규칙처럼 시행일 줄이 없는 문서는 기본정보에 그대로 남긴다."""
     html_parts, _plain = detail_document_header(

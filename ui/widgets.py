@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass
+from html import escape
 import json
 from math import cos, pi, sin
 import re
@@ -56,6 +57,7 @@ from PySide6.QtWidgets import (
     QLayout,
     QLineEdit,
     QListWidget,
+    QMenu,
     QProgressBar,
     QPushButton,
     QScrollArea,
@@ -68,8 +70,10 @@ from PySide6.QtWidgets import (
     QTabBar,
     QTextBrowser,
     QTextEdit,
+    QToolButton,
     QTreeWidget,
     QWidget,
+    QWidgetAction,
 )
 from PySide6.QtCore import QPointF
 from PySide6.QtGui import QPalette, QTextLayout
@@ -416,6 +420,149 @@ def configure_adaptive_result_rows(
     )
 
 
+class ExpandingColumnManager(QObject):
+    """열 폭을 손으로 끌되 표 오른쪽에 빈 바탕이 남지 않게 한다.
+
+    QHeaderView의 ``Stretch``는 그 열을 드래그로도 코드로도 바꿀 수 없고,
+    ``Interactive``만 쓰면 표가 넓을 때 오른쪽에 빈 바탕이 남는다. 여기서는
+    둘을 같이 쓴다.
+
+    * 경계를 끌면 그 좌우 두 칸만 폭이 바뀐다. 나머지 열은 그대로 있고
+      표 전체 폭도 그대로다.
+    * 창 크기가 바뀌어 생긴 여백은 정해 둔 열 하나(명칭ㆍ조문ㆍ제목)가
+      맡는다.
+    * ``fixed_columns``(저장 체크 칸 등)는 끌 수도, 여백을 떠안지도 않는다.
+    """
+
+    def __init__(
+        self,
+        table: QTableWidget,
+        column: int,
+        minimum_width: int = 0,
+        *,
+        fixed_columns: tuple[int, ...] = (),
+    ) -> None:
+        super().__init__(table)
+        self._table = table
+        self._column = column
+        self._fixed = frozenset(int(item) for item in fixed_columns)
+        # 손으로 끌 때의 하한은 헤더가 정하는 값만 쓴다. 여기서 따로 큰
+        # 하한을 두면 그 폭에서 더 좁혀지지 않아 "조절이 막혔다"고 느낀다.
+        self._minimum = max(1, table.horizontalHeader().minimumSectionSize())
+        # 창 크기가 바뀔 때 자동으로 줄이지 않을 폭. 사용자가 끌어 정하면
+        # 그 값으로 바뀐다.
+        self._preferred = max(
+            self._minimum, int(minimum_width), table.columnWidth(column)
+        )
+        # 폭을 우리가 바꾸는 동안 들어오는 sectionResized는 사용자의
+        # 드래그가 아니므로 선호 폭으로 기억하지 않는다.
+        self._adjusting = False
+        table.viewport().installEventFilter(self)
+        table.horizontalHeader().sectionResized.connect(self._section_resized)
+        QTimer.singleShot(0, self.apply)
+
+    def eventFilter(self, watched, event) -> bool:
+        if event.type() == QEvent.Type.Resize:
+            self.apply()
+        return False
+
+    def _visible_columns(self) -> list[int]:
+        table = self._table
+        return [
+            column
+            for column in range(table.columnCount())
+            if not table.isColumnHidden(column)
+        ]
+
+    def _neighbour_for(self, index: int) -> int | None:
+        """폭을 주고받을 옆 칸. 오른쪽을 먼저 보고 없으면 왼쪽을 본다."""
+        columns = [
+            column
+            for column in self._visible_columns()
+            if column not in self._fixed
+        ]
+        if index not in columns:
+            return None
+        position = columns.index(index)
+        if position + 1 < len(columns):
+            return columns[position + 1]
+        if position > 0:
+            return columns[position - 1]
+        return None
+
+    def _section_resized(self, index: int, old: int, new: int) -> None:
+        if self._adjusting:
+            return
+        delta = int(new) - int(old)
+        if index == self._column:
+            self._preferred = max(self._minimum, int(new))
+        if delta == 0:
+            return
+        neighbour = self._neighbour_for(index)
+        if neighbour is None:
+            QTimer.singleShot(0, self.apply)
+            return
+        table = self._table
+        # 넓힌 만큼 옆 칸에서 덜어 오고, 좁힌 만큼 옆 칸에 얹는다. 표
+        # 전체 폭이 그대로라 다른 열은 건드리지 않는다.
+        wanted = table.columnWidth(neighbour) - delta
+        allowed = max(self._minimum, wanted)
+        self._adjusting = True
+        try:
+            table.setColumnWidth(neighbour, allowed)
+            leftover = allowed - wanted
+            if leftover:
+                # 옆 칸이 더는 줄지 않으면 그만큼 이 열도 되돌린다.
+                table.setColumnWidth(
+                    index, max(self._minimum, table.columnWidth(index) - leftover)
+                )
+                if index == self._column:
+                    self._preferred = max(
+                        self._minimum, table.columnWidth(index)
+                    )
+        finally:
+            self._adjusting = False
+
+    def apply(self) -> None:
+        table = self._table
+        if self._adjusting or table.isColumnHidden(self._column):
+            return
+        others = sum(
+            table.columnWidth(column)
+            for column in self._visible_columns()
+            if column != self._column
+        )
+        target = table.viewport().width() - others
+        width = max(self._minimum, self._preferred, target)
+        if width == table.columnWidth(self._column):
+            return
+        self._adjusting = True
+        try:
+            table.setColumnWidth(self._column, width)
+        finally:
+            self._adjusting = False
+
+
+def configure_expanding_column(
+    table: QTableWidget,
+    column: int,
+    minimum_width: int = 0,
+    *,
+    fixed_columns: tuple[int, ...] = (),
+) -> ExpandingColumnManager:
+    """열 폭을 손으로 끌게 두되 오른쪽 빈 바탕을 없앤다.
+
+    ``minimum_width``는 창 크기가 바뀔 때 자동으로 줄이지 않을 폭이다.
+    사용자가 헤더를 끌어 그보다 좁게 만드는 것은 막지 않는다.
+    ``fixed_columns``는 폭을 주고받지 않는 열(저장 체크 칸 등)이다.
+    """
+    manager = ExpandingColumnManager(
+        table, column, minimum_width, fixed_columns=fixed_columns
+    )
+    table._expanding_column_manager = manager
+    return manager
+
+
 def configure_horizontal_splitter(splitter: QSplitter) -> None:
     """분할선에서 좌우 드래그 커서와 사용 안내를 명확히 표시."""
     splitter.setHandleWidth(10)
@@ -687,6 +834,11 @@ class SearchResultHead:
 class ResultOverlayLabel(QLabel):
     """빈 결과와 검색 진행 상태를 표 가운데에서 짧게 강조해 보여준다."""
 
+    DOT_COUNT = 3
+    DOT_INTERVAL_MS = 280
+    DOT_ACTIVE_COLOR = "#2f6fb5"
+    DOT_IDLE_COLOR = "#c3ccd6"
+
     def __init__(self, viewport: QWidget) -> None:
         super().__init__("검색 결과가 없습니다.", viewport)
         self.setObjectName("resultEmptyNotice")
@@ -699,6 +851,14 @@ class ResultOverlayLabel(QLabel):
         self._pulse.setStartValue(0.35)
         self._pulse.setEndValue(1.0)
         self._pulse.setEasingCurve(QEasingCurve.Type.OutCubic)
+        # 진행 중임을 알리는 점 애니메이션. 점 개수를 늘렸다 줄이면 글자
+        # 폭이 바뀌어 가운데 문구가 좌우로 흔들린다. 점은 늘 세 개를
+        # 그려 두고 밝기만 차례로 옮겨 흐르는 것처럼 보이게 한다.
+        self._dot_base = ""
+        self._dot_step = 0
+        self._dot_timer = QTimer(self)
+        self._dot_timer.setInterval(self.DOT_INTERVAL_MS)
+        self._dot_timer.timeout.connect(self._advance_dots)
         viewport.installEventFilter(self)
         self.hide()
 
@@ -710,8 +870,18 @@ class ResultOverlayLabel(QLabel):
             self.setGeometry(self.parentWidget().rect())
         return super().eventFilter(watched, event)
 
-    def show_message(self, text: str, *, pulse: bool = True) -> None:
-        self.setText(text)
+    def show_message(
+        self, text: str, *, pulse: bool = True, animate_dots: bool = False
+    ) -> None:
+        if animate_dots:
+            self._dot_base = text
+            self._dot_step = 0
+            self._render_dots()
+            self._dot_timer.start()
+        else:
+            self._dot_timer.stop()
+            self._dot_base = ""
+            self.setText(text)
         self.setGeometry(self.parentWidget().rect())
         self.raise_()
         self.show()
@@ -719,8 +889,26 @@ class ResultOverlayLabel(QLabel):
             self._pulse.stop()
             self._pulse.start()
 
+    def _advance_dots(self) -> None:
+        self._dot_step = (self._dot_step + 1) % self.DOT_COUNT
+        self._render_dots()
+
+    def _render_dots(self) -> None:
+        dots = "".join(
+            '<span style="color:{color};">.</span>'.format(
+                color=(
+                    self.DOT_ACTIVE_COLOR
+                    if index == self._dot_step
+                    else self.DOT_IDLE_COLOR
+                )
+            )
+            for index in range(self.DOT_COUNT)
+        )
+        self.setText(f"{escape(self._dot_base)}{dots}")
+
     def clear_message(self) -> None:
         self._pulse.stop()
+        self._dot_timer.stop()
         self.hide()
 
 
@@ -1025,16 +1213,19 @@ class StatusLine:
 class SharedStatusBar(QFrame):
     """창 아래에 하나만 두는 상태줄. 오른쪽에 프로그램 정보 단추가 함께 선다."""
 
-    # 글자 한 줄에 위아래 1px 여백을 더한 높이. 18px로 두면 글자가 띠에
-    # 꽉 차서 안쪽 여백을 준 것이 화면에 드러나지 않았다.
-    HEIGHT = 20
+    # 글자 한 줄에 위아래 3px 여백을 더한 높이. 여백을 늘린 만큼 띠도
+    # 함께 키우지 않으면 글자가 잘린다.
+    MARGIN = 3
+    HEIGHT = 24
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setObjectName("sharedStatusBar")
         self.setFixedHeight(self.HEIGHT)
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(1, 1, 1, 1)
+        layout.setContentsMargins(
+            self.MARGIN, self.MARGIN, self.MARGIN, self.MARGIN
+        )
         layout.setSpacing(10)
         self.label = QLabel("")
         self.label.setObjectName("mutedText")
@@ -1402,6 +1593,15 @@ class DeferredWrapTextBrowser(QTextBrowser):
         if mime is not None and mime.hasHtml():
             mime.setHtml(hwp_friendly_clipboard_html(mime.html()))
         return mime
+
+    def wheelEvent(self, event) -> None:
+        # PDF 미리보기에서 Ctrl+휠을 쓴 뒤 포커스가 본문으로 돌아오면 Qt의
+        # QTextEdit 기본 확대가 작동해 글꼴과 스크롤 위치가 함께 튀었다.
+        # 본문에서는 Ctrl+휠을 아무 동작 없이 소비하고 일반 휠만 허용한다.
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            event.accept()
+            return
+        super().wheelEvent(event)
 
     def viewportEvent(self, event) -> bool:
         if event.type() == QEvent.Type.Resize and hasattr(self, "_wrap_timer"):
@@ -1950,6 +2150,24 @@ class DetailSearchBar(QWidget):
         self.whole_word_checkbox.setToolTip(
             "검색어가 다른 글자에 포함되지 않은 경우만 찾습니다."
         )
+        # 찾기 창은 본문 위에 뜨는 작은 창이다. 옵션 글자를 그대로 두면
+        # 창이 길어져 본문을 많이 가린다. ⋯ 단추 안 팝업으로 접어 둔다.
+        self.options_button = QToolButton()
+        self.options_button.setObjectName("detailSearchOptions")
+        self.options_button.setText("⋯")
+        self.options_button.setFixedWidth(30)
+        self.options_button.setToolTip("찾기 옵션")
+        self.options_button.setAccessibleName("찾기 옵션")
+        self.options_menu = QMenu(self.options_button)
+        self.options_menu.setObjectName("detailSearchOptionsMenu")
+        whole_word_action = QWidgetAction(self.options_menu)
+        self.whole_word_checkbox.setContentsMargins(8, 2, 12, 2)
+        whole_word_action.setDefaultWidget(self.whole_word_checkbox)
+        self.options_menu.addAction(whole_word_action)
+        self.options_button.setMenu(self.options_menu)
+        self.options_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
+        )
         self.count_label = QLabel("0/0")
         self.count_label.setObjectName("detailSearchCount")
         self.count_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1969,7 +2187,7 @@ class DetailSearchBar(QWidget):
 
         layout.addWidget(label)
         layout.addWidget(self.query_input, 1)
-        layout.addWidget(self.whole_word_checkbox)
+        layout.addWidget(self.options_button)
         layout.addWidget(self.count_label)
         layout.addWidget(self.previous_button)
         layout.addWidget(self.next_button)
@@ -1982,6 +2200,9 @@ class DetailSearchBar(QWidget):
         self.next_button.clicked.connect(lambda: self.move(1))
         self.close_button.clicked.connect(self.cancel_search)
         self.browser.document().contentsChanged.connect(self.refresh)
+        # 본문이 다른 화면으로 가려지면 이 창만 남아 엉뚱한 자리에 떠
+        # 있었다. 본문이 숨을 때 같이 숨고, 본문에서 Esc를 눌러도 닫는다.
+        self.browser.installEventFilter(self)
         self._connected_document = self.browser.document()
         self.find_shortcut = QShortcut(
             QKeySequence(QKeySequence.StandardKey.Find), self.browser
@@ -2073,7 +2294,28 @@ class DetailSearchBar(QWidget):
         self.hide()
         self._restore_scroll_if_changed(vertical_position, horizontal_position)
 
+    def keyPressEvent(self, event) -> None:
+        # 창 안의 단추에 포커스가 있어도 Esc로 닫힌다.
+        if event.key() == Qt.Key.Key_Escape:
+            self.cancel_search()
+            return
+        super().keyPressEvent(event)
+
     def eventFilter(self, watched, event) -> bool:
+        if watched is self.browser:
+            if event.type() == QEvent.Type.Hide and self.isVisible():
+                self.hide()
+            elif (
+                self.isVisible()
+                and event.type()
+                in (QEvent.Type.KeyPress, QEvent.Type.ShortcutOverride)
+                and event.key() == Qt.Key.Key_Escape
+            ):
+                # 찾기 창이 떠 있는 동안의 Esc는 먼저 이 창을 닫는다.
+                # 창이 없을 때의 Esc는 예전처럼 화면이 받는다.
+                self.cancel_search()
+                event.accept()
+                return True
         if watched is self.query_input:
             # 탭에 걸린 Esc 단축키가 먼저 키를 채가지 않도록 가로챈다.
             if (

@@ -1175,8 +1175,30 @@ class LawSearchWindow(QMainWindow):
             tab._set_reading_mode(True)
         else:
             row = {"central": 2, "expc": 3, "prec": 4}.get(source)
+            tab = {
+                "central": self.central_tab,
+                "expc": self.expc_tab,
+                "prec": self.prec_tab,
+            }.get(source)
             if row is not None:
+                existing_restorer = getattr(
+                    tab, "_reading_mode_exit_callback", None
+                )
+                restorer = (
+                    existing_restorer
+                    if getattr(tab, "_reading_mode", False)
+                    and existing_restorer is not None
+                    else self._current_page_restorer()
+                )
                 self.navigation.setCurrentRow(row)
+                # 법령ㆍ조문 본문과 똑같이 크게 보기로 들어간다. 예전에는
+                # 검색결과 목록만 떠서, 열어 둔 회신ㆍ해석례를 목록에서
+                # 다시 찾아 눌러야 했다.
+                if tab is not None and str(
+                    getattr(tab, "current_detail_text", "") or ""
+                ).strip():
+                    tab._reading_mode_exit_callback = restorer
+                    tab._set_reading_mode(True)
         self._set_active_document_token(token)
         self._schedule_open_documents_refresh()
 
@@ -1705,12 +1727,13 @@ class LawSearchWindow(QMainWindow):
                 margin: 2px 2px;
                 background: transparent;
                 border: none;
+                border-radius: 6px;
             }
             QScrollBar::handle:vertical {
                 min-height: 28px;
                 background: #c8d1da;
                 border: none;
-                border-radius: 6px;
+                border-radius: 4px;
             }
             QScrollBar::handle:vertical:hover { background: #9fadbb; }
             QScrollBar::handle:vertical:pressed { background: #7f8f9f; }
@@ -1719,12 +1742,13 @@ class LawSearchWindow(QMainWindow):
                 margin: 2px 2px;
                 background: transparent;
                 border: none;
+                border-radius: 6px;
             }
             QScrollBar::handle:horizontal {
                 min-width: 28px;
                 background: #c8d1da;
                 border: none;
-                border-radius: 6px;
+                border-radius: 4px;
             }
             QScrollBar::handle:horizontal:hover { background: #9fadbb; }
             QScrollBar::handle:horizontal:pressed { background: #7f8f9f; }
@@ -1743,13 +1767,15 @@ class LawSearchWindow(QMainWindow):
                 width: 12px;
                 margin: 2px;
                 background: transparent;
+                border: none;
+                border-radius: 6px;
             }
             QComboBox QAbstractItemView QScrollBar::handle:vertical,
             QMenu QScrollBar::handle:vertical {
                 min-height: 28px;
                 background: #c8d1da;
                 border: none;
-                border-radius: 6px;
+                border-radius: 4px;
             }
 
             /* 목록의 ⋯ 버튼에서 열리는 메뉴를 하나의 작은 팝업으로 통일. */
@@ -2652,18 +2678,76 @@ class LawSearchWindow(QMainWindow):
             QToolButton#favoriteProjectAddButton:pressed {
                 background: #e3e3e2;
             }
+            /* 법령 제목 줄 오른쪽의 한글 문서 저장 단추. 제목과 같은 줄에
+               서므로 테두리 없이 두고 누를 때만 바탕을 준다. */
+            QToolButton#hwpExportButton {
+                background: transparent;
+                border: 1px solid transparent;
+                border-radius: 6px;
+                padding: 0;
+            }
+            QToolButton#hwpExportButton:hover {
+                background: #eef3f9;
+                border-color: #cfd8e3;
+            }
+            QToolButton#hwpExportButton:pressed {
+                background: #e2eaf3;
+            }
+            /* 즐겨찾기에서 보여 줄 항목을 고르는 ⋯ 단추. 프로젝트 탭 줄
+               오른쪽 끝에 서고, 눌리면 체크박스 팝업이 열린다. */
+            QToolButton#favoriteOptionsButton {
+                min-width: 30px;
+                max-width: 30px;
+                min-height: 30px;
+                max-height: 30px;
+                margin: 0;
+                padding: 0 0 4px 0;
+                background: transparent;
+                color: #40566b;
+                font-size: 17px;
+                border: 1px solid transparent;
+                border-radius: 6px;
+            }
+            QToolButton#favoriteOptionsButton:hover {
+                background: #eeeeed;
+                border-color: #dedfdf;
+            }
+            QToolButton#favoriteOptionsButton:pressed,
+            QToolButton#favoriteOptionsButton:open {
+                background: #e3e3e2;
+            }
+            QToolButton#favoriteOptionsButton::menu-indicator {
+                image: none;
+                width: 0;
+            }
+            QMenu#favoriteOptionsMenu {
+                background: #ffffff;
+                border: 1px solid #dedfdf;
+                border-radius: 8px;
+                padding: 8px 4px;
+            }
+            QMenu#favoriteOptionsMenu::separator {
+                height: 1px;
+                background: #e8ebee;
+                margin: 5px 10px;
+            }
             QCheckBox#favoriteCategoryCheck {
                 background: transparent;
                 color: #40566b;
-                /* 위아래 padding을 두면 고정 높이 28px 안에서 글자와
-                   네모의 중심이 서로 어긋난다. 좌우만 띄운다. */
+                /* ⋯ 팝업 안에 세로로 늘어서는 줄이라 위아래로도 여백을
+                   준다. 위젯 크기 힌트는 이 padding으로 정해진다. */
                 spacing: 6px;
-                padding: 0 7px;
+                padding: 5px 7px;
                 font-size: 8.5pt;
             }
-            QCheckBox#favoriteCategoryCheck::indicator {
+            QCheckBox#favoriteCategoryCheck::indicator,
+            QCheckBox#favoriteCategoryCheck::indicator:unchecked,
+            QCheckBox#favoriteCategoryCheck::indicator:checked,
+            QCheckBox#favoriteCategoryCheck::indicator:hover {
                 /* 8.5pt 글자 옆에서는 전역 16px이 커 보인다. 글자 높이에
-                   맞춰 줄이고 세로 가운데에 붙인다. */
+                   맞춰 줄이고 세로 가운데에 붙인다. 켜짐ㆍ꺼짐을 함께 적지
+                   않으면 꺼진 항목만 전역 크기를 받아 네모가 커지고, 팝업
+                   안에서 그 줄만 왼쪽으로 튀어나온다. */
                 width: 14px;
                 height: 14px;
                 subcontrol-position: left center;
@@ -3105,8 +3189,15 @@ class LawSearchWindow(QMainWindow):
             /* 본문을 굴려도 남는 붙박이 제목 줄(법령명ㆍ약칭ㆍ시행일).
                테두리도 둥근 모서리도 두지 않는다. 아래 선을 두었더니
                바로 밑 본문 제목과 두 겹으로 갈라져 보였다. */
+            /* 제목 줄과 한글 저장 단추를 감싼 띠. 본문과 구분되는 옅은
+               바탕을 깔아 상단에 늘 붙어 있는 줄로 보이게 한다. */
+            QFrame#pinnedHeadlineBar {
+                background: #f1f3f6;
+                border: 1px solid #e2e6ec;
+                border-radius: 7px;
+            }
             QLabel#pinnedDocumentHeadline {
-                background: __WB_CANVAS__;
+                background: transparent;
                 border: none;
                 border-radius: 0;
                 color: #173b63;
@@ -3175,9 +3266,17 @@ class LawSearchWindow(QMainWindow):
                 background: #f2f5f8;
                 border-color: #9ebed8;
             }
+            /* 단추 어디를 눌러도 팔레트가 열리므로 화살표 자리를 두지
+               않는다. 화살표가 남으면 거기만 눌러야 하는 것처럼 보인다. */
             QToolButton#colorPaletteToolButton::menu-button {
-                width: 10px;
+                width: 0;
                 border: none;
+            }
+            QToolButton#colorPaletteToolButton::menu-indicator,
+            QToolButton#colorPaletteToolButton::menu-arrow {
+                image: none;
+                width: 0;
+                height: 0;
             }
             QDoubleSpinBox#fontSizeSpin,
             QSpinBox#pdfZoomSpin {
@@ -3507,8 +3606,10 @@ class LawSearchWindow(QMainWindow):
                 background: #303338;
                 border-color: #24262a;
             }
-            QWidget#colorTools {
+            QWidget#colorTools,
+            QWidget#colorResetTools {
                 background: transparent;
+                border: none;
             }
             QLabel#colorRowLabel {
                 background: transparent;
@@ -3608,6 +3709,33 @@ class LawSearchWindow(QMainWindow):
                 background: #e8f1fb;
                 color: #1768aa;
                 border-color: #b9d3ea;
+            }
+            /* 찾기 옵션(전체 단어 일치)을 담은 ⋯ 단추. 옆의 이전ㆍ다음
+               단추와 같은 모양으로 맞춘다. */
+            QToolButton#detailSearchOptions {
+                min-height: 30px;
+                max-height: 30px;
+                background: white;
+                color: #445268;
+                border: 1px solid #cfd8e3;
+                font-size: 15px;
+                padding: 0 4px 4px 4px;
+            }
+            QToolButton#detailSearchOptions:hover,
+            QToolButton#detailSearchOptions:open {
+                background: #e8f1fb;
+                color: #1768aa;
+                border-color: #b9d3ea;
+            }
+            QToolButton#detailSearchOptions::menu-indicator {
+                image: none;
+                width: 0;
+            }
+            QMenu#detailSearchOptionsMenu {
+                background: #ffffff;
+                border: 1px solid #cfd8e3;
+                border-radius: 8px;
+                padding: 6px 2px;
             }
             QPushButton:disabled {
                 background: #edf0f3;
@@ -4670,7 +4798,7 @@ class LawSearchWindow(QMainWindow):
             QScrollBar::handle:horizontal {
                 background: #c7c8ca;
                 border: none;
-                border-radius: 6px;
+                border-radius: 4px;
             }
             QScrollBar::handle:vertical:hover,
             QScrollBar::handle:horizontal:hover { background: #9ea0a4; }

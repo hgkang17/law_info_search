@@ -166,6 +166,9 @@ class LawDocumentCache(QObject):
         self._list_index_loaded = False
         # ``directory``는 테스트와 설정이 갈아 끼우므로 원본과 함께 둔다.
         self._resolved_directory: tuple[Path | None, Path | None] = (None, None)
+        # 제목을 모르고 부르는 자리(법령ID만 아는 조문 즐겨찾기 확인 등)를
+        # 위한 파일 이름 목록. 폴더가 바뀔 때만 다시 훑는다.
+        self._name_index: tuple[object, tuple[str, ...]] = (None, ())
         try:
             self.directory.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
@@ -286,7 +289,48 @@ class LawDocumentCache(QObject):
         return moved
 
     def path_for_row(self, row: dict[str, object]) -> Path:
-        return self.directory / f"{self._cache_key(row)}.json"
+        path = self.directory / f"{self._cache_key(row)}.json"
+        if path.exists():
+            return path
+        # 저장 파일 이름은 제목으로 시작한다. 그래서 법령ID만 아는 자리에서
+        # 만든 행(조문검색 목록의 별, 인용 팝업의 즐겨찾기)은 이름이 달라
+        # 같은 자료를 못 찾았고, 걸어 둔 조문 즐겨찾기가 늘 꺼져 보였다.
+        # 분류와 식별번호가 같은 파일이 이미 있으면 그 파일을 쓴다.
+        existing = self._path_by_identity(row)
+        return existing or path
+
+    def _file_names(self) -> tuple[str, ...]:
+        """저장 폴더의 파일 이름 목록. 폴더가 바뀔 때만 다시 훑는다."""
+        try:
+            stat = self.directory.stat()
+            token = (stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            return ()
+        if self._name_index[0] != token:
+            try:
+                names = tuple(
+                    sorted(entry.name for entry in self.directory.glob("*.json"))
+                )
+            except OSError:
+                names = ()
+            self._name_index = (token, names)
+        return self._name_index[1]
+
+    def _path_by_identity(self, row: dict[str, object]) -> Path | None:
+        """분류ㆍ식별번호(ㆍ조문코드)가 같은 저장 파일을 찾는다."""
+        target = str(row.get("target") or "law")
+        identifier = str(row.get("id") or row.get("source_id") or "")
+        if not identifier:
+            return None
+        jo_code = str(row.get("jo_code") or "")
+        suffix = f"_{target}_{identifier}"
+        if jo_code and jo_code != identifier:
+            suffix += f"_{jo_code}"
+        suffix += ".json"
+        for name in self._file_names():
+            if name.endswith(suffix):
+                return self.directory / name
+        return None
 
     def key_for_row(self, row: dict[str, object]) -> str:
         """Return the stable filename key used for one result row."""

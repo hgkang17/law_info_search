@@ -16,7 +16,12 @@ storage/paths.py가 sys.frozen을 보고 캐시 폴더를 exe 옆에 만들므�
 # 버전은 프로그램 정보 대화상자에서 보여 준다(utils/constants.py).
 APP_NAME = "국가법령정보 통합검색"
 
-datas = [
+# 한글 문서 저장(HWPX)은 hwpx 패키지가 들고 있는 빈 문서 뼈대
+# (hwpx/data/Skeleton.hwpx)를 읽어 새 문서를 만든다. 이 파일이 번들에
+# 빠지면 개발 중에는 되고 EXE에서만 저장이 실패한다.
+from PyInstaller.utils.hooks import collect_data_files
+
+datas = collect_data_files("hwpx") + [
     ("molit_law_logo.svg", "."),
     ("home_search.gif", "."),
     # LGPL v3ㆍOFL 1.1이 요구하는 라이선스 사본. ui/assets.py의
@@ -82,6 +87,9 @@ analysis = Analysis(
         "mcp.server.fastmcp",
         "mcp.server.stdio",
         "mcp_server.server",
+        # 한글 문서 저장. 화면에서 단추를 누를 때에야 import 하므로
+        # 정적 분석이 놓친다.
+        "hwpx",
     ],
     hookspath=[],
     hooksconfig={},

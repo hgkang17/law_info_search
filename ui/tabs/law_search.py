@@ -18,6 +18,7 @@ from ui.theme import (
     user_format_color,
 )
 from ui.widgets import (
+    configure_expanding_column,
     CenteredCheckDelegate,
     DropdownComboBox,
     DeferredWrapTextBrowser,
@@ -296,13 +297,23 @@ class LawSearchTab(QWidget):
         )
         table_header = self.result_table.horizontalHeader()
         table_header.setStretchLastSection(False)
+        # 자동 맞춤ㆍ늘림 모드는 헤더 경계를 끌어도 폭을 곧바로 되돌린다.
+        # 처음 폭만 정해 두고 이후에는 사용자가 각 열을 직접 조절한다.
+        table_header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         for column in range(len(headers)):
-            mode = (
-                QHeaderView.ResizeMode.Stretch
-                if column == self.title_column
-                else QHeaderView.ResizeMode.ResizeToContents
-            )
-            table_header.setSectionResizeMode(column, mode)
+            if column == 0:
+                width = 56
+            elif column == self.title_column:
+                width = 340
+            else:
+                width = 120
+            self.result_table.setColumnWidth(column, width)
+        table_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        # 표가 넓어지면 제목 열이 남는 폭을 먹어 오른쪽 빈 바탕을 없앤다.
+        # 열 경계를 끌면 그 좌우 두 칸만 폭을 주고받는다.
+        configure_expanding_column(
+            self.result_table, self.title_column, 220, fixed_columns=(0,)
+        )
         self.result_table.itemSelectionChanged.connect(
             self._selection_changed
         )
@@ -1246,7 +1257,7 @@ class LawSearchTab(QWidget):
         self.result_table.setRowCount(0)
         self.result_rows.clear()
         self.result_count.setText("0건")
-        self.result_empty_label.show_message("검색 중…")
+        self.result_empty_label.show_message("검색 중", animate_dots=True)
         self.detail_view.clear()
         self.current_detail_text = ""
         self.copy_button.setEnabled(False)

@@ -94,8 +94,14 @@ def test_keyword_provision_and_name_columns_stretch(
         tab.show()
         qt_app.processEvents()
         header = tab.result_table.horizontalHeader()
-        assert header.sectionResizeMode(2) == QHeaderView.ResizeMode.Stretch
-        assert header.sectionResizeMode(3) == QHeaderView.ResizeMode.Stretch
+        # 저장 체크 칸만 고정폭이다. 나머지는 손으로 끌어 조절하고, 남는
+        # 폭만 조문 열이 먹는다.
+        assert header.sectionResizeMode(0) == QHeaderView.ResizeMode.Fixed
+        assert all(
+            header.sectionResizeMode(column)
+            == QHeaderView.ResizeMode.Interactive
+            for column in range(1, tab.result_table.columnCount())
+        )
         used = sum(
             tab.result_table.columnWidth(index)
             for index in range(tab.result_table.columnCount())

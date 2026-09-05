@@ -2,12 +2,32 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QPoint
+from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QTextCursor, QTextDocument
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QTextEdit
 
 from ui.widgets import DETAIL_DOCUMENT_MARGIN, DeferredWrapTextBrowser
+
+
+class _ControlWheelEvent:
+    @staticmethod
+    def modifiers():
+        return Qt.KeyboardModifier.ControlModifier
+
+    def accept(self) -> None:
+        self.accepted = True
+
+
+def test_control_wheel_is_ignored_in_law_body() -> None:
+    QApplication.instance() or QApplication([])
+    browser = DeferredWrapTextBrowser()
+    event = _ControlWheelEvent()
+    event.accepted = False
+
+    browser.wheelEvent(event)
+
+    assert event.accepted
 
 
 def test_resize_preserves_top_visible_text_position() -> None:

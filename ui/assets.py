@@ -2,7 +2,56 @@
 
 from __future__ import annotations
 
+from base64 import b64encode
+from functools import lru_cache
+from pathlib import Path
+import re
+
 from storage.paths import APP_DIR
+
+
+@lru_cache(maxsize=32)
+def icon_data_uri(path: Path) -> str:
+    """아이콘 파일을 본문 HTML에 그대로 담는 data: 주소로 바꾼다.
+
+    본문 HTML은 저장본으로 남고 다음 실행에서 그대로 다시 열린다.
+    거기에 ``file:`` 경로를 심으면 onefile EXE가 실행마다 다른 임시
+    폴더에 풀리므로, 저장본을 다시 열 때 그림이 사라지고 점선 네모만
+    남았다. 그림을 주소 안에 담으면 경로와 무관하게 늘 보인다.
+    """
+    try:
+        raw = Path(path).read_bytes()
+    except OSError:
+        return Path(path).as_uri()
+    kind = "image/svg+xml" if str(path).lower().endswith(".svg") else "image/png"
+    return f"data:{kind};base64," + b64encode(raw).decode("ascii")
+
+
+# 저장본에 남은 옛 ``file:`` 아이콘 주소를 지금 실행의 data: 주소로
+# 바꿀 때 쓴다. 파일 이름만 보고 찾으므로 어느 폴더에서 저장했든 걸린다.
+_INLINE_ICON_FILES = (
+    "annex_expand.svg",
+    "annex_collapse.svg",
+    "annex_hwp.svg",
+    "annex_pdf.svg",
+)
+_INLINE_ICON_PATTERN = re.compile(
+    r"file:/+[^\"'>\s]*?/(" + "|".join(
+        name.replace(".", r"\.") for name in _INLINE_ICON_FILES
+    ) + r")",
+    re.IGNORECASE,
+)
+
+
+def normalize_inline_icon_sources(html: str) -> str:
+    """저장본의 옛 아이콘 주소를 지금 실행에서 볼 수 있는 주소로 고친다."""
+    if not html or "file:" not in html:
+        return html
+
+    def replace(match: re.Match[str]) -> str:
+        return icon_data_uri(APP_DIR / match.group(1).lower())
+
+    return _INLINE_ICON_PATTERN.sub(replace, html)
 
 
 SEARCH_API_REFRESH_TOOLTIP = (

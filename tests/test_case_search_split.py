@@ -93,9 +93,14 @@ def test_case_title_column_stretches_to_fill_table(
         tab.show()
         qt_app.processEvents()
         header = tab.result_table.horizontalHeader()
-        assert (
-            header.sectionResizeMode(tab.title_column)
-            == QHeaderView.ResizeMode.Stretch
+        # 저장 체크 칸만 고정폭이고 나머지는 손으로 끌어 조절한다. 늘림
+        # 모드는 드래그한 폭을 곧바로 되돌려 버려 쓰지 않고, 남는 폭만
+        # 제목 열이 흡수한다.
+        assert header.sectionResizeMode(0) == QHeaderView.ResizeMode.Fixed
+        assert all(
+            header.sectionResizeMode(column)
+            == QHeaderView.ResizeMode.Interactive
+            for column in range(1, tab.result_table.columnCount())
         )
         used = sum(
             tab.result_table.columnWidth(index)

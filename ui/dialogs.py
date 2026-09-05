@@ -171,6 +171,8 @@ class InlinePdfPreviewPanel(QFrame):
         self.pdf_view.setPageMode(QPdfView.PageMode.MultiPage)
         self.pdf_view.setZoomMode(QPdfView.ZoomMode.Custom)
         self.pdf_view.setZoomFactor(1.0)
+        self.pdf_view.installEventFilter(self)
+        self.pdf_view.viewport().installEventFilter(self)
         self.pdf_view.hide()
         layout.addWidget(self.pdf_view, 1)
 
@@ -186,7 +188,9 @@ class InlinePdfPreviewPanel(QFrame):
         # 숫자칸의 위아래 화살표는 본문 글자 크기 조절칸과 같은 모양으로
         # 둔다. 같은 일을 하는 칸이 화면마다 다르게 생기지 않게 한다.
         height = self.TOOL_HEIGHT
-        arrow_height = max(8, (height - 2) // 2)
+        # 1px 테두리 안쪽 높이(20px)를 정확히 반으로 나눈다. 기존 10px
+        # 버튼 두 개에 각 경계선까지 더해져 화살표 영역이 상자 밖으로 샜다.
+        arrow_height = max(8, (height - 4) // 2)
         self.setStyleSheet(
             "QFrame#inlinePdfPreviewPanel { background:#f1f1f1; "
             "border:1px solid #c9ccd1; }"
@@ -201,18 +205,17 @@ class InlinePdfPreviewPanel(QFrame):
             "QPushButton#inlinePdfClose:hover, QPushButton#inlinePdfToolButton:hover "
             "{ background:#5a5e64; }"
             "QSpinBox#inlinePdfPageSpin, QSpinBox#inlinePdfZoom { "
-            f"min-height:{height}px; max-height:{height}px; "
             "background:#fff; border:1px solid #777b82; border-radius:3px; "
             "padding:0 17px 0 5px; font-size:8pt; }"
             "QSpinBox#inlinePdfPageSpin::up-button, "
             "QSpinBox#inlinePdfZoom::up-button { "
-            "subcontrol-origin:border; subcontrol-position:top right; "
+            "subcontrol-origin:padding; subcontrol-position:top right; "
             f"width:15px; height:{arrow_height}px; background:#f4f7fa; "
             "border-left:1px solid #cfd8e3; border-bottom:1px solid #dbe3eb; "
             "border-top-right-radius:2px; }"
             "QSpinBox#inlinePdfPageSpin::down-button, "
             "QSpinBox#inlinePdfZoom::down-button { "
-            "subcontrol-origin:border; subcontrol-position:bottom right; "
+            "subcontrol-origin:padding; subcontrol-position:bottom right; "
             f"width:15px; height:{arrow_height}px; background:#f4f7fa; "
             "border-left:1px solid #cfd8e3; border-top:1px solid #dbe3eb; "
             "border-bottom-right-radius:2px; }"
@@ -294,12 +297,26 @@ class InlinePdfPreviewPanel(QFrame):
         self.page_spin.setValue(max(1, int(page) + 1))
         self.page_spin.blockSignals(False)
 
+    def eventFilter(self, watched, event) -> bool:
+        if (
+            watched in (self.pdf_view, self.pdf_view.viewport())
+            and event.type() == QEvent.Type.Wheel
+            and event.modifiers() & Qt.KeyboardModifier.ControlModifier
+        ):
+            delta = event.angleDelta().y()
+            if delta:
+                self.zoom_spin.setValue(
+                    self.zoom_spin.value() + (10 if delta > 0 else -10)
+                )
+            return True
+        return super().eventFilter(watched, event)
+
     def _toggle_expanded(self) -> None:
         # 부모는 본문 뷰포트다. 예전처럼 parent.height()-24를 쓰면
         # 미리보기가 문서 전체를 덮고, 자리 표시 높이도 같이 커져
-        # 본문을 밀어 낸다. 접힘 340 · 크게 560만 오간다.
+        # 본문을 밀어 낸다. 크게 보기는 기본 높이의 정확히 두 배다.
         self._expanded = not self._expanded
-        self.setFixedHeight(560 if self._expanded else 340)
+        self.setFixedHeight(680 if self._expanded else 340)
         self.expand_button.setText("축소" if self._expanded else "크게")
 
 

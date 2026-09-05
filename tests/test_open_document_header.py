@@ -431,6 +431,37 @@ def test_favorite_body_is_not_covered_by_keyword_page(qt_app) -> None:
         qt_app.processEvents()
 
 
+def test_header_opens_case_body_instead_of_the_result_list(qt_app) -> None:
+    """열린 본문 띠에서 해석례를 누르면 목록이 아니라 본문이 떠야 한다.
+
+    법령ㆍ조문 본문은 크게 보기로 들어가는데 질의회신ㆍ해석례ㆍ판례만
+    왼쪽 메뉴 자리만 옮겨, 열어 둔 회신을 목록에서 다시 찾아 눌러야 했다.
+    """
+    window = LawSearchWindow()
+    try:
+        tab = window.expc_tab
+        tab._active_detail_row = {"id": "331111", "title": "법령해석 사례"}
+        tab.current_detail_text = "안건번호 ...\n질의요지 ..."
+        documents = window._collect_open_documents()
+        token = next(
+            str(document["token"])
+            for document in documents
+            if document["source"] == "expc"
+        )
+        window._open_document_descriptors = {
+            str(document["token"]): document for document in documents
+        }
+        window.navigation.setCurrentRow(0)
+
+        window._activate_open_document(token)
+
+        assert window.navigation.currentRow() == 3
+        assert tab._reading_mode is True
+        assert not tab.search_results_panel.isVisible()
+    finally:
+        window.close()
+
+
 def test_open_document_strip_can_close_a_document(qt_app) -> None:
     """위쪽 "열린 본문" 띠에서도 × 로 본문을 닫을 수 있어야 한다."""
     window = LawSearchWindow()

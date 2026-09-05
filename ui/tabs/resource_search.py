@@ -9,9 +9,12 @@ from ui.assets import (
     ANNEX_HWP_ICON_PATH,
     ANNEX_PDF_ICON_PATH,
     SEARCH_API_REFRESH_TOOLTIP,
+    icon_data_uri,
+    normalize_inline_icon_sources,
 )
 from ui.theme import (
     detail_font as make_detail_font,
+    detail_font_css_family,
     ui_font,
     PALETTE_COLORS,
     SEARCH_COMBO_WIDTH,
@@ -53,6 +56,7 @@ from ui.widgets import (
     prompt_oc_api_key,
     replace_search_term_backgrounds,
     configure_adaptive_result_rows,
+    configure_expanding_column,
     configure_horizontal_splitter,
     favorite_icon,
     resize_adaptive_result_rows,
@@ -103,7 +107,8 @@ from molit_cgm_expc_api import (
 from utils.annex_notation import annex_hint_in_query, annex_related_law_name, row_matches_annex_hint
 from utils.annex_parse import parse_annex_bytes
 from utils.law_download import download_law_file
-from utils.constants import DETAIL_FONT_FAMILY
+from utils.constants import DEFAULT_DETAIL_FONT_POINT, DETAIL_FONT_FAMILY
+from utils.hwp_export import default_export_name, save_law_hwpx
 from utils.images import trim_blank_bottom
 from utils.formatting import (
     BODY_LINE_HEIGHT,
@@ -161,8 +166,8 @@ from PySide6.QtCore import (
     Qt,
 )
 from PySide6.QtPdf import QPdfDocument
-from PySide6.QtGui import QBrush, QColor, QCursor, QDesktopServices, QFont, QKeySequence, QShortcut, QTextCharFormat, QTextCursor, QTextDocument, QTextFormat
-from PySide6.QtWidgets import QAbstractItemView, QApplication, QDialog, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMenu, QMessageBox, QProgressBar, QPushButton, QSizePolicy, QSplitter, QStackedWidget, QTabBar, QTableWidget, QTableWidgetItem, QTextEdit, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
+from PySide6.QtGui import QBrush, QColor, QCursor, QDesktopServices, QFont, QIcon, QKeySequence, QShortcut, QTextCharFormat, QTextCursor, QTextDocument, QTextFormat
+from PySide6.QtWidgets import QAbstractItemView, QApplication, QDialog, QFileDialog, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMenu, QMessageBox, QProgressBar, QPushButton, QSizePolicy, QSplitter, QStackedWidget, QTabBar, QTableWidget, QTableWidgetItem, QTextEdit, QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 from datetime import datetime
 from html import escape, unescape
 from pathlib import Path
@@ -280,6 +285,9 @@ class ResourceSearchTab(QWidget):
     _ARTICLE_FAVORITE_SIZE = 24
     _ARTICLE_FAVORITE_GAP = 2
     _ARTICLE_FAVORITE_HEADING_MARGIN = 22.0
+    # 결과표에서 남는 폭을 흡수하는 열(명칭). 글자가 가장 긴 열이라
+    # 여기가 늘어나야 표가 넓어져도 오른쪽에 빈 바탕이 남지 않는다.
+    NAME_COLUMN = 3
 
     def __init__(
         self,
@@ -313,6 +321,7 @@ class ResourceSearchTab(QWidget):
         self.pending_row: dict[str, object] | None = None
         self._pending_reference_title = "인용 조문"
         self._pending_reference_key = ""
+        self._pending_keyword_article_row: dict[str, object] | None = None
         # 본문 하단 별표ㆍ서식에서 펼쳐 둔 항목. 키는 그 별표의 PDF 주소이고
         # 값은 배율(%)ㆍ내려받은 원문ㆍ오류 문구를 담는다. 접으면 지운다.
         self._annex_previews: dict[str, dict[str, object]] = {}
@@ -753,14 +762,25 @@ class ResourceSearchTab(QWidget):
         self.result_table.verticalHeader().setVisible(False)
         configure_adaptive_result_rows(self.result_table, (3, 4))
         table_header = self.result_table.horizontalHeader()
+        # 마지막 열(공포·발령일자)을 늘리면 날짜 한 줄만 넓게 비어 보인다.
+        # 남는 폭은 가장 길게 쓰는 명칭 열이 가져간다.
         table_header.setStretchLastSection(False)
-        table_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        table_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        table_header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        table_header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        table_header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        table_header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
-        table_header.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)
+        # 나머지 열은 헤더 경계를 끌어 직접 조절한다. 자동 내용 맞춤은
+        # 드래그한 폭을 곧바로 되돌려 버려 쓰지 않는다. 명칭 열만 늘림으로
+        # 두어 표가 넓어져도 오른쪽에 빈 바탕이 남지 않게 한다.
+        table_header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        for column, width in enumerate((56, 90, 90, 360, 240, 105, 115)):
+            self.result_table.setColumnWidth(column, width)
+        # 저장 체크 칸은 폭이 정해져 있다. 끌어 바꿀 일도, 여백을 떠안을
+        # 일도 없다.
+        table_header.setSectionResizeMode(
+            0, QHeaderView.ResizeMode.Fixed
+        )
+        # 표가 넓어지면 명칭이 남는 폭을 먹는다. 열 경계를 끌면 그 좌우
+        # 두 칸만 폭을 주고받는다.
+        configure_expanding_column(
+            self.result_table, self.NAME_COLUMN, 240, fixed_columns=(0,)
+        )
         self.result_table.setColumnHidden(
             1, self.category_target != RESOURCE_ALL_TARGET
         )
@@ -926,6 +946,33 @@ class ResourceSearchTab(QWidget):
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
         self.pinned_headline.hide()
+        # 법령 전문을 한글 문서로 저장하는 단추. API는 별표ㆍ서식만 원본
+        # 파일을 주므로 전문은 우리가 만들어 준다. 제목 줄 오른쪽에 두어
+        # 본문을 어디까지 굴려도 같이 따라온다.
+        self.hwp_export_button = QToolButton()
+        self.hwp_export_button.setObjectName("hwpExportButton")
+        self.hwp_export_button.setIcon(QIcon(str(ANNEX_HWP_ICON_PATH)))
+        self.hwp_export_button.setIconSize(QSize(18, 18))
+        self.hwp_export_button.setFixedSize(28, 28)
+        self.hwp_export_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.hwp_export_button.setToolTip(
+            "이 법령 전문을 한글 문서(HWPX)로 저장합니다."
+        )
+        self.hwp_export_button.setAccessibleName("한글 문서로 저장")
+        self.hwp_export_button.clicked.connect(self._export_detail_to_hwpx)
+        self.hwp_export_button.hide()
+        # 제목 줄과 저장 단추를 한 띠로 묶는다. 바탕을 깔아 두면 본문과
+        # 구분되어 상단에 늘 붙어 있는 줄로 읽힌다.
+        self.pinned_headline_bar = QFrame()
+        self.pinned_headline_bar.setObjectName("pinnedHeadlineBar")
+        self.pinned_headline_row = QHBoxLayout(self.pinned_headline_bar)
+        self.pinned_headline_row.setContentsMargins(4, 2, 4, 2)
+        self.pinned_headline_row.setSpacing(6)
+        self.pinned_headline_row.addWidget(self.pinned_headline, 1)
+        self.pinned_headline_row.addWidget(
+            self.hwp_export_button, 0, Qt.AlignmentFlag.AlignVCenter
+        )
+        self.pinned_headline_bar.hide()
 
         self.detail_view = DeferredWrapTextBrowser()
         self.detail_view.setAccessibleName("본문")
@@ -1030,7 +1077,7 @@ class ResourceSearchTab(QWidget):
         detail_body_layout.setContentsMargins(0, 0, 0, 0)
         detail_body_layout.setSpacing(8)
         # 찾기 줄은 본문 위에 뜨는 창이라 레이아웃에 넣지 않는다.
-        detail_body_layout.addWidget(self.pinned_headline)
+        detail_body_layout.addWidget(self.pinned_headline_bar)
         self.inline_annex_preview = InlinePdfPreviewPanel(
             self.detail_view.viewport()
         )
@@ -1595,9 +1642,15 @@ class ResourceSearchTab(QWidget):
             self.detail_view.setFont(font)
             self.detail_view.document().setDefaultFont(font)
             if html is not None:
+                # 저장본에는 예전 실행의 file: 아이콘 주소가 남아 있다.
+                # 그 경로는 지금 실행에 없어서 별표 목록의 +ㆍ−와 내려받기
+                # 표시가 빈 네모로만 그려졌다. 화면에 올리기 직전에 지금
+                # 실행에서 볼 수 있는 주소로 바꾼다.
                 self.detail_view.setHtml(
-                    self._scale_document_font_sizes(
-                        html, source_font_size, self.detail_font_size
+                    normalize_inline_icon_sources(
+                        self._scale_document_font_sizes(
+                            html, source_font_size, self.detail_font_size
+                        )
                     )
                 )
             elif text is not None:
@@ -5295,7 +5348,9 @@ class ResourceSearchTab(QWidget):
             else:
                 raise ValueError("문서 본문을 찾지 못했습니다.")
             metadata = self._with_repeal_notice(metadata, row)
-            html_parts = self._popup_detail_header(title, metadata)
+            html_parts = self._popup_detail_header(
+                title, metadata, short_name=self._law_document_headline(payload)[0]
+            )
             embedded_images = self._admin_rule_images(
                 record if record is not None else payload
             )
@@ -5388,7 +5443,7 @@ class ResourceSearchTab(QWidget):
         "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
     )
     ANNEX_PREVIEW_COMPACT_HEIGHT = 340
-    ANNEX_PREVIEW_EXPANDED_HEIGHT = 560
+    ANNEX_PREVIEW_EXPANDED_HEIGHT = ANNEX_PREVIEW_COMPACT_HEIGHT * 2
     ANNEX_PREVIEW_ZOOM_STEPS = (60, 80, 100, 130, 160, 200)
     ANNEX_PREVIEW_DEFAULT_ZOOM = 100
     # 한 번에 본문에 끼워 넣는 최대 쪽수. 별표 하나가 수십 쪽인 경우가 있어
@@ -5694,12 +5749,14 @@ class ResourceSearchTab(QWidget):
         # 별표 제목 줄에 붙여 버려, 미리보기가 제목 줄 높이에서 시작하고
         # 아래에는 그만큼 빈 칸이 남았다. 자리는 아래 스페이서 그림으로만
         # 찾는다(_find_named_anchor_cursor가 그림 주소로 같은 자리를 준다).
+        # QTextDocument의 표는 cellpadding=0이어도 셀 아래에 기본 여백을
+        # 더해 다음 별표가 멀리 밀렸다. 높이만 가진 투명 그림을 여백 없는
+        # div에 두고, 다음 제목의 위 패딩과 합쳐 약 10px만 남긴다.
         return (
-            f'<table width="100%" cellspacing="0" cellpadding="0" '
-            f'style="margin:0; padding:0; border:none;">'
-            f'<tr><td height="{height}" style="height:{height}px;">'
+            '<div style="margin:0 0 6px 0; padding:0; line-height:1px;">'
             f'<img src="{self.ANNEX_PREVIEW_SPACER_IMAGE}" '
-            f'width="1" height="{height}" alt=" "></td></tr></table>'
+            f'width="1" height="{height}" style="vertical-align:top;" alt=" ">'
+            '</div>'
         )
 
     def _find_named_anchor_cursor(self, name: str) -> QTextCursor | None:
@@ -5773,7 +5830,7 @@ class ResourceSearchTab(QWidget):
         """펼친 미리보기들을 각 별표 제목 아래 비워 둔 자리에 맞춘다."""
         viewport = self.detail_view.viewport()
         margin = int(self.detail_view.document().documentMargin())
-        width = min(800, max(80, viewport.width() - margin))
+        width = min(900, max(80, viewport.width() - margin))
         left = max(0, margin // 2)
         for index, entry in enumerate(self._annex_section_entries):
             key = self._annex_preview_key(entry, index)
@@ -7041,7 +7098,7 @@ class ResourceSearchTab(QWidget):
         self.result_table.setRowCount(0)
         self.result_rows.clear()
         self.result_count.setText("0건")
-        self.result_empty_label.show_message("검색 중…")
+        self.result_empty_label.show_message("검색 중", animate_dots=True)
         self._prepare_preview_for_outer_search()
         self.current_detail_text = ""
         self.copy_button.setEnabled(False)
@@ -7297,7 +7354,9 @@ class ResourceSearchTab(QWidget):
             self.pending_row = original_pending_row
 
         metadata = self._with_repeal_notice(metadata, source_row)
-        html_parts = self._popup_detail_header(title, metadata)
+        html_parts = self._popup_detail_header(
+            title, metadata, short_name=self._law_document_headline(payload)[0]
+        )
         has_body = False
         for label, value in sections:
             value = str(value or "")
@@ -7334,6 +7393,15 @@ class ResourceSearchTab(QWidget):
             )
         popup_title = f"{law_label} {reference_label or '본문'}".strip()
         popup_html = "".join(html_parts)
+        # 다른 법령을 인용한 링크에는 법령ID가 없다(본문에는 법령명만
+        # 적혀 있다). 그대로 두면 팝업의 즐겨찾기 단추가 계속 꺼져 있어
+        # 조항호목을 담을 수 없었다. 조회로 알아낸 ID를 여기서 채운다.
+        resolved_id = str(source_row.get("id") or "")
+        request = dict(self._pending_reference_popup.reference_request or {})
+        if resolved_id and not str(request.get("law_id") or ""):
+            request["law_id"] = resolved_id
+            request.setdefault("law_name", law_label)
+            self._pending_reference_popup.reference_request = request
         self._pending_reference_popup.set_content(popup_title, popup_html)
         reference_key = self._remember_reference_popup(
             source_row,
@@ -7687,15 +7755,15 @@ class ResourceSearchTab(QWidget):
     # 앞에 두면 찾던 법령 자체가 한참 아래로 밀렸다.
     INTEGRATED_GROUP_ORDER = {
         "law": 0,
-        "admrul": 2,
+        "admrul": 1,
         "ordin": 3,
         "licbyl": 4,
         "admbyl": 5,
         "ordinbyl": 6,
     }
-    # 법령 바로 다음 자리. 조문 단위 추천이라 법령 목록보다는 뒤에,
-    # 나머지 자료보다는 앞에 둔다.
-    INTEGRATED_AI_ORDER = 1
+    # 법령과 행정규칙 다음 자리. 조문 단위 추천은 두 기본 목록 뒤에 두고,
+    # 자치법규와 별표ㆍ서식 등 나머지 자료보다는 앞에 둔다.
+    INTEGRATED_AI_ORDER = 2
 
     @classmethod
     def _integrated_group_order(cls, row: dict[str, object]) -> int:
@@ -7902,10 +7970,48 @@ class ResourceSearchTab(QWidget):
             f"{visible}/{total}건" if query else f"{total}건"
         )
 
+    def _keyword_article_target(
+        self, row: dict[str, object]
+    ) -> tuple[dict[str, object], str, str, str, str, str] | None:
+        """통합 목록의 AI추천 줄을 조항호목 즐겨찾기 값으로 바꾼다.
+
+        연관검색ㆍ직접검색은 법령 전문이 아니라 조문 하나를 돌려준다.
+        그 법령ID와 여섯 자리 조문코드는 조항호목 즐겨찾기가 받는 값과
+        같은 체계라 그대로 얹을 수 있다. 행정규칙 조문은 조항호목 API가
+        없고, 조문번호를 받지 못한 줄은 걸 자리가 없어 대상이 아니다 —
+        그런 줄은 예전처럼 법령 단위 즐겨찾기로 다룬다.
+        """
+        if not row.get("ai_recommended"):
+            return None
+        if str(row.get("target") or "") != "law":
+            return None
+        law_id = str(row.get("id") or "").strip()
+        jo = str(row.get("keyword_jo") or "").strip()
+        if not law_id or not jo:
+            return None
+        law_row = self._law_row(law_id, str(row.get("name") or ""))
+        if law_row is None:
+            return None
+        label = str(row.get("keyword_provision") or "").strip() or "조문"
+        return (
+            law_row,
+            jo,
+            str(row.get("keyword_hang") or ""),
+            str(row.get("keyword_ho") or ""),
+            str(row.get("keyword_mok") or ""),
+            label,
+        )
+
     def _is_favorite_at_row(self, row_index: int) -> bool:
         if not (0 <= row_index < len(self.result_rows)):
             return False
-        return self.law_cache.is_favorite(self.result_rows[row_index])
+        row = self.result_rows[row_index]
+        article = self._keyword_article_target(row)
+        if article is not None:
+            return self.law_cache.is_article_favorite(
+                article[0], article[1], hang=article[2], ho=article[3], mok=article[4]
+            )
+        return self.law_cache.is_favorite(row)
 
     def _is_favorite_pending_at_row(self, row_index: int) -> bool:
         """저장본을 받는 중이라 즐겨찾기가 아직 걸리지 않은 줄인지."""
@@ -7934,6 +8040,15 @@ class ResourceSearchTab(QWidget):
         self, row: dict[str, object], *, select_row_index: int = -1
     ) -> None:
         """결과 목록의 별표와 본문 탭의 별표가 함께 쓰는 즐겨찾기 토글."""
+        article = self._keyword_article_target(row)
+        if article is not None:
+            law_row, jo, hang, ho, mok, label = article
+            self.toggle_article_favorite_by_id(
+                str(law_row["id"]), jo, label, str(law_row["name"]),
+                hang=hang, ho=ho, mok=mok,
+            )
+            self.result_table.viewport().update()
+            return
         wants_favorite = not self.law_cache.is_favorite(row)
         if wants_favorite and not self._row_is_saved(row):
             if self.worker and self.worker.isRunning():
@@ -7980,6 +8095,21 @@ class ResourceSearchTab(QWidget):
             "label": str(config["label"]),
             "name": name or law_id,
         }
+
+    def law_short_name_by_id(self, law_id: str) -> str:
+        """저장해 둔 법령 본문에서 약칭을 찾아 준다. 없으면 빈 글자.
+
+        조문검색 API는 약칭을 늘 주지는 않는다. 같은 법령을 한 번이라도
+        본문으로 열어 두었으면 저장본에 약칭이 있으므로, 법령검색 본문과
+        같은 머리글을 만들 수 있다.
+        """
+        row = self._law_row(str(law_id or "").strip())
+        if row is None or not str(row.get("id") or ""):
+            return ""
+        record = self.law_cache.load_for_row(row)
+        if not isinstance(record, dict):
+            return ""
+        return self._law_document_headline(record.get("payload"))[0]
 
     def is_article_favorite_by_id(
         self,
@@ -8340,6 +8470,15 @@ class ResourceSearchTab(QWidget):
     def _keyword_result_number(value: str) -> str:
         return str(int(value)) if value.isdigit() else value
 
+    @staticmethod
+    def _keyword_unit_code(node: object, unit: str) -> str:
+        """키워드검색 XML의 항ㆍ호 번호를 여섯 자리 코드로 바꾼다."""
+        number = _find_text(node, f"{unit}번호")
+        if not number.isdigit():
+            return ""
+        branch = _find_text(node, f"{unit}가지번호")
+        return law_unit_code(number, branch if branch.isdigit() else "")
+
     @classmethod
     def _keyword_result_provision(cls, node: object) -> str:
         """키워드검색 XML 한 건의 조문 표기를 단독 검색과 같게 만든다."""
@@ -8403,6 +8542,14 @@ class ResourceSearchTab(QWidget):
                         article_number,
                         article_branch if article_branch.isdigit() else "",
                     )
+                # 조문검색 단독 화면과 같은 항ㆍ호ㆍ목 번호를 함께 담는다.
+                # 없으면 조 전체가 즐겨찾기에 걸려, 같은 조의 다른 항을
+                # 고른 결과끼리 별이 함께 켜졌다.
+                keyword_hang = self._keyword_unit_code(node, "항")
+                keyword_ho = self._keyword_unit_code(node, "호")
+                keyword_mok = self._keyword_result_number(
+                    _find_text(node, "목번호")
+                )
                 organization = _find_text(
                     node, "발령기관명" if is_admin else "소관부처명"
                 )
@@ -8435,6 +8582,9 @@ class ResourceSearchTab(QWidget):
                         "short_name": "",
                         "keyword_provision": provision,
                         "keyword_jo": keyword_jo,
+                        "keyword_hang": keyword_hang,
+                        "keyword_ho": keyword_ho,
+                        "keyword_mok": keyword_mok,
                         # 행정규칙 키워드 결과는 전문이 아니라 조문 단위로
                         # 저장하므로 같은 규칙의 다른 조문과 캐시를 나눈다.
                         "jo_code": keyword_jo if is_admin else "",
@@ -8625,15 +8775,48 @@ class ResourceSearchTab(QWidget):
         return True
 
     def _schedule_keyword_article_scroll(self, row: dict[str, object]) -> None:
-        """통합 키워드 결과로 연 법령을 해당 조문 위치에 맞춘다."""
+        """통합 키워드 결과로 연 법령을 해당 조문 위치에 맞춘다.
+
+        연관검색ㆍ직접검색은 조문 하나를 답으로 준다. 그런데 목록에서 열면
+        그 법령의 전문이 뜬다(두 API는 전문을 주지 않아 법령 본문 API로
+        따로 받는다). 전문을 열되 찾던 조문 자리에서 시작하게 한다.
+
+        문서 배치와 조문 목록 구성은 화면을 그린 뒤에 끝난다. 한 번만
+        예약하면 조문 자리를 아직 몰라 그냥 맨 위에 머물렀다. 자리가 잡힐
+        때까지 짧게 몇 번 더 확인한다.
+        """
         jo = str(row.get("keyword_jo") or "")
         if str(row.get("target") or "") != "law" or not jo:
             return
         key = f"{row['target']}:{row['id'] or row['name']}"
+        provision = str(row.get("keyword_provision") or "").strip()
 
-        def scroll() -> None:
-            if self._active_document_key == key:
-                self.scroll_to_favorite_article(jo)
+        def has_article() -> bool:
+            return any(
+                str(item.get("jo") or "") == jo and item.get("anchor")
+                for item in self._current_three_stage_articles
+            )
+
+        def scroll(attempt: int = 0) -> None:
+            if self._active_document_key != key:
+                return
+            if not has_article():
+                if attempt < 6:
+                    QTimer.singleShot(80, lambda: scroll(attempt + 1))
+                return
+            self.scroll_to_favorite_article(jo)
+            if provision:
+                self.status_label.setText(f"{provision} 자리에서 엽니다.")
+            # 크게 보기로 넘어가면 본문 폭이 바뀌며 자리가 다시 잡힌다.
+            # 한 번 더 맞춰 두지 않으면 그때 맨 위로 돌아갔다.
+            QTimer.singleShot(
+                140,
+                lambda: (
+                    self.scroll_to_favorite_article(jo)
+                    if self._active_document_key == key
+                    else None
+                ),
+            )
 
         QTimer.singleShot(0, scroll)
 
@@ -9101,6 +9284,14 @@ class ResourceSearchTab(QWidget):
                     if isinstance(article, dict)
                 ],
                 "render_highlight_terms": list(snapshot_terms),
+                # 별표 목록도 여기서 함께 넣는다. 바로 아래
+                # _restore_document_state가 이 값으로 화면의 별표 목록을
+                # 덮어쓰기 때문에, 비워 두면 프로그램을 껐다 켠 뒤 저장
+                # 본문을 열었을 때 별표가 보이는데 눌러도 펼쳐지지 않았다.
+                "annex_entries": [
+                    dict(entry)
+                    for entry in self._law_annex_entries(record.get("payload"))
+                ],
                 # 기존 QTextDocument를 재사용하는 빠른 경로에서도 아래 상태가
                 # 그대로 사용된다. 여기서 빈 목록을 넣으면 검색 후 크게 보기로
                 # 전환할 때 저장 파일의 메모 띠지가 모두 사라진다.
@@ -9189,7 +9380,12 @@ class ResourceSearchTab(QWidget):
             QTextDocument,
         )
         restored_render = self._restore_cached_law_render(row, record)
-        if not restored_render:
+        if restored_render:
+            # 저장 HTML을 그대로 되살린 경로에서는 별표 제목의 글꼴ㆍ밑줄
+            # 보정을 거치지 않아, 링크 밑줄이 남고 글씨가 본문과 다른
+            # 글꼴로 보였다. 되살린 뒤 같은 손질을 한 번 더 한다.
+            self._apply_annex_text_font()
+        else:
             self._show_detail(payload, save_cache=False)
             snapshot = self._active_law_render_snapshot()
             if snapshot.get("rendered_html") and self._snapshot_belongs_to(
@@ -9614,12 +9810,68 @@ class ResourceSearchTab(QWidget):
         if not text:
             self.pinned_headline.clear()
             self.pinned_headline.hide()
+            self.hwp_export_button.hide()
+            self.pinned_headline_bar.hide()
             return
         self.pinned_headline.setText(text)
         self.pinned_headline.setToolTip(
             re.sub(r"<[^>]+>", "", text).replace("&nbsp;", " ")
         )
         self.pinned_headline.show()
+        # 한글 저장은 법령 전문에서만 뜻이 있다. 제목 줄이 뜨는 문서가
+        # 곧 그 대상이다.
+        self.hwp_export_button.show()
+        self.pinned_headline_bar.show()
+
+    def _pinned_headline_parts(self) -> tuple[str, str]:
+        """붙박이 제목 줄에서 문서 제목과 그 아래 한 줄을 평문으로 꺼낸다."""
+        state = self._document_states.get(self._active_document_key)
+        row = state.get("row") if isinstance(state, dict) else None
+        title = str(row.get("name") or "") if isinstance(row, dict) else ""
+        plain = re.sub(r"<[^>]+>", "\n", self.pinned_headline.text())
+        lines = [
+            line.strip()
+            for line in plain.replace("&nbsp;", " ").splitlines()
+            if line.strip()
+        ]
+        if not title and lines:
+            title = lines[0]
+        headline = next(
+            (line for line in lines if line.startswith("[시행")), ""
+        )
+        return title or "법령", headline
+
+    def _export_detail_to_hwpx(self) -> None:
+        """지금 보고 있는 법령 전문을 한글 문서로 저장한다."""
+        body = str(self.current_detail_text or "").strip()
+        if not body:
+            self.status_label.setText("저장할 본문이 없습니다.")
+            return
+        title, headline = self._pinned_headline_parts()
+        suggested = str(Path.home() / default_export_name(title))
+        path, _selected = QFileDialog.getSaveFileName(
+            self,
+            "한글 문서로 저장",
+            suggested,
+            "한글 문서 (*.hwpx)",
+        )
+        if not path:
+            return
+        if not path.lower().endswith(".hwpx"):
+            path = f"{path}.hwpx"
+        try:
+            saved = save_law_hwpx(path, title, headline, body)
+        except Exception as exc:  # noqa: BLE001 - 저장 실패 사유를 그대로 보여 준다
+            QMessageBox.warning(
+                self,
+                "한글 문서 저장 실패",
+                f"한글 문서를 만들지 못했습니다.\n\n{exc}",
+            )
+            self.status_label.setText("한글 문서 저장에 실패했습니다.")
+            return
+        self.status_label.setText(
+            f"{saved.name} 으로 저장했습니다. 한글에서 열어 .hwp로 다시 저장할 수 있습니다."
+        )
 
     @classmethod
     def _law_document_headline(cls, payload: object) -> tuple[str, str]:
@@ -9693,8 +9945,16 @@ class ResourceSearchTab(QWidget):
     # 줄 사이만 유난히 벌어져 글이 성글어 보였다.
     POPUP_PARAGRAPH_GAP_PX = 2
 
-    def _popup_detail_header(self, title: str, metadata: list) -> list[str]:
-        """조문 팝업용 작은 제목과 3칸×2줄 기본정보 헤더."""
+    # 팝업 기본정보는 두 칸씩 두 줄로 세운다. 법령ID·소관부처가 윗줄,
+    # 시행일자·공포일자가 아랫줄이다. 공포번호는 팝업에서 빼서 줄을 줄였다.
+    POPUP_META_ORDER = ("법령ID", "소관부처", "시행일자", "공포일자")
+    POPUP_META_HIDDEN = ("공포번호", "발령번호", "공포·발령번호")
+    POPUP_META_COLUMNS = 2
+
+    def _popup_detail_header(
+        self, title: str, metadata: list, *, short_name: str = ""
+    ) -> list[str]:
+        """조문 팝업용 작은 제목과 2칸×2줄 기본정보 헤더."""
         html_parts = [
             "<style>",
             "body { font-family:'Malgun Gothic'; font-weight:400; "
@@ -9705,7 +9965,8 @@ class ResourceSearchTab(QWidget):
             "border-radius:6px; padding:8px 10px; margin-bottom:11px; }",
             ".meta table { width:100%; border-collapse:collapse; "
             "table-layout:fixed; }",
-            ".meta td { width:33.33%; color:#172033; font-size:13px; "
+            f".meta td {{ width:{100 / self.POPUP_META_COLUMNS:.2f}%; "
+            "color:#172033; font-size:13px; "
             "font-weight:400; padding:4px 6px; white-space:nowrap; }",
             ".meta-label { color:#3d4c60; font-weight:700; "
             "margin-right:5px; }",
@@ -9721,17 +9982,36 @@ class ResourceSearchTab(QWidget):
             "a { color:#1768aa; font-weight:600; text-decoration:none; }",
             "</style>",
             '<div class="popup-law-title">'
-            f"{highlight_html_text(title, self.detail_highlight_terms)}</div>",
+            f"{highlight_html_text(title, self.detail_highlight_terms)}"
+            # 약칭은 법령검색 본문 머리글과 같은 표기로 제목 옆에 붙인다.
+            + (
+                '<span style="font-size:12px; font-weight:400; '
+                'color:#5a6b80;">'
+                f"&nbsp;(약칭: {escape(short_name)})</span>"
+                if short_name
+                else ""
+            )
+            + "</div>",
             '<div class="meta"><table cellspacing="0" cellpadding="0">',
         ]
         visible_metadata = [
             (str(label), str(value or ""))
             for label, value in metadata
-            if str(value or "")
+            if str(value or "") and str(label) not in self.POPUP_META_HIDDEN
         ]
-        for offset in range(0, len(visible_metadata), 3):
+        # 순서를 정해 둔 항목을 먼저 세우고, 나머지는 받은 차례대로 뒤에
+        # 붙인다(폐지 안내처럼 상황에 따라 생기는 값).
+        visible_metadata.sort(
+            key=lambda item: (
+                self.POPUP_META_ORDER.index(item[0])
+                if item[0] in self.POPUP_META_ORDER
+                else len(self.POPUP_META_ORDER)
+            )
+        )
+        columns = self.POPUP_META_COLUMNS
+        for offset in range(0, len(visible_metadata), columns):
             html_parts.append("<tr>")
-            for label, value in visible_metadata[offset : offset + 3]:
+            for label, value in visible_metadata[offset : offset + columns]:
                 shown = highlight_html_text(value, self.detail_highlight_terms)
                 if label == REPEAL_NOTICE_LABEL:
                     # 폐지ㆍ연혁 법령을 현행으로 오해하지 않도록 붉게 강조한다.
@@ -9745,7 +10025,8 @@ class ResourceSearchTab(QWidget):
                     "&nbsp;"
                     f"{shown}</td>"
                 )
-            for _unused in range(3 - len(visible_metadata[offset : offset + 3])):
+            filled = len(visible_metadata[offset : offset + columns])
+            for _unused in range(columns - filled):
                 html_parts.append("<td></td>")
             html_parts.append("</tr>")
         html_parts.append("</table></div>")
@@ -9882,9 +10163,13 @@ class ResourceSearchTab(QWidget):
         # 조문만 있던 때는 목차 끝에서 별표로 갈 길이 없었다.
         if toc_entries is not None:
             toc_entries.append((0, section_label, section_anchor))
+        # 별표 목록만 다른 글꼴을 박아 두면 본문과 글씨가 달라 보이고,
+        # 그 글꼴이 없는 환경에서는 글자가 통째로 네모로 나온다. 본문에서
+        # 고른 글꼴을 앞세우고 기본 대체 목록을 뒤에 붙인다.
+        annex_font_family = detail_font_css_family(self.detail_font_family)
         html_parts.append(
             '<div class="content" style="margin-top:28px; '
-            'font-family:\'Malgun Gothic\',\'맑은 고딕\';">'
+            f'font-family:{annex_font_family};">'
         )
         plain_parts.extend(("", f"[{section_label}]"))
         for index, entry in enumerate(entries):
@@ -9902,14 +10187,14 @@ class ResourceSearchTab(QWidget):
             if file_url:
                 icons.append(
                     f'<a href="{escape(file_url, quote=True)}">'
-                    f'<img src="{ANNEX_HWP_ICON_PATH.as_uri()}" '
+                    f'<img src="{icon_data_uri(ANNEX_HWP_ICON_PATH)}" '
                     f'width="16" height="16" {icon_style} alt="원본 내려받기">'
                     "</a>"
                 )
             if pdf_url:
                 icons.append(
                     f'<a href="{escape(pdf_url, quote=True)}">'
-                    f'<img src="{ANNEX_PDF_ICON_PATH.as_uri()}" '
+                    f'<img src="{icon_data_uri(ANNEX_PDF_ICON_PATH)}" '
                     f'width="16" height="16" {icon_style} alt="PDF 내려받기">'
                     "</a>"
                 )
@@ -9931,8 +10216,8 @@ class ResourceSearchTab(QWidget):
                     f'<a href="{escape(toggle, quote=True)}" '
                     f'style="color:{color}; text-decoration:none; '
                     'font-weight:400; vertical-align:middle;">'
-                    f'<img src="{marker_icon.as_uri()}" width="14" '
-                    'height="14" style="vertical-align:middle;" '
+                    f'<img src="{icon_data_uri(marker_icon)}" width="16" '
+                    'height="16" style="vertical-align:middle;" '
                     f'alt="{"접기" if expanded else "펼치기"}">'
                     f"&nbsp;{escape(shown)}</a>"
                 )
@@ -9942,7 +10227,7 @@ class ResourceSearchTab(QWidget):
             html_parts.append(
                 '<div class="annex-item" style="margin:0; padding:4px 0 10px 0; '
                 f'line-height:{BODY_LINE_HEIGHT}; '
-                'font-family:\'Malgun Gothic\',\'맑은 고딕\'; '
+                f'font-family:{annex_font_family}; '
                 'font-size:9.5pt; font-weight:400; color:#242529;">'
                 f"{title_html}"
                 + (f"&nbsp;&nbsp;{icon_html}" if icon_html else "")
@@ -9992,28 +10277,40 @@ class ResourceSearchTab(QWidget):
         self.current_detail_text = "\n".join(plain_parts)
         self.copy_button.setEnabled(bool(self.current_detail_text))
 
+    # 별표 목록 글자 크기(pt). 본문 글자 크기를 바꾸면 본문 전체와 같은
+    # 비율로 함께 커지고 줄어든다.
+    ANNEX_TITLE_POINT_SIZE = 9.5
+
     def _apply_annex_text_font(self) -> None:
-        """본문 하단 별표 제목의 글꼴ㆍ힌팅ㆍ밑줄을 손본다.
+        """본문 하단 별표 제목을 본문과 같은 글꼴ㆍ크기로 맞추고 밑줄만 끈다.
 
         제목이 링크라 Qt가 밑줄을 그어 버린다. HTML에 적은
         ``text-decoration:none``으로는 지워지지 않아 여기서 글자 서식으로
         직접 끈다. 색은 그대로 두어 누를 수 있는 자리임은 남긴다.
+
+        힌팅은 따로 끄지 않는다. 별표 줄만 힌팅을 꺼 두었더니 같은 글꼴인데
+        획 굵기가 본문과 달라, 이 줄만 흐릿하게 번져 보였다.
         """
         document = self.detail_view.document()
+        size = self.detail_font_size / DEFAULT_DETAIL_FONT_POINT * (
+            self.ANNEX_TITLE_POINT_SIZE
+        )
         for entry in self._annex_section_entries:
             shown = self._annex_display_title(entry)
             cursor = document.find(shown)
             if cursor.isNull():
                 continue
             character_format = QTextCharFormat()
-            character_format.setFontFamilies(["Malgun Gothic", "맑은 고딕"])
+            # 별표 제목만 다른 글꼴로 굳히지 않는다. 본문에서 고른 글꼴을
+            # 그대로 쓰고, 없을 때를 대비해 기본 글꼴을 뒤에 붙인다.
+            character_format.setFontFamilies(
+                list(dict.fromkeys([self.detail_font_family, DETAIL_FONT_FAMILY]))
+            )
+            character_format.setFontPointSize(size)
             character_format.setFontUnderline(False)
             character_format.setUnderlineStyle(
                 QTextCharFormat.UnderlineStyle.NoUnderline
             )
-            setter = getattr(character_format, "setFontHintingPreference", None)
-            if callable(setter):
-                setter(QFont.HintingPreference.PreferNoHinting)
             cursor.mergeCharFormat(character_format)
 
     def copy_detail(self) -> None:

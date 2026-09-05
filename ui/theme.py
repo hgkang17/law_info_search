@@ -7,7 +7,8 @@ import os
 from pathlib import Path
 import sys
 from typing import Callable
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QRectF, QSize, Qt
+from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtGui import (
     QBrush,
     QColor,
@@ -534,42 +535,59 @@ def build_color_palette_toolbar(
     """
     color_tools = QWidget()
     color_tools.setObjectName("colorTools")
-    color_tools.setFixedSize(78, DETAIL_HEADER_CONTROL_HEIGHT)
+    color_tools.setFixedSize(82, DETAIL_HEADER_CONTROL_HEIGHT)
     color_tools.setSizePolicy(
         QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
     )
     color_tools_layout = QHBoxLayout(color_tools)
     color_tools_layout.setContentsMargins(0, 0, 0, 0)
-    color_tools_layout.setSpacing(0)
+    color_tools_layout.setSpacing(4)
     palette_buttons: list[QToolButton] = []
 
     def tool_icon(kind: str, color_value: str) -> QIcon:
-        if kind == "background":
-            return QIcon(str(HIGHLIGHTER_ICON_PATH))
+        """도구 그림 아래에 지금 고른 색을 한 줄로 깐 아이콘.
+
+        음영색은 형광펜 그림, 글자색은 ``A`` 글자를 위에 두고 아래 색선만
+        서로 같은 자리에 그린다. 형광펜 쪽에는 색선이 없어 어느 색이 걸려
+        있는지 단추만 보고는 알 수 없었다.
+        """
         pixmap = QPixmap(22, 20)
         pixmap.fill(Qt.GlobalColor.transparent)
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        ink = QColor("#34465a")
-        font = painter.font()
-        font.setBold(True)
-        font.setPixelSize(13)
-        painter.setFont(font)
-        painter.setPen(ink)
-        painter.drawText(3, 0, 16, 16, Qt.AlignmentFlag.AlignCenter, "A")
+        if kind == "background":
+            QSvgRenderer(str(HIGHLIGHTER_ICON_PATH)).render(
+                painter, QRectF(2.0, 0.0, 18.0, 16.0)
+            )
+        else:
+            ink = QColor("#34465a")
+            font = painter.font()
+            font.setBold(True)
+            font.setPixelSize(13)
+            painter.setFont(font)
+            painter.setPen(ink)
+            painter.drawText(3, 0, 16, 16, Qt.AlignmentFlag.AlignCenter, "A")
+        # 흰색ㆍ아주 옅은 색은 바탕에 묻힌다. 색선 아래에 옅은 회색을 한 겹
+        # 깔아 어떤 색이든 자리가 보이게 한다.
+        backdrop = QPen(QColor("#c3ccd6"), 4.0)
+        backdrop.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(backdrop)
+        painter.drawLine(4, 17, 18, 17)
         painter.setPen(QPen(QColor(color_value), 2.5))
         painter.drawLine(4, 17, 18, 17)
         painter.end()
         return QIcon(pixmap)
 
     def swatch_icon(color_value: str) -> QIcon:
+        # 테두리가 없으면 흰색ㆍ아주 옅은 색이 바탕에 묻혀 빈 칸처럼
+        # 보인다. 색칸마다 얇은 테두리를 둘러 자리를 드러낸다.
         pixmap = QPixmap(22, 22)
         pixmap.fill(Qt.GlobalColor.transparent)
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        painter.setPen(QPen(QColor("#b7bec7"), 1.0))
+        painter.setPen(QPen(QColor("#9aa4b0"), 1))
         painter.setBrush(QColor(color_value))
-        painter.drawRoundedRect(2, 2, 18, 18, 2.5, 2.5)
+        painter.drawRoundedRect(0.5, 0.5, 21, 21, 3, 3)
         painter.end()
         return QIcon(pixmap)
 
@@ -580,26 +598,34 @@ def build_color_palette_toolbar(
         # QSS의 좌우 1px 테두리까지 합친 실제 크기다. 부모 영역과 같은
         # 수치로 잡아 아래ㆍ오른쪽 테두리가 잘리지 않게 한다.
         button.setFixedSize(39, DETAIL_HEADER_CONTROL_HEIGHT)
-        button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        # 예전에는 오른쪽 화살표를 정확히 눌러야 팔레트가 열렸다. 단추
+        # 어디를 눌러도 열리게 한다. 색 적용은 팔레트에서 색을 고를 때
+        # 이뤄진다.
+        button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         button.setIconSize(QSize(22, 20))
         button.setIcon(
             tool_icon("background" if is_background else "text", current["value"])
         )
-        button.setToolTip(f"{row_label} · 현재 색 적용 또는 화살표로 색 선택")
+        button.setToolTip(f"{row_label} · 눌러서 색을 고릅니다")
         button.setAccessibleName(row_label)
         menu = QMenu(button)
         palette = QWidget(menu)
         palette.setObjectName("colorSwatchPalette")
+        palette.setStyleSheet("background:transparent; border:none;")
         palette_layout = QGridLayout(palette)
-        palette_layout.setContentsMargins(6, 6, 6, 6)
+        palette_layout.setContentsMargins(4, 4, 4, 4)
         palette_layout.setSpacing(4)
         for index, (color_name, color_value) in enumerate(PALETTE_COLORS):
             swatch = QToolButton(palette)
             swatch.setObjectName("colorSwatchButton")
-            swatch.setFixedSize(26, 26)
+            swatch.setFixedSize(22, 22)
             swatch.setIconSize(QSize(22, 22))
             swatch.setIcon(swatch_icon(color_value))
+            swatch.setStyleSheet(
+                "QToolButton { background:transparent; border:none; padding:0; }"
+                "QToolButton:hover { border:1px solid #2f6fb5; border-radius:4px; }"
+            )
             swatch.setToolTip(
                 palette_color_tooltip(
                     row_label, color_name, color_value, background=is_background
@@ -629,11 +655,6 @@ def build_color_palette_toolbar(
         palette_action.setDefaultWidget(palette)
         menu.addAction(palette_action)
         button.setMenu(menu)
-        button.clicked.connect(
-            lambda _checked=False, background=is_background, state=current: (
-                apply_color(state["value"], background=background)
-            )
-        )
         palette_buttons.append(button)
         color_tools_layout.addWidget(button)
 

@@ -500,10 +500,7 @@ def test_embedded_panel_toggles_chat_list_without_hiding_composer(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
         assert widget.history_toggle_button.width() == 28
-        assert (
-            widget.history_toggle_button.geometry().right()
-            > widget.close_button.geometry().right()
-        )
+        assert not hasattr(widget, "close_button")
         assert widget.embedded_access_hint.text() == "무료 사용 가능"
         assert widget.embedded_access_hint.isVisibleTo(widget)
         widget.history_toggle_button.click()

@@ -18,7 +18,7 @@ from storage.paths import (
 )
 from PySide6.QtCore import QSettings, QSize, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import QColor, QCursor, QDesktopServices, QIcon, QKeySequence, QShortcut
-from PySide6.QtWidgets import QAbstractItemView, QCheckBox, QFrame, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMenu, QMessageBox, QPushButton, QSplitter, QStyle, QTabBar, QTableWidget, QTableWidgetItem, QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QCheckBox, QWidgetAction, QFrame, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMenu, QMessageBox, QPushButton, QSplitter, QStyle, QTabBar, QTableWidget, QTableWidgetItem, QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 import json
 import re
 import uuid
@@ -89,6 +89,21 @@ class ViewedLawsTab(QWidget):
         ("prec", "판례검색"),
     )
     FAVORITE_FOLDER_SETTINGS_KEY = "favorite_folder_tree_v2"
+
+    @staticmethod
+    def _add_menu_check(menu: QMenu, checkbox: QCheckBox) -> None:
+        """체크박스를 그대로 메뉴 항목으로 얹는다.
+
+        QAction으로 바꾸지 않는 것은 화면 곳곳이 이미 이 체크박스를 직접
+        켜고 끄기 때문이다. 위젯을 그대로 넣으면 그 코드가 그대로 살고,
+        메뉴는 여러 개를 연달아 고를 수 있게 열린 채로 남는다.
+        """
+        action = QWidgetAction(menu)
+        # 팝업 안에서는 줄끼리 붙어 있으면 어느 줄을 누르는지 헷갈린다.
+        # 위아래로 숨 쉴 자리를 준다.
+        checkbox.setContentsMargins(10, 6, 18, 6)
+        action.setDefaultWidget(checkbox)
+        menu.addAction(action)
     FAVORITE_FOLDER_LEGACY_SETTINGS_KEY = "favorite_folder_tree_v1"
     FAVORITE_PROJECTS_SETTINGS_KEY = "favorite_projects_v1"
     # 처음 만들어 두는 프로젝트 이름. 이름을 붙이기 전이라는 뜻이므로
@@ -178,6 +193,10 @@ class ViewedLawsTab(QWidget):
             root.addWidget(heading)
 
         self.project_tabs: QTabBar | None = None
+        # 즐겨찾기 표시 항목 ⋯ 단추를 세울 줄. 즐겨찾기 화면에서만 만든다.
+        self._favorite_project_row: QHBoxLayout | None = None
+        self.favorite_options_button: QToolButton | None = None
+        self.favorite_options_menu: QMenu | None = None
         if favorites_only:
             project_row = QHBoxLayout()
             project_row.setSpacing(7)
@@ -236,6 +255,7 @@ class ViewedLawsTab(QWidget):
                 self.project_add_button, 0, Qt.AlignmentFlag.AlignBottom
             )
             project_row.addStretch(1)
+            self._favorite_project_row = project_row
             root.addLayout(project_row)
 
         self.search_input = QLineEdit()
@@ -276,12 +296,12 @@ class ViewedLawsTab(QWidget):
             # 곧 그 수이고, 프로젝트 탭 줄 밑에 한 줄이 더 끼어 목록이
             # 그만큼 내려갔다. 값은 접근성 도구를 위해 남긴다.
             self.count_label.hide()
-            count_row = QHBoxLayout()
-            count_row.setContentsMargins(0, 0, 0, 0)
-            count_row.addStretch()
+            # 체크박스를 줄줄이 세우면 좁은 창에서 오른쪽이 잘려, 창을
+            # 넓혀야 비로소 보였다. ⋯ 단추 하나에 모아 팝업으로 고른다.
+            # 줄 하나가 통째로 빠지면서 프로젝트 탭과 목록 사이 여백도
+            # 함께 사라진다.
             self.union_check = QCheckBox("즐겨찾기 모아보기")
             self.union_check.setObjectName("favoriteCategoryCheck")
-            self.union_check.setFixedHeight(28)
             self.union_check.setToolTip(
                 "모든 프로젝트의 즐겨찾기를 한 목록으로 모아 아래에 보여 줍니다."
             )
@@ -289,12 +309,14 @@ class ViewedLawsTab(QWidget):
             # 열려 있으면 아래 칸이 먼저 보여 지금 프로젝트 목록을 가린다.
             self.union_check.setChecked(False)
             self.union_check.toggled.connect(self._union_favorites_toggled)
-            count_row.addWidget(self.union_check, 0, Qt.AlignmentFlag.AlignVCenter)
+            self.favorite_options_menu = QMenu(self)
+            self.favorite_options_menu.setObjectName("favoriteOptionsMenu")
+            self._add_menu_check(self.favorite_options_menu, self.union_check)
+            self.favorite_options_menu.addSeparator()
             visible_categories = self._load_visible_favorite_categories()
             for category, label in self.FAVORITE_CATEGORIES:
                 checkbox = QCheckBox(label.replace("\n", " "))
                 checkbox.setObjectName("favoriteCategoryCheck")
-                checkbox.setFixedHeight(28)
                 checkbox.setChecked(category in visible_categories)
                 checkbox.toggled.connect(
                     lambda _checked=False, selected_category=category: (
@@ -304,10 +326,30 @@ class ViewedLawsTab(QWidget):
                     )
                 )
                 self.favorite_category_checks[category] = checkbox
-                count_row.addWidget(
-                    checkbox, 0, Qt.AlignmentFlag.AlignVCenter
+                self._add_menu_check(self.favorite_options_menu, checkbox)
+            self.favorite_options_button = QToolButton()
+            self.favorite_options_button.setObjectName("favoriteOptionsButton")
+            self.favorite_options_button.setText("⋯")
+            self.favorite_options_button.setFixedSize(32, 32)
+            self.favorite_options_button.setCursor(
+                Qt.CursorShape.PointingHandCursor
+            )
+            self.favorite_options_button.setToolTip(
+                "즐겨찾기에서 보여 줄 항목과 모아보기를 고릅니다."
+            )
+            self.favorite_options_button.setAccessibleName("즐겨찾기 표시 항목")
+            self.favorite_options_button.setMenu(self.favorite_options_menu)
+            self.favorite_options_button.setPopupMode(
+                QToolButton.ToolButtonPopupMode.InstantPopup
+            )
+            # 단추는 프로젝트 탭 줄 오른쪽 끝에 세운다. 줄을 따로 두지
+            # 않으므로 탭과 목록이 예전처럼 붙는다.
+            if self._favorite_project_row is not None:
+                self._favorite_project_row.addWidget(
+                    self.favorite_options_button,
+                    0,
+                    Qt.AlignmentFlag.AlignBottom,
                 )
-            root.addLayout(count_row)
         else:
             root.addWidget(self.count_label)
 
