@@ -220,6 +220,8 @@ def test_annex_title_opens_constrained_inline_pdf_panel(
         assert slot_cursor is not None
         assert title_cursor.position() < slot_cursor.position()
         assert tab.inline_annex_preview.geometry().height() >= 320
+        assert tab.inline_annex_preview.geometry().width() <= 720
+        assert tab.inline_annex_preview.geometry().left() <= 10
         assert tab.inline_annex_preview.geometry().top() >= (
             tab.detail_view.cursorRect(title_cursor).top() - 2
         )
@@ -234,6 +236,55 @@ def test_annex_title_opens_constrained_inline_pdf_panel(
         tab._close_inline_annex_preview()
         assert tab.inline_annex_preview.isHidden()
         assert tab._annex_previews == {}
+    finally:
+        tab.close()
+
+
+def test_opening_another_annex_keeps_previous_preview_open(
+    qt_app, tmp_path, monkeypatch
+) -> None:
+    settings = QSettings(
+        str(tmp_path / "multiple-inline-annex.ini"), QSettings.Format.IniFormat
+    )
+    tab = ResourceSearchTab(
+        lambda: "",
+        RecentSearchManager(settings),
+        LawDocumentCache(tmp_path / "saved"),
+    )
+    try:
+        tab.resize(900, 900)
+        tab.show()
+        row = {
+            "target": "law",
+            "id": "000001",
+            "label": "법령",
+            "name": "표시 시험법 시행령",
+        }
+        tab.pending_row = row
+        tab._open_document_tab(row, defer_restore=True)
+        title, metadata, sections = tab._parse_law_detail(_payload())
+        tab._set_detail_document(
+            title,
+            metadata,
+            sections,
+            build_toc=True,
+            law_annexes=tab._law_annex_entries(_payload()),
+        )
+        monkeypatch.setattr(tab, "_start_annex_download", lambda *_args: None)
+
+        tab._toggle_annex_preview("0")
+        qt_app.processEvents()
+        first_key = tab._active_annex_preview_key
+        first_panel = tab._annex_preview_panels[first_key]
+
+        tab._toggle_annex_preview("1")
+        qt_app.processEvents()
+
+        assert len(tab._annex_previews) == 2
+        assert len(tab._annex_preview_panels) == 2
+        assert first_key in tab._annex_previews
+        assert not first_panel.isHidden()
+        assert tab._active_annex_preview_key != first_key
     finally:
         tab.close()
 

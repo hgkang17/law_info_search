@@ -13,7 +13,7 @@ from utils.formatting import BODY_PARAGRAPH_GAP_PX, hwp_friendly_clipboard_html
 DETAIL_HTML = (
     '<div class="content">'
     '<div class="law-article" style="margin:14px 0 8px 0;">'
-    '<span class="law-article-title" style="font-weight:700; color:#173b63;">'
+    '<span class="law-article-title" style="font-weight:700; color:#1309aa;">'
     "제8조(다른 법률에 따른 토지 이용에 관한 구역 등의 지정 제한 등)</span>"
     " 본문입니다.</div>"
     '<div class="legal-indent level-0" '
@@ -92,11 +92,11 @@ def test_normal_weight_span_is_untouched() -> None:
 def test_conversion_keeps_span_color_and_font() -> None:
     source = (
         '<span style=" font-family:\'Malgun Gothic\'; font-weight:700; '
-        'color:#173b63;">제8조</span>'
+        'color:#1309aa;">제8조</span>'
     )
     converted = hwp_friendly_clipboard_html(source)
     assert converted.startswith("<b>") and converted.endswith("</b>")
-    assert "color:#173b63" in converted
+    assert "color:#1309aa" in converted
     assert "Malgun Gothic" in converted
 
 

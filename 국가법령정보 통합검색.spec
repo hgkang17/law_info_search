@@ -51,6 +51,7 @@ datas = [
     ("annex_expand.svg", "."),
     ("annex_collapse.svg", "."),
     ("close_mark.svg", "."),
+    ("highlighter.svg", "."),
     ("fonts/PretendardVariable.ttf", "fonts"),
     ("fonts/Pretendard-Thin.ttf", "fonts"),
     ("fonts/Pretendard-ExtraLight.ttf", "fonts"),

@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import sys
 from typing import Callable
-from PySide6.QtCore import QPointF, QSize, Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import (
     QBrush,
     QColor,
@@ -17,7 +17,6 @@ from PySide6.QtGui import (
     QPainter,
     QPen,
     QPixmap,
-    QPolygonF,
     QKeySequence,
     QShortcut,
     QTextCharFormat,
@@ -34,6 +33,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from storage.paths import APP_DIR
+from ui.assets import HIGHLIGHTER_ICON_PATH
 from utils.constants import (
     DETAIL_FONT_CSS_FAMILY,
     DETAIL_FONT_FAMILIES,
@@ -43,6 +43,7 @@ from utils.constants import (
     UI_FONT_FAMILIES,
     UI_FONT_PIXEL_SIZE,
 )
+from utils.formatting import LAW_HEADING_COLOR
 from PySide6.QtWidgets import QLabel
 import re
 
@@ -403,7 +404,7 @@ def clear_user_colors(cursor: QTextCursor) -> None:
 
 
 def apply_legal_title_colors(html: str) -> str:
-    """Upgrade saved HTML so structural law titles use the current navy color."""
+    """저장 HTML의 조 제목도 현재 법령 제목 색으로 맞춘다."""
     pattern = re.compile(
         r'(<span\b[^>]*class=["\'][^"\']*\blaw-article-title\b[^"\']*'
         r'["\'][^>]*style=["\'])([^"\']*)(["\'])',
@@ -419,7 +420,9 @@ def apply_legal_title_colors(html: str) -> str:
         ).rstrip()
         if style and not style.endswith(";"):
             style += ";"
-        return f"{match.group(1)}{style} color:#173b63;{match.group(3)}"
+        return (
+            f"{match.group(1)}{style} color:{LAW_HEADING_COLOR};{match.group(3)}"
+        )
 
     return pattern.sub(replace, html)
 
@@ -469,17 +472,35 @@ def scale_document_font_sizes(
         return html
     ratio = target_size / source_size
 
+    # 법령ID·소관부처는 본문 크기 조절 대상이 아닌 작은 보조 정보다.
+    # 본문 배율을 올려도 사용자가 지정한 7pt가 함께 커지지 않게 잠시 뺀다.
+    fixed_fragments: list[str] = []
+
+    def protect_fixed(match: re.Match) -> str:
+        fixed_fragments.append(match.group(0))
+        return f"__FIXED_DETAIL_META_{len(fixed_fragments) - 1}__"
+
+    html = re.sub(
+        r'<div\b[^>]*class=["\']doc-meta["\'][^>]*>.*?</div>',
+        protect_fixed,
+        html,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
     def replace(match: re.Match) -> str:
         scaled = max(1.0, float(match.group(2)) * ratio)
         value = f"{scaled:.2f}".rstrip("0").rstrip(".")
         return f"{match.group(1)}{value}{match.group(3)}"
 
-    return re.sub(
+    html = re.sub(
         r"(font-size\s*:\s*)(\d+(?:\.\d+)?)(px|pt)",
         replace,
         html,
         flags=re.IGNORECASE,
     )
+    for index, fragment in enumerate(fixed_fragments):
+        html = html.replace(f"__FIXED_DETAIL_META_{index}__", fragment)
+    return html
 
 
 @dataclass
@@ -520,50 +541,32 @@ def build_color_palette_toolbar(
     palette_buttons: list[QToolButton] = []
 
     def tool_icon(kind: str, color_value: str) -> QIcon:
+        if kind == "background":
+            return QIcon(str(HIGHLIGHTER_ICON_PATH))
         pixmap = QPixmap(22, 20)
         pixmap.fill(Qt.GlobalColor.transparent)
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         ink = QColor("#34465a")
-        if kind == "background":
-            # 형광펜. 기울어진 펜대는 지금 고른 색으로 채우고, 촉과
-            # 그어 놓은 자국까지 그려야 무엇을 하는 단추인지 한눈에
-            # 들어온다. 예전의 사선 두 줄은 만년필처럼 보였다.
-            painter.setPen(QPen(ink, 1.0))
-            painter.setBrush(QBrush(QColor(color_value)))
-            painter.drawPolygon(
-                QPolygonF(
-                    [
-                        QPointF(13.5, 2.5),
-                        QPointF(18.5, 7.5),
-                        QPointF(11.0, 14.0),
-                        QPointF(6.5, 9.5),
-                    ]
-                )
-            )
-            painter.setBrush(QBrush(QColor("#c9d3de")))
-            painter.drawPolygon(
-                QPolygonF(
-                    [
-                        QPointF(6.5, 9.5),
-                        QPointF(11.0, 14.0),
-                        QPointF(7.5, 15.5),
-                        QPointF(4.0, 13.0),
-                    ]
-                )
-            )
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.setPen(QPen(QColor(color_value), 3.0))
-            painter.drawLine(4, 18, 18, 18)
-        else:
-            font = painter.font()
-            font.setBold(True)
-            font.setPixelSize(13)
-            painter.setFont(font)
-            painter.setPen(ink)
-            painter.drawText(3, 0, 16, 16, Qt.AlignmentFlag.AlignCenter, "A")
-            painter.setPen(QPen(QColor(color_value), 2.5))
-            painter.drawLine(4, 17, 18, 17)
+        font = painter.font()
+        font.setBold(True)
+        font.setPixelSize(13)
+        painter.setFont(font)
+        painter.setPen(ink)
+        painter.drawText(3, 0, 16, 16, Qt.AlignmentFlag.AlignCenter, "A")
+        painter.setPen(QPen(QColor(color_value), 2.5))
+        painter.drawLine(4, 17, 18, 17)
+        painter.end()
+        return QIcon(pixmap)
+
+    def swatch_icon(color_value: str) -> QIcon:
+        pixmap = QPixmap(28, 18)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(QPen(QColor("#b7bec7"), 1.0))
+        painter.setBrush(QColor(color_value))
+        painter.drawRoundedRect(2, 2, 24, 14, 2.5, 2.5)
         painter.end()
         return QIcon(pixmap)
 
@@ -584,14 +587,13 @@ def build_color_palette_toolbar(
         button.setAccessibleName(row_label)
         menu = QMenu(button)
         for color_name, color_value in PALETTE_COLORS:
-            action = menu.addAction(color_name)
+            action = menu.addAction(swatch_icon(color_value), "")
+            action.setData(color_value)
             action.setToolTip(
                 palette_color_tooltip(
                     row_label, color_name, color_value, background=is_background
                 )
             )
-            action.setIcon(tool_icon("background" if is_background else "text", color_value))
-
             def choose(
                 _checked=False,
                 *,

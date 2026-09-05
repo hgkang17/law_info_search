@@ -62,8 +62,8 @@ META_WARNING_COLOR = "#c0392b"
 # 줄에서는 빼고 법령ID와 소관부처만 남긴다.
 HEADLINE_DUPLICATED_META_LABELS = ("공포일자", "공포번호", "시행일자")
 
-# 편ㆍ장ㆍ절 제목 색. 국가법령정보센터 본문과 같은 남보라를 쓴다.
-LAW_HEADING_COLOR = "#333399"
+# 편ㆍ장ㆍ절과 조 제목은 같은 짙은 남보라로 한 위계를 이룬다.
+LAW_HEADING_COLOR = "#1309aa"
 
 
 # 한 문단이 여러 줄로 접힐 때의 줄 간격과, 단락 사이 여백.
@@ -95,7 +95,7 @@ DETAIL_DOCUMENT_STYLE = (
     ".doc-short-name { font-weight:700; }"
     # 기본정보는 오른쪽 끝 한 줄. Qt는 클래스 크기를 흘릴 때가 있어
     # 그리는 자리에서 인라인으로도 같은 값을 준다.
-    ".doc-meta { font-family:" + DETAIL_FONT_CSS_FAMILY + "; font-size:11px; "
+    ".doc-meta { font-family:" + DETAIL_FONT_CSS_FAMILY + "; font-size:7pt; "
     "font-weight:400; color:" + META_VALUE_COLOR + "; text-align:right; "
     "margin:0 0 14px 0; }"
     ".meta-label { color:" + META_LABEL_COLOR + "; font-weight:400; "
@@ -858,7 +858,7 @@ def body_to_html(
                 '<div class="law-article" style="margin:14px 0 8px 0;">'
                 f"{anchor_open}"
                 '<span class="law-article-title" '
-                'style="font-weight:700; color:#173b63;">'
+                f'style="font-weight:700; color:{LAW_HEADING_COLOR};">'
                 f"{highlight_html_text(article_title, terms)}</span>"
                 f"{anchor_close}{body_html}</div>"
             )
@@ -983,7 +983,7 @@ def detail_document_header(
             plain_parts.append(f"{label} {value}")
         html_parts.append(
             '<div class="doc-meta" align="right" '
-            f'style="font-size:11px; color:{META_VALUE_COLOR}; '
+            f'style="font-size:7pt; color:{META_VALUE_COLOR}; '
             'text-align:right; margin:0 0 14px 0;">'
             + "&nbsp;&nbsp;&nbsp;".join(cells)
             + "</div>"

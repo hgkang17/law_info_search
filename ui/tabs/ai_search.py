@@ -23,6 +23,7 @@ from ui.widgets import (
     DeferredWrapTextBrowser,
     DetailSearchBar,
     FavoriteTitleDelegate,
+    favorite_icon,
     MemoMarkerBar,
     RecentSearchBar,
     ResultHeaderView,
@@ -135,6 +136,7 @@ class AiLawSearchTab(QWidget):
         # 조문 참조 팝업과 3단비교는 법령검색 탭이 이미 갖고 있으므로
         # 여기서 다시 만들지 않고 그 탭에 넘긴다. main_window가 지정한다.
         self.reference_tab = None
+        self._pending_keyword_favorite: tuple[str, str, str, str, str] | None = None
         self._build_ui()
         install_text_color_shortcuts(self)
         self.law_cache.changed.connect(self._refresh_snapshot_checks)
@@ -422,6 +424,16 @@ class AiLawSearchTab(QWidget):
         )
         self.three_stage_button.hide()
         self._three_stage_position = -1
+        self.article_favorite_button = QPushButton(
+            "", self.detail_view.viewport()
+        )
+        self.article_favorite_button.setObjectName("articleFavoriteButton")
+        self.article_favorite_button.setFixedSize(24, 24)
+        self.article_favorite_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.article_favorite_button.clicked.connect(
+            self._toggle_inline_article_favorite
+        )
+        self.article_favorite_button.hide()
         self.detail_view.verticalScrollBar().valueChanged.connect(
             self._position_inline_three_stage_button
         )
@@ -528,11 +540,11 @@ class AiLawSearchTab(QWidget):
             return selected.replace(" ", "\n"), "선택한 부분"
         return self.detail_view.toPlainText(), "본문 전체"
 
-    def _resource_action(self, name: str, *args: object):
+    def _resource_action(self, name: str, *args: object, **kwargs: object):
         action = getattr(self.reference_tab, name, None)
         if action is None:
             return False
-        return action(*args)
+        return action(*args, **kwargs)
 
     def _ensure_ai_chat_panel(self) -> AiChatPanel:
         if self.ai_chat_panel is not None:
@@ -1490,10 +1502,20 @@ class AiLawSearchTab(QWidget):
                         article_branch if article_branch.isdigit() else "",
                     )
                 content = _find_text(node, "조문내용")
+                hang_number = _find_text(node, "항번호")
+                ho_number = _find_text(node, "호번호")
                 row = {
                         "target": self.service,
                         "kind": item_tag,
                         "name": name,
+                        "short_name": (
+                            ""
+                            if is_admin
+                            else (
+                                _find_text(node, "법령약칭명")
+                                or _find_text(node, "법령명약칭")
+                            )
+                        ),
                         "provision": provision,
                         "date": self._display_date(
                             _find_text(node, "시행일자")
@@ -1507,6 +1529,21 @@ class AiLawSearchTab(QWidget):
                         "article_number": article_number,
                         "article_branch": article_branch,
                         "jo_code": jo_code,
+                        "hang": (
+                            law_unit_code(
+                                hang_number, _find_text(node, "항가지번호")
+                            )
+                            if hang_number.isdigit()
+                            else ""
+                        ),
+                        "ho": (
+                            law_unit_code(
+                                ho_number, _find_text(node, "호가지번호")
+                            )
+                            if ho_number.isdigit()
+                            else ""
+                        ),
+                        "mok": self._clean_number(_find_text(node, "목번호")),
                         "article_loading": "",
                         "article_error": "",
                         "publication_date": self._display_date(
@@ -1635,8 +1672,10 @@ class AiLawSearchTab(QWidget):
         item.setFlags(flags)
         return item
 
-    @staticmethod
-    def _article_favorite_target(row: dict[str, object]) -> dict[str, str] | None:
+    @classmethod
+    def _article_favorite_target(
+        cls, row: dict[str, object]
+    ) -> dict[str, str] | None:
         """이 결과 행을 조문 즐겨찾기로 걸 수 있으면 필요한 값을 돌려준다.
 
         지능형 검색이 주는 법령ID와 여섯 자리 조문코드는 조항호목 API가
@@ -1654,9 +1693,34 @@ class AiLawSearchTab(QWidget):
         return {
             "law_id": law_id,
             "jo": jo,
+            "hang": str(row.get("hang") or ""),
+            "ho": str(row.get("ho") or ""),
+            "mok": str(row.get("mok") or ""),
             "law_name": str(row.get("name") or "법령"),
-            "label": str(row.get("provision") or "").strip(),
+            "label": cls._article_favorite_label(row),
         }
+
+    @staticmethod
+    def _article_favorite_label(row: dict[str, object]) -> str:
+        label = str(row.get("provision") or "").strip()
+        def decode(value: object, unit: str) -> str:
+            code = str(value or "")
+            if not code:
+                return ""
+            if len(code) >= 6 and code.isdigit():
+                main = int(code[:4])
+                branch = int(code[4:])
+                return f"제{main}{unit}" + (f"의{branch}" if branch else "")
+            return f"제{code}{unit}"
+
+        suffix = "".join(
+            (
+                decode(row.get("hang"), "항"),
+                decode(row.get("ho"), "호"),
+                f"{row.get('mok')}목" if str(row.get("mok") or "") else "",
+            )
+        )
+        return f"{label} {suffix}".strip()
 
     def _is_favorite_at_row(self, row_index: int) -> bool:
         if not (0 <= row_index < len(self.result_rows)):
@@ -1666,7 +1730,12 @@ class AiLawSearchTab(QWidget):
             return False
         return bool(
             self._resource_action(
-                "is_article_favorite_by_id", target["law_id"], target["jo"]
+                "is_article_favorite_by_id",
+                target["law_id"],
+                target["jo"],
+                hang=target["hang"],
+                ho=target["ho"],
+                mok=target["mok"],
             )
         )
 
@@ -1685,22 +1754,25 @@ class AiLawSearchTab(QWidget):
         label = " ".join(
             part for part in (target["law_name"], target["label"]) if part
         )
-        if self._is_favorite_at_row(row_index):
-            self.status_label.setText(f"{label}은(는) 이미 즐겨찾기에 있습니다.")
-            return
         # 실제 처리는 법령검색 화면이 맡는다. 그 화면의 상태줄은 지금
         # 보이지 않으므로, 무엇을 하고 있는지 이 화면에도 적는다. 저장본이
         # 없으면 본문을 먼저 받아야 해서 몇 초가 걸린다.
+        removing = self._is_favorite_at_row(row_index)
         self.status_label.setText(
-            f"{label} 즐겨찾기를 거는 중입니다. "
-            "저장본이 없으면 본문을 먼저 받습니다."
+            f"{label} 즐겨찾기를 "
+            + ("해제하는 중입니다." if removing else "추가하는 중입니다. 저장본이 없으면 본문을 먼저 받습니다.")
         )
+        if not removing:
+            self._begin_keyword_favorite(target)
         self._resource_action(
-            "add_article_favorite_by_id",
+            "toggle_article_favorite_by_id",
             target["law_id"],
             target["jo"],
             label,
             target["law_name"],
+            hang=target["hang"],
+            ho=target["ho"],
+            mok=target["mok"],
         )
         self.result_table.viewport().update()
 
@@ -1708,6 +1780,39 @@ class AiLawSearchTab(QWidget):
         """저장ㆍ즐겨찾기가 바뀌면 목록의 별을 다시 그린다."""
         if hasattr(self, "result_table"):
             self.result_table.viewport().update()
+        if hasattr(self, "article_favorite_button"):
+            self._refresh_inline_article_favorite()
+        pending = self._pending_keyword_favorite
+        if pending is not None and bool(self._resource_action(
+            "is_article_favorite_by_id",
+            pending[0],
+            pending[1],
+            hang=pending[2],
+            ho=pending[3],
+            mok=pending[4],
+        )):
+            self._pending_keyword_favorite = None
+            self._progress_opacity.setOpacity(0.0)
+            self.status_label.setText("조문을 즐겨찾기에 추가했습니다.")
+
+    def _begin_keyword_favorite(self, target: dict[str, str]) -> None:
+        """저장 본문 API 호출 동안 조문검색 화면에도 진행 표시를 유지한다."""
+        pending = (
+            target["law_id"], target["jo"], target["hang"],
+            target["ho"], target["mok"],
+        )
+        self._pending_keyword_favorite = pending
+        self._progress_opacity.setOpacity(1.0)
+
+        def timeout(
+            expected: tuple[str, str, str, str, str] = pending
+        ) -> None:
+            if self._pending_keyword_favorite != expected:
+                return
+            self._pending_keyword_favorite = None
+            self._progress_opacity.setOpacity(0.0)
+
+        QTimer.singleShot(60000, timeout)
 
     def _refresh_snapshot_checks(self) -> None:
         if not hasattr(self, "result_table"):
@@ -1997,6 +2102,7 @@ class AiLawSearchTab(QWidget):
             row["name"],
             metadata,
             self.highlight_terms,
+            short_name=str(row.get("short_name") or ""),
             subtitle=self._article_headline(row),
         )
         if row["content"]:
@@ -2142,11 +2248,13 @@ class AiLawSearchTab(QWidget):
     ) -> None:
         """현재 본문이 법령 조문일 때만 조문 안에 버튼을 둔다."""
         target = self._three_stage_target(row)
-        available = target is not None and self.reference_tab is not None
-        self.three_stage_button.setEnabled(available)
-        if not available or not isinstance(row, dict):
+        self.three_stage_button.setEnabled(
+            target is not None and self.reference_tab is not None
+        )
+        if target is None or not isinstance(row, dict):
             self._three_stage_position = -1
             self.three_stage_button.hide()
+            self.article_favorite_button.hide()
             return
         provision = str(row.get("provision") or "").strip()
         plain_text = self.detail_view.toPlainText()
@@ -2160,29 +2268,112 @@ class AiLawSearchTab(QWidget):
         )
         if self._three_stage_position < 0:
             self.three_stage_button.hide()
+            self.article_favorite_button.hide()
             return
         cursor = QTextCursor(self.detail_view.document())
         cursor.setPosition(self._three_stage_position)
         block_format = cursor.blockFormat()
-        block_format.setTopMargin(32.0)
+        block_format.setLeftMargin(max(26.0, block_format.leftMargin()))
         cursor.setBlockFormat(block_format)
+        self._refresh_inline_article_favorite()
         self._position_inline_three_stage_button()
 
+    def _refresh_inline_article_favorite(self) -> None:
+        target = self._article_favorite_target(self._active_detail_row or {})
+        if target is None:
+            self.article_favorite_button.hide()
+            return
+        favorite = bool(
+            self._resource_action(
+                "is_article_favorite_by_id",
+                target["law_id"],
+                target["jo"],
+                hang=target["hang"],
+                ho=target["ho"],
+                mok=target["mok"],
+            )
+        )
+        self.article_favorite_button.setIcon(
+            favorite_icon(favorite, "#c88700" if favorite else "#aeb4bc")
+        )
+        self.article_favorite_button.setIconSize(self.article_favorite_button.size())
+        self.article_favorite_button.setToolTip(
+            f"{target['label']} 즐겨찾기를 "
+            + ("해제합니다." if favorite else "추가합니다.")
+        )
+        self.article_favorite_button.setStyleSheet(
+            "QPushButton#articleFavoriteButton { border:none; "
+            "background:transparent; padding:0; }"
+        )
+
+    def _toggle_inline_article_favorite(self) -> None:
+        target = self._article_favorite_target(self._active_detail_row or {})
+        if target is None:
+            return
+        label = " ".join(
+            part for part in (target["law_name"], target["label"]) if part
+        )
+        favorite = bool(
+            self._resource_action(
+                "is_article_favorite_by_id",
+                target["law_id"],
+                target["jo"],
+                hang=target["hang"],
+                ho=target["ho"],
+                mok=target["mok"],
+            )
+        )
+        self.status_label.setText(f"{label} 즐겨찾기를 처리하는 중입니다.")
+        if not favorite:
+            self._begin_keyword_favorite(target)
+        self._resource_action(
+            "toggle_article_favorite_by_id",
+            target["law_id"],
+            target["jo"],
+            label,
+            target["law_name"],
+            hang=target["hang"],
+            ho=target["ho"],
+            mok=target["mok"],
+        )
+        self._refresh_inline_article_favorite()
+
     def _position_inline_three_stage_button(self, _value: object = None) -> None:
-        if self._three_stage_position < 0 or not self.three_stage_button.isEnabled():
+        if self._three_stage_position < 0:
             self.three_stage_button.hide()
+            self.article_favorite_button.hide()
             return
         cursor = QTextCursor(self.detail_view.document())
         cursor.setPosition(self._three_stage_position)
         rect = self.detail_view.cursorRect(cursor)
-        y = rect.top() - self.three_stage_button.height() - 4
+        y = rect.top() + (rect.height() - self.three_stage_button.height()) // 2
         visible = rect.bottom() >= 0 and y <= self.detail_view.viewport().height()
         if not visible:
             self.three_stage_button.hide()
             return
-        self.three_stage_button.move(max(1, rect.left() - 7), y)
-        self.three_stage_button.show()
-        self.three_stage_button.raise_()
+        if self.three_stage_button.isEnabled():
+            self.three_stage_button.move(
+                max(
+                    1,
+                    self.detail_view.viewport().width()
+                    - self.three_stage_button.width()
+                    - 8,
+                ),
+                y,
+            )
+            self.three_stage_button.show()
+            self.three_stage_button.raise_()
+        else:
+            self.three_stage_button.hide()
+        favorite_y = rect.top() + (
+            rect.height() - self.article_favorite_button.height()
+        ) // 2
+        self.article_favorite_button.move(
+            max(1, rect.left() - self.article_favorite_button.width() - 2),
+            favorite_y,
+        )
+        self.article_favorite_button.show()
+        self.article_favorite_button.raise_()
 
     def eventFilter(self, watched, event) -> bool:
         if (

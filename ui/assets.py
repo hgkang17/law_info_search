@@ -61,6 +61,8 @@ ANNEX_COLLAPSE_ICON_PATH = APP_DIR / "annex_collapse.svg"
 # 얇은 선으로 그린 것을 따로 둔다.
 CLOSE_MARK_ICON_PATH = APP_DIR / "close_mark.svg"
 
+HIGHLIGHTER_ICON_PATH = APP_DIR / "highlighter.svg"
+
 
 # LGPL v3ㆍSIL OFL 1.1은 재배포판에 라이선스 사본을 함께 담도록 요구한다.
 # 빌드 설정이 이 폴더를 통째로 번들에 넣고, 프로그램 정보 대화상자가

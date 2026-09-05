@@ -1135,8 +1135,8 @@ class DropdownComboBox(QComboBox):
         view.setStyleSheet(self.POPUP_STYLE)
         view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
-    # 목록에 준 안쪽 여백(위아래 3px)과 테두리(1px)의 합.
-    POPUP_CHROME = 8
+    # 목록의 위아래 여백ㆍ테두리 8px와 바깥 틀 테두리 2px의 합.
+    POPUP_CHROME = 10
 
     def _fit_popup_height(self, container: QFrame) -> None:
         """펼친 목록 높이를 실제 글자 영역에 딱 맞춘다.
@@ -1144,9 +1144,11 @@ class DropdownComboBox(QComboBox):
         모자라면 마지막 항목이 잘리고, 남으면 목록 아래에 빈 띠가 생긴다.
         한 번 그린 뒤 실제로 글자가 그려지는 영역을 재서 양쪽으로 맞춘다.
         """
-        if container is None or not container.isVisible():
+        if container is None:
             return
         view = self.view()
+        if container.layout() is not None:
+            container.layout().activate()
         visible = min(self.count(), max(1, self.maxVisibleItems()))
         rows = sum(max(28, view.sizeHintForRow(row)) for row in range(visible))
         if not rows:
@@ -1167,6 +1169,14 @@ class DropdownComboBox(QComboBox):
         container = self.findChild(QFrame)
         if container is None:
             return
+        # 틀 스타일을 높이 계산 뒤에 적용하면 첫 번째로 펼칠 때만 테두리
+        # 높이가 뒤늦게 더해져 아래에 빈 띠가 보인다. 먼저 스타일을 확정한다.
+        container.setStyleSheet(
+            "QFrame { background: #ffffff; border: 1px solid #cfdae6;"
+            " border-radius: 5px; }"
+        )
+        container.ensurePolished()
+        self.view().ensurePolished()
         # Qt는 목록 높이를 행 높이만으로 잡고 스타일시트의 안쪽 여백은
         # 세지 않는다. 그대로 두면 마지막 항목이 그 여백만큼 잘린다.
         view = self.view()
@@ -1185,12 +1195,6 @@ class DropdownComboBox(QComboBox):
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
             if self.count() <= self.maxVisibleItems()
             else Qt.ScrollBarPolicy.ScrollBarAsNeeded
-        )
-        # 목록을 감싼 틀을 투명하게 두면 둥근 모서리 바깥이 창 뒤를 그대로
-        # 비쳐 검은 조각처럼 보인다. 틀에도 같은 흰 바탕을 깔아 막는다.
-        container.setStyleSheet(
-            "QFrame { background: #ffffff; border: 1px solid #cfdae6;"
-            " border-radius: 5px; }"
         )
         anchor = self.mapToGlobal(QPoint(0, 0))
         below = anchor.y() + self.height() + self.POPUP_GAP

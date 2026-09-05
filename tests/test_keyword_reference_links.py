@@ -37,12 +37,27 @@ class _ReferenceTabSpy:
     def __init__(self) -> None:
         self.opened_links: list[QUrl] = []
         self.three_stage_calls: list[dict[str, str]] = []
+        self.favorite_calls: list[tuple[str, str, str, str]] = []
+        self.favorite_units: list[dict[str, str]] = []
+        self.favorite = False
 
     def open_reference_link(self, url: QUrl) -> None:
         self.opened_links.append(QUrl(url))
 
     def open_three_stage_for_article(self, **kwargs: str) -> None:
         self.three_stage_calls.append(dict(kwargs))
+
+    def is_article_favorite_by_id(
+        self, _law_id: str, _jo: str, **_units: str
+    ) -> bool:
+        return self.favorite
+
+    def toggle_article_favorite_by_id(
+        self, law_id: str, jo: str, label: str, name: str, **units: str
+    ) -> None:
+        self.favorite_calls.append((law_id, jo, label, name))
+        self.favorite_units.append(dict(units))
+        self.favorite = not self.favorite
 
 
 def test_presidential_decree_reference_links_to_enforcement_decree() -> None:
@@ -199,8 +214,8 @@ def test_three_stage_button_off_without_article_code(tmp_path) -> None:
     assert tab.three_stage_button.isHidden() is True
 
 
-def test_three_stage_button_is_embedded_above_keyword_article(tmp_path) -> None:
-    """3단비교는 도구줄이 아니라 해당 조문 본문 안에만 나타난다."""
+def test_three_stage_button_is_aligned_beside_keyword_article(tmp_path) -> None:
+    """3단과 별은 법령검색 본문처럼 조문 줄 양옆에 나타난다."""
     tab = _tab(tmp_path)
     tab.reference_tab = _ReferenceTabSpy()
     row = {
@@ -209,6 +224,7 @@ def test_three_stage_button_is_embedded_above_keyword_article(tmp_path) -> None:
         "provision": "제2조(정의)",
         "source_id": "001",
         "jo_code": "000200",
+        "hang": "1",
     }
     tab.detail_view.setPlainText(
         "조문내용\n\n제2조(정의) 이 법에서 사용하는 용어의 뜻은 다음과 같다."
@@ -222,6 +238,18 @@ def test_three_stage_button_is_embedded_above_keyword_article(tmp_path) -> None:
     )
     cursor = QTextCursor(tab.detail_view.document())
     cursor.setPosition(tab._three_stage_position)
-    assert cursor.blockFormat().topMargin() == 32.0
+    assert cursor.blockFormat().topMargin() == 0.0
+    assert cursor.blockFormat().leftMargin() >= 26.0
     assert tab.three_stage_button.size().width() == 56
     assert tab.three_stage_button.size().height() == 24
+    assert tab.article_favorite_button.size().width() == 24
+
+    tab._active_detail_row = row
+    tab._toggle_inline_article_favorite()
+    assert tab.reference_tab.favorite_calls == [
+        ("001", "000200", "국토의 계획 및 이용에 관한 법률 제2조(정의) 제1항",
+         "국토의 계획 및 이용에 관한 법률")
+    ]
+    assert tab.reference_tab.favorite_units == [
+        {"hang": "1", "ho": "", "mok": ""}
+    ]

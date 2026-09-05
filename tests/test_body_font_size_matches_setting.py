@@ -47,7 +47,8 @@ def _payload() -> dict:
 def _body_font_sizes(tab: ResourceSearchTab) -> set[float]:
     document = tab.detail_view.document()
     default_size = round(document.defaultFont().pointSizeF(), 2)
-    cursor = QTextCursor(document)
+    cursor = document.find("제1조")
+    cursor.clearSelection()
     sizes: set[float] = set()
     while not cursor.atEnd():
         cursor.movePosition(

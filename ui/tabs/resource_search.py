@@ -316,6 +316,7 @@ class ResourceSearchTab(QWidget):
         # 본문 하단 별표ㆍ서식에서 펼쳐 둔 항목. 키는 그 별표의 PDF 주소이고
         # 값은 배율(%)ㆍ내려받은 원문ㆍ오류 문구를 담는다. 접으면 지운다.
         self._annex_previews: dict[str, dict[str, object]] = {}
+        self._annex_preview_panels: dict[str, InlinePdfPreviewPanel] = {}
         self._annex_section_entries: list[dict[str, str]] = []
         self._annex_preview_workers: dict[str, object] = {}
         self._active_annex_preview_key = ""
@@ -1033,12 +1034,6 @@ class ResourceSearchTab(QWidget):
         self.inline_annex_preview = InlinePdfPreviewPanel(
             self.detail_view.viewport()
         )
-        self.inline_annex_preview.closeRequested.connect(
-            self._close_inline_annex_preview
-        )
-        self.inline_annex_preview.expand_button.clicked.connect(
-            lambda: QTimer.singleShot(0, self._sync_inline_annex_preview_layout)
-        )
         self.detail_view.verticalScrollBar().valueChanged.connect(
             self._place_inline_annex_preview
         )
@@ -1493,6 +1488,7 @@ class ResourceSearchTab(QWidget):
             "annex_entries": [],
             # 펼쳐 둔 별표. 탭을 다녀와도 미리보기를 그대로 되살린다.
             "annex_preview_key": "",
+            "annex_preview_keys": [],
             "render_highlight_terms": [],
             "document": None,
             # 탭의 별표(즐겨찾기)를 켜고 끄려면 어떤 문서인지 알아야 한다.
@@ -1671,6 +1667,7 @@ class ResourceSearchTab(QWidget):
                     dict(entry) for entry in self._annex_section_entries
                 ],
                 "annex_preview_key": self._active_annex_preview_key,
+                "annex_preview_keys": list(self._annex_previews),
                 "prefer_source_html": False,
             }
         )
@@ -1758,7 +1755,7 @@ class ResourceSearchTab(QWidget):
         """새 본문을 곧 그릴 때, 이전 문서의 흔적만 걷어낸다."""
         self._annex_previews.clear()
         self._active_annex_preview_key = ""
-        self.inline_annex_preview.hide()
+        self._clear_inline_annex_preview_panels()
         self.detail_search.query_input.blockSignals(True)
         self.toc_search_input.blockSignals(True)
         self.detail_search.query_input.clear()
@@ -5423,11 +5420,8 @@ class ResourceSearchTab(QWidget):
         index, entry = found
         key = self._annex_preview_key(entry, index)
         if key in self._annex_previews:
-            self._close_inline_annex_preview()
+            self._close_inline_annex_preview(key)
             return
-        # 본문을 두 개로 쪼개지 않고 한 번에 한 별표만 보여 준다. 다른
-        # 별표를 누르면 같은 제한 높이 패널의 내용만 바뀐다.
-        self._annex_previews.clear()
         self._annex_previews[key] = {
             "zoom": self.ANNEX_PREVIEW_DEFAULT_ZOOM,
             "pages": self.ANNEX_PREVIEW_PAGE_LIMIT,
@@ -5435,49 +5429,63 @@ class ResourceSearchTab(QWidget):
             "error": "",
         }
         self._active_annex_preview_key = key
+        panel = self._annex_panel_for_key(key)
         # 누른 별표 줄이 화면에서 움직이지 않게 그 줄을 기준으로 다시
         # 그린다. 예전에는 scrollToAnchor로 목록 맨 위까지 끌어올려,
         # 보고 있던 자리가 통째로 밀렸다.
         self._rerender_annex_section(keep_anchor=f"annex-item-{index}")
-        self.inline_annex_preview.show_loading(
-            self._annex_display_title(entry)
-        )
+        panel.show_loading(self._annex_display_title(entry))
         self._place_inline_annex_preview()
         QTimer.singleShot(0, self._place_inline_annex_preview)
         QTimer.singleShot(50, self._place_inline_annex_preview)
         self._start_annex_download(key, entry)
 
     def _restore_inline_annex_preview(self, state: dict[str, object]) -> None:
-        """탭을 다녀왔을 때 펼쳐 둔 별표 미리보기를 다시 띄운다."""
-        key = str(state.get("annex_preview_key") or "")
+        """탭을 다녀왔을 때 펼쳐 둔 별표 미리보기들을 다시 띄운다."""
+        raw_keys = state.get("annex_preview_keys")
+        keys = (
+            [str(key) for key in raw_keys if str(key)]
+            if isinstance(raw_keys, list)
+            else [str(state.get("annex_preview_key") or "")]
+        )
+        keys = [key for key in keys if key]
         self._annex_previews.clear()
         self._active_annex_preview_key = ""
-        if not key:
-            self.inline_annex_preview.hide()
+        self._clear_inline_annex_preview_panels()
+        if not keys:
             return
-        found = None
-        for index, entry in enumerate(self._annex_section_entries):
-            if self._annex_preview_key(entry, index) == key:
-                found = entry
-                break
-        if found is None:
-            self.inline_annex_preview.hide()
+        restored: list[tuple[str, dict[str, str]]] = []
+        for key in keys:
+            found = next(
+                (
+                    entry
+                    for index, entry in enumerate(self._annex_section_entries)
+                    if self._annex_preview_key(entry, index) == key
+                ),
+                None,
+            )
+            if found is None:
+                continue
+            self._annex_previews[key] = {
+                "zoom": self.ANNEX_PREVIEW_DEFAULT_ZOOM,
+                "pages": self.ANNEX_PREVIEW_PAGE_LIMIT,
+                "data": None,
+                "error": "",
+            }
+            panel = self._annex_panel_for_key(key)
+            panel.show_loading(self._annex_display_title(found))
+            restored.append((key, found))
+        if not restored:
             return
-        self._annex_previews[key] = {
-            "zoom": self.ANNEX_PREVIEW_DEFAULT_ZOOM,
-            "pages": self.ANNEX_PREVIEW_PAGE_LIMIT,
-            "data": None,
-            "error": "",
-        }
-        self._active_annex_preview_key = key
-        self.inline_annex_preview.show_loading(self._annex_display_title(found))
+        self._active_annex_preview_key = restored[-1][0]
         # 본문은 아직 그려지기 전이다. 자리는 그린 뒤에 잡는다.
         QTimer.singleShot(0, self._place_inline_annex_preview)
         QTimer.singleShot(50, self._place_inline_annex_preview)
-        self._start_annex_download(key, found)
+        for key, entry in restored:
+            self._start_annex_download(key, entry)
 
-    def _close_inline_annex_preview(self) -> None:
-        key = self._active_annex_preview_key
+    def _close_inline_annex_preview(self, key: str = "") -> None:
+        key = key or self._active_annex_preview_key
         title = ""
         keep_anchor = ""
         for index, entry in enumerate(self._annex_section_entries):
@@ -5485,14 +5493,46 @@ class ResourceSearchTab(QWidget):
                 title = self._annex_display_title(entry)
                 keep_anchor = f"annex-item-{index}"
                 break
-        self._annex_previews.clear()
-        self._active_annex_preview_key = ""
-        self.inline_annex_preview.hide()
+        self._annex_previews.pop(key, None)
+        panel = self._annex_preview_panels.pop(key, None)
+        if panel is not None:
+            panel.hide()
+            if panel is not self.inline_annex_preview:
+                panel.deleteLater()
+        self._active_annex_preview_key = next(reversed(self._annex_previews), "")
         # 접을 때도 누른 별표 줄이 있던 자리를 그대로 지킨다. 스크롤
         # 값만 되돌리면 미리보기 높이만큼 본문이 위로 튀어 올랐다.
         self._rerender_annex_section(keep_anchor=keep_anchor)
         if title:
             self.status_label.setText(f"{title} 미리보기를 접었습니다.")
+
+    def _clear_inline_annex_preview_panels(self) -> None:
+        """문서를 바꿀 때 현재 문서에 떠 있는 PDF 패널을 모두 걷는다."""
+        for panel in self._annex_preview_panels.values():
+            panel.hide()
+            if panel is not self.inline_annex_preview:
+                panel.deleteLater()
+        self._annex_preview_panels.clear()
+        self.inline_annex_preview.hide()
+
+    def _annex_panel_for_key(self, key: str) -> InlinePdfPreviewPanel:
+        panel = self._annex_preview_panels.get(key)
+        if panel is not None:
+            return panel
+        if not self._annex_preview_panels and self.inline_annex_preview.isHidden():
+            panel = self.inline_annex_preview
+        else:
+            panel = InlinePdfPreviewPanel(self.detail_view.viewport())
+        self._annex_preview_panels[key] = panel
+        panel.closeRequested.connect(
+            lambda preview_key=key: self._close_inline_annex_preview(preview_key)
+        )
+        panel.expand_button.clicked.connect(
+            lambda _checked=False, preview_key=key: QTimer.singleShot(
+                0, lambda: self._sync_inline_annex_preview_layout(preview_key)
+            )
+        )
+        return panel
 
     def _change_annex_preview_zoom(self, raw: str) -> None:
         """펼쳐 둔 미리보기를 한 단계 크게 또는 작게 그린다."""
@@ -5540,10 +5580,9 @@ class ResourceSearchTab(QWidget):
                 state["data"] = bytes(data)
                 state["error"] = ""
             self._annex_preview_workers.pop(cache_key, None)
-            if cache_key == self._active_annex_preview_key:
-                self.inline_annex_preview.show_pdf(
-                    bytes(data), self.inline_annex_preview.current_title()
-                )
+            panel = self._annex_preview_panels.get(cache_key)
+            if panel is not None:
+                panel.show_pdf(bytes(data), panel.current_title())
                 QTimer.singleShot(0, self._place_inline_annex_preview)
 
         def failed(message: str, cache_key: str = key) -> None:
@@ -5551,8 +5590,9 @@ class ResourceSearchTab(QWidget):
             if isinstance(state, dict):
                 state["error"] = str(message)
             self._annex_preview_workers.pop(cache_key, None)
-            if cache_key == self._active_annex_preview_key:
-                self.inline_annex_preview.show_error(
+            panel = self._annex_preview_panels.get(cache_key)
+            if panel is not None:
+                panel.show_error(
                     f"PDF를 불러오지 못했습니다: {message}"
                 )
                 QTimer.singleShot(0, self._place_inline_annex_preview)
@@ -5638,18 +5678,18 @@ class ResourceSearchTab(QWidget):
             return None
         return source[: match.start()], ""
 
-    def _annex_preview_slot_height(self) -> int:
+    def _annex_preview_slot_height(self, key: str = "") -> int:
         # 패널 최소 높이를 그대로 따르면, 예전에 뷰포트 높이로 커진
         # 값이 자리 표시까지 키워 본문 전체를 밀어 냈다. 접힘/크게
         # 두 값만 쓴다.
-        panel = self.inline_annex_preview
+        panel = self._annex_preview_panels.get(key) or self.inline_annex_preview
         if getattr(panel, "_expanded", False):
             return self.ANNEX_PREVIEW_EXPANDED_HEIGHT
         return self.ANNEX_PREVIEW_COMPACT_HEIGHT
 
     def _annex_preview_html(self, key: str, index: int) -> str:
         """펼친 별표 아래에 미리보기 높이를 비워 본문 흐름을 밀어 낸다."""
-        height = self._annex_preview_slot_height()
+        height = self._annex_preview_slot_height(key)
         # 자리 이름을 붙인 빈 글자는 두지 않는다. Qt가 그 글자를 바로 위
         # 별표 제목 줄에 붙여 버려, 미리보기가 제목 줄 높이에서 시작하고
         # 아래에는 그만큼 빈 칸이 남았다. 자리는 아래 스페이서 그림으로만
@@ -5688,6 +5728,38 @@ class ResourceSearchTab(QWidget):
             block = block.next()
         return None
 
+    def _annex_preview_slot_cursor(self, index: int) -> QTextCursor | None:
+        """여러 미리보기 중 해당 별표가 확보한 자리 표시 그림을 찾는다."""
+        expanded_indices = [
+            item_index
+            for item_index, entry in enumerate(self._annex_section_entries)
+            if self._annex_preview_key(entry, item_index) in self._annex_previews
+        ]
+        try:
+            ordinal = expanded_indices.index(index)
+        except ValueError:
+            return None
+        seen = 0
+        block = self.detail_view.document().begin()
+        while block.isValid():
+            iterator = block.begin()
+            while not iterator.atEnd():
+                fragment = iterator.fragment()
+                fmt = fragment.charFormat()
+                if (
+                    fmt.isImageFormat()
+                    and self.ANNEX_PREVIEW_SPACER_IMAGE
+                    in fmt.toImageFormat().name()
+                ):
+                    if seen == ordinal:
+                        cursor = QTextCursor(self.detail_view.document())
+                        cursor.setPosition(fragment.position())
+                        return cursor
+                    seen += 1
+                iterator += 1
+            block = block.next()
+        return None
+
     def _active_annex_preview_index(self) -> int | None:
         key = self._active_annex_preview_key
         if not key:
@@ -5698,51 +5770,34 @@ class ResourceSearchTab(QWidget):
         return None
 
     def _place_inline_annex_preview(self) -> None:
-        """미리보기를 별표 제목 아래 비워 둔 자리에 맞춘다."""
-        panel = self.inline_annex_preview
-        if not self._active_annex_preview_key:
-            panel.hide()
-            return
+        """펼친 미리보기들을 각 별표 제목 아래 비워 둔 자리에 맞춘다."""
         viewport = self.detail_view.viewport()
-        cursor = self._find_named_anchor_cursor(self.ANNEX_PREVIEW_SLOT_NAME)
-        top = None
-        if cursor is not None:
-            top = self.detail_view.cursorRect(cursor).top()
-        else:
-            index = self._active_annex_preview_index()
-            if index is not None:
+        margin = int(self.detail_view.document().documentMargin())
+        width = min(720, max(80, viewport.width() - margin))
+        left = max(0, margin // 2)
+        for index, entry in enumerate(self._annex_section_entries):
+            key = self._annex_preview_key(entry, index)
+            panel = self._annex_preview_panels.get(key)
+            if panel is None:
+                continue
+            cursor = self._annex_preview_slot_cursor(index)
+            top = self.detail_view.cursorRect(cursor).top() if cursor else None
+            if top is None:
                 title_cursor = self._find_named_anchor_cursor(f"annex-item-{index}")
                 if title_cursor is not None:
                     top = self.detail_view.cursorRect(title_cursor).bottom() + 4
-        if top is None:
-            index = self._active_annex_preview_index()
-            entry = (
-                self._annex_section_entries[index]
-                if index is not None and 0 <= index < len(self._annex_section_entries)
-                else None
-            )
-            if entry is not None:
-                found = self.detail_view.document().find(
-                    self._annex_display_title(entry)
-                )
-                if not found.isNull():
-                    top = self.detail_view.cursorRect(found).bottom() + 4
-        if top is None:
-            panel.hide()
-            return
-        margin = int(self.detail_view.document().documentMargin())
-        width = max(80, viewport.width() - margin)
-        height = self._annex_preview_slot_height()
-        panel.setParent(viewport)
-        panel.setFixedHeight(height)
-        panel.setGeometry(
-            QRect(max(0, margin // 2), int(top), width, height)
-        )
-        panel.raise_()
-        panel.show()
+            if top is None:
+                panel.hide()
+                continue
+            height = self._annex_preview_slot_height(key)
+            panel.setParent(viewport)
+            panel.setFixedHeight(height)
+            panel.setGeometry(QRect(left, int(top), width, height))
+            panel.raise_()
+            panel.show()
 
-    def _sync_inline_annex_preview_layout(self) -> None:
-        if not self._active_annex_preview_key:
+    def _sync_inline_annex_preview_layout(self, key: str = "") -> None:
+        if not (key or self._active_annex_preview_key):
             return
         self._rerender_annex_section()
         self._place_inline_annex_preview()
@@ -7105,6 +7160,14 @@ class ResourceSearchTab(QWidget):
             elif operation == "three_stage_comparison":
                 self._show_three_stage_comparison(payload)
             else:
+                if self._pending_favorite_row is not None:
+                    self.status_label.setText(
+                        "본문 API 응답을 받았습니다 — 화면을 정리하고 저장하는 중입니다."
+                    )
+                    # 큰 법령은 HTML 변환 동안 이벤트 루프가 잠시 바빠진다.
+                    # 그 전에 단계가 바뀌었다는 문구를 즉시 그려 멈춘 것처럼
+                    # 보이지 않게 한다.
+                    self.status_label._bar.repaint()
                 self._show_detail(payload)
                 if (
                     operation == "resource_detail"
@@ -7935,6 +7998,39 @@ class ResourceSearchTab(QWidget):
             row, jo, hang=hang, ho=ho, mok=mok
         )
 
+    def toggle_article_favorite_by_id(
+        self,
+        law_id: str,
+        jo: str,
+        label: str,
+        name: str = "",
+        *,
+        hang: str = "",
+        ho: str = "",
+        mok: str = "",
+    ) -> None:
+        """다른 검색 화면의 조문 별이 쓰는 추가·해제 공용 진입점."""
+        row = self._law_row(law_id, name)
+        if row is None:
+            self.status_label.setText("이 항목은 즐겨찾기에 걸 수 없습니다.")
+            return
+        if self.law_cache.is_article_favorite(
+            row, jo, hang=hang, ho=ho, mok=mok
+        ):
+            if self.law_cache.set_article_favorite(
+                row, jo, label, False, hang=hang, ho=ho, mok=mok
+            ):
+                self.status_label.setText(f"{label} 즐겨찾기를 해제했습니다.")
+                self._refresh_document_tab_favorites()
+            else:
+                self.status_label.setText(
+                    f"즐겨찾기 해제에 실패했습니다: {self.law_cache.last_error}"
+                )
+            return
+        self.add_article_favorite_by_id(
+            law_id, jo, label, name, hang=hang, ho=ho, mok=mok
+        )
+
     def add_article_favorite_by_id(
         self,
         law_id: str,
@@ -8132,6 +8228,8 @@ class ResourceSearchTab(QWidget):
             pending.get("id")
         ) != str(saved_row.get("id")):
             return
+        self.status_label.setText("본문 저장 완료 — 즐겨찾기에 추가하는 중입니다.")
+        self.status_label._bar.repaint()
         self._pending_favorite_row = None
         article = self._pending_article_favorite
         self._pending_article_favorite = None
