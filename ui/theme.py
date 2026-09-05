@@ -476,7 +476,7 @@ def scale_document_font_sizes(
     ratio = target_size / source_size
 
     # 법령ID·소관부처는 본문 크기 조절 대상이 아닌 작은 보조 정보다.
-    # 본문 배율을 올려도 사용자가 지정한 7pt가 함께 커지지 않게 잠시 뺀다.
+    # 본문 배율을 올려도 사용자가 지정한 8pt가 함께 커지지 않게 잠시 뺀다.
     fixed_fragments: list[str] = []
 
     def protect_fixed(match: re.Match) -> str:

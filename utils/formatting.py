@@ -95,7 +95,7 @@ DETAIL_DOCUMENT_STYLE = (
     ".doc-short-name { font-weight:700; }"
     # 기본정보는 오른쪽 끝 한 줄. Qt는 클래스 크기를 흘릴 때가 있어
     # 그리는 자리에서 인라인으로도 같은 값을 준다.
-    ".doc-meta { font-family:" + DETAIL_FONT_CSS_FAMILY + "; font-size:7pt; "
+    ".doc-meta { font-family:" + DETAIL_FONT_CSS_FAMILY + "; font-size:8pt; "
     "font-weight:400; color:" + META_VALUE_COLOR + "; text-align:right; "
     "margin:0 0 14px 0; }"
     ".meta-label { color:" + META_LABEL_COLOR + "; font-weight:400; "
@@ -983,7 +983,7 @@ def detail_document_header(
             plain_parts.append(f"{label} {value}")
         html_parts.append(
             '<div class="doc-meta" align="right" '
-            f'style="font-size:7pt; color:{META_VALUE_COLOR}; '
+            f'style="font-size:8pt; color:{META_VALUE_COLOR}; '
             'text-align:right; margin:0 0 14px 0;">'
             + "&nbsp;&nbsp;&nbsp;".join(cells)
             + "</div>"

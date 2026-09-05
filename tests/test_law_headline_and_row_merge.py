@@ -100,7 +100,7 @@ def test_document_header_shows_short_name_and_effective_line() -> None:
     assert '<h1 align="center">' in html
     assert '<div class="doc-subtitle" align="center"' in html
     assert '<div class="doc-meta" align="right"' in html
-    assert 'style="font-size:7pt;' in html
+    assert 'style="font-size:8pt;' in html
     assert "( 약칭: 국토계획법 )" in plain_parts
     # 시행일ㆍ공포번호는 바로 위 줄에 이미 있어 기본정보에서 뺀다.
     assert "법령ID" in html
