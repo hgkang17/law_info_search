@@ -220,7 +220,7 @@ def test_annex_title_opens_constrained_inline_pdf_panel(
         assert slot_cursor is not None
         assert title_cursor.position() < slot_cursor.position()
         assert tab.inline_annex_preview.geometry().height() >= 320
-        assert tab.inline_annex_preview.geometry().width() <= 720
+        assert tab.inline_annex_preview.geometry().width() <= 800
         assert tab.inline_annex_preview.geometry().left() <= 10
         assert tab.inline_annex_preview.geometry().top() >= (
             tab.detail_view.cursorRect(title_cursor).top() - 2

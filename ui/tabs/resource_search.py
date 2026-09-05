@@ -5773,7 +5773,7 @@ class ResourceSearchTab(QWidget):
         """펼친 미리보기들을 각 별표 제목 아래 비워 둔 자리에 맞춘다."""
         viewport = self.detail_view.viewport()
         margin = int(self.detail_view.document().documentMargin())
-        width = min(720, max(80, viewport.width() - margin))
+        width = min(800, max(80, viewport.width() - margin))
         left = max(0, margin // 2)
         for index, entry in enumerate(self._annex_section_entries):
             key = self._annex_preview_key(entry, index)
@@ -9940,7 +9940,7 @@ class ResourceSearchTab(QWidget):
             if toc_entries is not None:
                 toc_entries.append((4, shown, f"annex-item-{index}"))
             html_parts.append(
-                '<div class="annex-item" style="margin:0; padding:10px 0; '
+                '<div class="annex-item" style="margin:0; padding:4px 0 10px 0; '
                 f'line-height:{BODY_LINE_HEIGHT}; '
                 'font-family:\'Malgun Gothic\',\'맑은 고딕\'; '
                 'font-size:9.5pt; font-weight:400; color:#242529;">'

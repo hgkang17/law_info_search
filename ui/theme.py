@@ -24,6 +24,7 @@ from PySide6.QtGui import (
     QTextFormat,
 )
 from PySide6.QtWidgets import (
+    QGridLayout,
     QHBoxLayout,
     QMenu,
     QPushButton,
@@ -31,6 +32,7 @@ from PySide6.QtWidgets import (
     QToolButton,
     QVBoxLayout,
     QWidget,
+    QWidgetAction,
 )
 from storage.paths import APP_DIR
 from ui.assets import HIGHLIGHTER_ICON_PATH
@@ -406,7 +408,8 @@ def clear_user_colors(cursor: QTextCursor) -> None:
 def apply_legal_title_colors(html: str) -> str:
     """저장 HTML의 조 제목도 현재 법령 제목 색으로 맞춘다."""
     pattern = re.compile(
-        r'(<span\b[^>]*class=["\'][^"\']*\blaw-article-title\b[^"\']*'
+        r'(<(?:span|div)\b[^>]*class=["\'][^"\']*\b'
+        r'(?:law-article-title|law-heading)\b[^"\']*'
         r'["\'][^>]*style=["\'])([^"\']*)(["\'])',
         flags=re.IGNORECASE,
     )
@@ -560,13 +563,13 @@ def build_color_palette_toolbar(
         return QIcon(pixmap)
 
     def swatch_icon(color_value: str) -> QIcon:
-        pixmap = QPixmap(28, 18)
+        pixmap = QPixmap(22, 22)
         pixmap.fill(Qt.GlobalColor.transparent)
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setPen(QPen(QColor("#b7bec7"), 1.0))
         painter.setBrush(QColor(color_value))
-        painter.drawRoundedRect(2, 2, 24, 14, 2.5, 2.5)
+        painter.drawRoundedRect(2, 2, 18, 18, 2.5, 2.5)
         painter.end()
         return QIcon(pixmap)
 
@@ -586,14 +589,24 @@ def build_color_palette_toolbar(
         button.setToolTip(f"{row_label} · 현재 색 적용 또는 화살표로 색 선택")
         button.setAccessibleName(row_label)
         menu = QMenu(button)
-        for color_name, color_value in PALETTE_COLORS:
-            action = menu.addAction(swatch_icon(color_value), "")
-            action.setData(color_value)
-            action.setToolTip(
+        palette = QWidget(menu)
+        palette.setObjectName("colorSwatchPalette")
+        palette_layout = QGridLayout(palette)
+        palette_layout.setContentsMargins(6, 6, 6, 6)
+        palette_layout.setSpacing(4)
+        for index, (color_name, color_value) in enumerate(PALETTE_COLORS):
+            swatch = QToolButton(palette)
+            swatch.setObjectName("colorSwatchButton")
+            swatch.setFixedSize(26, 26)
+            swatch.setIconSize(QSize(22, 22))
+            swatch.setIcon(swatch_icon(color_value))
+            swatch.setToolTip(
                 palette_color_tooltip(
                     row_label, color_name, color_value, background=is_background
                 )
             )
+            swatch.setAccessibleName(f"{row_label} {color_name}")
+
             def choose(
                 _checked=False,
                 *,
@@ -601,14 +614,20 @@ def build_color_palette_toolbar(
                 background=is_background,
                 target=button,
                 state=current,
+                popup=menu,
             ) -> None:
                 state["value"] = value
                 target.setIcon(
                     tool_icon("background" if background else "text", value)
                 )
                 apply_color(value, background=background)
+                popup.close()
 
-            action.triggered.connect(choose)
+            swatch.clicked.connect(choose)
+            palette_layout.addWidget(swatch, index // 4, index % 4)
+        palette_action = QWidgetAction(menu)
+        palette_action.setDefaultWidget(palette)
+        menu.addAction(palette_action)
         button.setMenu(menu)
         button.clicked.connect(
             lambda _checked=False, background=is_background, state=current: (

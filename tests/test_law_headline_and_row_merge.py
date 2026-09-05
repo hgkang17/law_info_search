@@ -13,6 +13,7 @@ from utils.formatting import (
     detail_document_header,
     law_headline_text,
 )
+from ui.theme import apply_legal_title_colors
 from utils.formatting import law_reference_html_text
 from utils.parsing import (
     insert_admin_clause_breaks,
@@ -109,6 +110,18 @@ def test_document_header_shows_short_name_and_effective_line() -> None:
     assert "공포일자" not in html
     # 어두운 네모 칸은 없앴다.
     assert 'bgcolor=' not in html
+
+
+def test_saved_chapter_heading_is_upgraded_to_current_color() -> None:
+    html = (
+        '<div class="law-heading" '
+        'style="font-weight:700; color:#333399;">제1장 총칙</div>'
+    )
+
+    upgraded = apply_legal_title_colors(html)
+
+    assert "color:#1309aa" in upgraded
+    assert "#333399" not in upgraded
 
 
 def test_document_header_keeps_effective_date_when_there_is_no_subtitle() -> None:
