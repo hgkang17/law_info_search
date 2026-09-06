@@ -123,6 +123,8 @@ class LawSearchWindow(QMainWindow):
         self._update_download_worker: UpdateDownloadWorker | None = None
         self._update_progress_dialog: QProgressDialog | None = None
         self._update_check_silent = True
+        # 시작 화면에서 시작한 검색이 아직 끝나지 않았는지.
+        self._home_search_pending = False
 
         self.setWindowTitle("국가법령정보 통합검색")
         self.setWindowIcon(QIcon(str(LOGO_PATH)))
@@ -1543,10 +1545,38 @@ class LawSearchWindow(QMainWindow):
         self.tabs.setCurrentIndex(self._home_page_index)
         self.home_page.focus_query()
 
+    # 시작 화면 검색이 아무리 늦어도 이만큼 지나면 화면을 넘긴다.
+    # 응답이 끝내 오지 않아도 시작 화면에 갇히지 않게 하는 안전선이다.
+    HOME_SEARCH_TIMEOUT_MS = 90_000
+
     def _search_from_home(self, query: str) -> None:
-        """시작 화면에서 넣은 검색어를 법령검색의 통합검색으로 넘긴다."""
-        self.navigation.setCurrentRow(1)
+        """시작 화면에서 넣은 검색어를 법령검색의 통합검색으로 넘긴다.
+
+        예전에는 곧바로 법령검색 화면으로 옮긴 뒤 거기서 "검색 중"을
+        보여 주었다. 결과가 없는 빈 표를 먼저 마주하게 되어, 지금은 시작
+        화면에 그대로 머물며 기다렸다가 결과가 다 나온 뒤에 넘어간다.
+        """
+        self._home_search_pending = True
+        self.home_page.begin_search()
+        # 화면을 아직 옮기지 않으므로 검색 진행은 이 창이 대신 지켜본다.
         self.resource_tab.run_integrated_search(query)
+        worker = self.resource_tab.worker
+        if worker is None or not worker.isRunning():
+            # 저장해 둔 목록으로 곧바로 끝난 검색.
+            self._finish_home_search()
+            return
+        worker.finished.connect(self._finish_home_search)
+        QTimer.singleShot(
+            self.HOME_SEARCH_TIMEOUT_MS, self._finish_home_search
+        )
+
+    def _finish_home_search(self) -> None:
+        """시작 화면에서 시작한 검색이 끝나면 법령검색 화면으로 넘긴다."""
+        if not getattr(self, "_home_search_pending", False):
+            return
+        self._home_search_pending = False
+        self.home_page.end_search()
+        self.navigation.setCurrentRow(1)
 
     def _activate_viewed_laws_page(self, *_args: object) -> None:
         self._reset_reading_modes_for_page_change()
@@ -3179,11 +3209,12 @@ class LawSearchWindow(QMainWindow):
                 font-weight: 700;
             }
             /* 결과가 0건일 때 표 한가운데에 뜨는 안내. */
+            /* 글꼴은 코드(ui_font)에서 정한다. 여기서 font-family를 다시
+               정하면 그 순간 위젯 글꼴이 새로 만들어져 힌팅 끔 설정이
+               사라지고, 크게 띄운 "검색 중" 글자만 획이 뭉개져 보인다. */
             QLabel#resultEmptyNotice {
                 background: transparent;
                 color: #6b7a8d;
-                font-family: "Malgun Gothic";
-                font-size: 13px;
                 font-weight: 400;
             }
             /* 본문을 굴려도 남는 붙박이 제목 줄(법령명ㆍ약칭ㆍ시행일).
@@ -4388,6 +4419,13 @@ class LawSearchWindow(QMainWindow):
                 background: #e5e5e4;
                 color: #1f57c8;
             }
+            /* 키보드(Tabㆍ←ㆍ→)로 옮겨 다닐 때 지금 어느 분류에 서 있는지
+               보이게 한다. 고른 분류의 파란 밑줄과 겹치지 않도록 바탕만
+               옅게 깐다. */
+            QPushButton#categoryTrackButton:focus {
+                background: #eeeeed;
+                outline: none;
+            }
 
             QLineEdit,
             QComboBox,
@@ -4625,10 +4663,12 @@ class LawSearchWindow(QMainWindow):
                 background: transparent;
                 border: none;
             }
+            /* 글꼴은 코드(ui_font)에서 정한다. 여기서 font-family를 다시
+               정하면 위젯 글꼴이 새로 만들어지며 힌팅 끔 설정이 사라져,
+               큰 글씨인 이 줄만 획이 화소에 눌려 보인다. */
             QLabel#homeTitle {
                 background: transparent;
                 color: #242529;
-                font-family: "Malgun Gothic";
                 font-size: 19pt;
                 font-weight: 600;
             }

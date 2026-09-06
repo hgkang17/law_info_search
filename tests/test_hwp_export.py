@@ -135,7 +135,10 @@ def test_pinned_title_row_offers_the_hwp_button_for_a_law(qt_app, tmp_path) -> N
         )
         qt_app.processEvents()
 
-        assert not tab.hwp_export_button.isHidden()
+        # 단추는 서식을 더 다듬을 때까지 화면에서 뺐다. 내보내기 기능과
+        # 제목 줄 자체는 그대로 남는다.
+        assert tab.hwp_export_button.isHidden()
+        assert not tab.HWP_EXPORT_BUTTON_ENABLED
         title, headline = tab._pinned_headline_parts()
         assert title == "국토기본법"
         assert headline.startswith("[시행 2026. 1. 1.]")

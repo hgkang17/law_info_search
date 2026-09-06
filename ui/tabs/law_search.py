@@ -39,6 +39,7 @@ from ui.widgets import (
     prompt_oc_api_key,
     replace_search_term_backgrounds,
     configure_adaptive_result_rows,
+    apply_result_header_height,
     configure_horizontal_splitter,
     resize_adaptive_result_rows,
     restore_text_view_scroll,
@@ -95,6 +96,12 @@ PAGE_HEADING_HEIGHT = 50
 class LawSearchTab(QWidget):
     """중앙부처 1차 해석과 법령해석례가 공유하는 검색 탭."""
 
+    # 화면 이름 띠 아래 내용 칸의 여백. 띠 자체는 여백 없이 창 좌우 끝까지
+    # 이어 붙이므로 이 값은 그 아래 내용에만 쓴다. 위 여백은 법령검색
+    # 화면과 검색칸 시작 자리를 맞추는 값이다(PAGE_HEADING_HEIGHT 주석 참고).
+    BODY_SIDE_MARGIN = 12
+    BODY_TOP_MARGIN = 14
+
     def __init__(
         self,
         service: str,
@@ -129,6 +136,9 @@ class LawSearchTab(QWidget):
             )
         )
         self._reading_mode = False
+        # 아직 한 번도 찾아보지 않은 표에는 결과가 없다는 말 대신 무엇을
+        # 하라는 안내를 띄운다.
+        self._search_performed = False
         self._normal_window_margins: tuple[int, int, int, int] | None = None
         self.ai_chat_panel: AiChatPanel | None = None
         self._build_ui()
@@ -162,9 +172,11 @@ class LawSearchTab(QWidget):
         root = QVBoxLayout(self)
         # 위아래 여백을 두지 않는다. 왼쪽 메뉴 카드는 이 탭 바깥에 있어
         # 여기 여백만큼 본문이 늦게 시작하고 먼저 끝나 두 칸의 위아래 선이
-        # 어긋난다.
-        root.setContentsMargins(12, 0, 12, 0)
-        root.setSpacing(14)
+        # 어긋난다. 좌우 여백도 두지 않는다. 화면 이름 띠의 밑줄이 왼쪽
+        # 메뉴 경계와 창 오른쪽 가장자리에 닿아야 법령검색 화면의 카테고리
+        # 바와 같은 자리에서 선이 이어진다. 여백은 그 아래 내용 칸이 갖는다.
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
         page_names = {
             "central": "중앙부처 질의회신",
@@ -186,6 +198,15 @@ class LawSearchTab(QWidget):
         )
         page_heading_layout.addStretch(1)
         root.addWidget(self.page_heading)
+
+        # 이름 띠 아래 내용만 좌우 여백을 갖는 칸. 크게 보기에서는 이
+        # 여백을 접어 본문이 창 끝까지 찬다.
+        self.content_holder = QWidget()
+        content_layout = QVBoxLayout(self.content_holder)
+        content_layout.setSpacing(14)
+        self.root_layout = content_layout
+        root.addWidget(self.content_holder, 1)
+        self.apply_body_margins(False)
 
         search_card = QFrame()
         search_card.setObjectName("card")
@@ -295,6 +316,7 @@ class LawSearchTab(QWidget):
         configure_adaptive_result_rows(
             self.result_table, (self.title_column,)
         )
+        apply_result_header_height(self.result_table)
         table_header = self.result_table.horizontalHeader()
         table_header.setStretchLastSection(False)
         # 자동 맞춤ㆍ늘림 모드는 헤더 경계를 끌어도 폭을 곧바로 되돌린다.
@@ -461,9 +483,8 @@ class LawSearchTab(QWidget):
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 0)
         detail_card.hide()
-        root.addWidget(splitter, 1)
+        content_layout.addWidget(splitter, 1)
         self._normal_splitter_sizes = [360, 1040]
-        self.root_layout = root
 
         # 상태줄은 창 하나에 하나만 두는 것이 원칙이라, main_window가
         # use_shared_status로 공용 하단바를 넘겨 준다. 이 화면만 따로 띄우는
@@ -486,10 +507,20 @@ class LawSearchTab(QWidget):
         status_layout.addWidget(self.status_label)
         status_layout.addStretch()
         status_layout.addWidget(self.progress)
-        root.addWidget(self.status_row)
+        content_layout.addWidget(self.status_row)
 
         self.reading_mode_shortcut = QShortcut(QKeySequence("F11"), self)
         self.reading_mode_shortcut.activated.connect(self._toggle_reading_mode)
+        # 빈 표만 있는 첫 화면에서 무엇을 하면 되는지 알려 준다.
+        self.result_empty_label.show_message(
+            self.result_empty_label.IDLE_MESSAGE, pulse=False
+        )
+
+    def apply_body_margins(self, expanded: bool) -> None:
+        """화면 이름 띠 아래 내용 칸의 여백을 정한다."""
+        side = 0 if expanded else self.BODY_SIDE_MARGIN
+        top = 0 if expanded else self.BODY_TOP_MARGIN
+        self.root_layout.setContentsMargins(side, top, side, 0)
 
     def _show_detail_split(self) -> None:
         """검색 목록 옆에 질의회신·해석례·판례 본문 칸을 연다."""
@@ -662,12 +693,7 @@ class LawSearchTab(QWidget):
         if central_layout is not None:
             if self._normal_window_margins is not None:
                 central_layout.setContentsMargins(*self._normal_window_margins)
-        self.root_layout.setContentsMargins(
-            0 if expanded else 12,
-            0 if expanded else 12,
-            0 if expanded else 12,
-            0 if expanded else 12,
-        )
+        self.apply_body_margins(expanded)
 
         scroll_bar = self.detail_view.verticalScrollBar()
         scroll_ratio = (
@@ -1244,7 +1270,17 @@ class LawSearchTab(QWidget):
     def start_search(self, *_args: object, force_api: bool = False) -> None:
         query = self.query_input.text().strip()
         if not query:
-            QMessageBox.information(self, "검색어 확인", "검색어를 입력해 주세요.")
+            # 빈 칸으로 검색을 눌렀다고 상자를 띄워 길을 막지 않는다.
+            # 찾은 것이 없을 때와 같은 자리에 같은 말을 띄우고, 커서만
+            # 검색칸으로 돌려준다.
+            self.result_table.setRowCount(0)
+            self.result_rows.clear()
+            self.result_count.setText("0건")
+            self._search_performed = True
+            self.result_empty_label.show_message(
+                self.result_empty_label.EMPTY_MESSAGE
+            )
+            self.status_label.setText("검색 결과가 없습니다.")
             self.query_input.setFocus()
             return
 
@@ -1257,6 +1293,7 @@ class LawSearchTab(QWidget):
         self.result_table.setRowCount(0)
         self.result_rows.clear()
         self.result_count.setText("0건")
+        self._search_performed = True
         self.result_empty_label.show_message("검색 중", animate_dots=True)
         self.detail_view.clear()
         self.current_detail_text = ""
@@ -1524,8 +1561,12 @@ class LawSearchTab(QWidget):
             self.result_empty_label.clear_message()
             self.result_table.selectRow(0)
         else:
-            self.result_empty_label.show_message("검색 결과가 없습니다.")
-            self.detail_view.setPlainText("검색 결과가 없습니다.")
+            self.result_empty_label.show_message(
+                self.result_empty_label.EMPTY_MESSAGE
+            )
+            self.detail_view.setPlainText(
+                self.result_empty_label.EMPTY_MESSAGE
+            )
 
     def _snapshot_item_for_row(
         self, row: dict[str, object]

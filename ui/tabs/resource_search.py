@@ -56,6 +56,7 @@ from ui.widgets import (
     prompt_oc_api_key,
     replace_search_term_backgrounds,
     configure_adaptive_result_rows,
+    apply_result_header_height,
     configure_expanding_column,
     configure_horizontal_splitter,
     favorite_icon,
@@ -104,7 +105,12 @@ from molit_cgm_expc_api import (
     _find_text,
     law_payload_images_need_refresh,
 )
-from utils.annex_notation import annex_hint_in_query, annex_related_law_name, row_matches_annex_hint
+from utils.annex_notation import (
+    annex_hint_in_query,
+    annex_related_law_name,
+    from_annex_code,
+    row_matches_annex_hint,
+)
 from utils.annex_parse import parse_annex_bytes
 from utils.law_download import download_law_file
 from utils.constants import DEFAULT_DETAIL_FONT_POINT, DETAIL_FONT_FAMILY
@@ -288,6 +294,14 @@ class ResourceSearchTab(QWidget):
     # 결과표에서 남는 폭을 흡수하는 열(명칭). 글자가 가장 긴 열이라
     # 여기가 늘어나야 표가 넓어져도 오른쪽에 빈 바탕이 남지 않는다.
     NAME_COLUMN = 3
+    # 카테고리 바 아래 내용 칸의 여백. 카테고리 바 자체는 여백 없이 창
+    # 좌우 끝까지 이어 붙이므로 이 값은 그 아래 내용에만 쓴다.
+    BODY_SIDE_MARGIN = 12
+    BODY_TOP_MARGIN = 12
+    # 한글 문서(HWPX) 저장 단추를 제목 줄에 세울지. 내보내기 자체는
+    # utils/hwp_export.py에 그대로 두고 화면에서만 잠시 뺀다. 서식 보완이
+    # 끝나면 이 값을 True로 되돌리면 그대로 다시 뜬다.
+    HWP_EXPORT_BUTTON_ENABLED = False
 
     def __init__(
         self,
@@ -327,6 +341,10 @@ class ResourceSearchTab(QWidget):
         self._annex_previews: dict[str, dict[str, object]] = {}
         self._annex_preview_panels: dict[str, InlinePdfPreviewPanel] = {}
         self._annex_section_entries: list[dict[str, str]] = []
+        # 아직 한 번도 찾아보지 않은 표에는 "검색 결과가 없습니다."가 아니라
+        # 무엇을 하라는 안내를 띄운다. 프로그램을 막 켠 화면과 헛친 검색을
+        # 같은 말로 알리면 검색이 실제로 돌았는지 알 수 없다.
+        self._search_performed = False
         self._annex_preview_workers: dict[str, object] = {}
         self._active_annex_preview_key = ""
         self._pending_favorite_row: dict[str, object] | None = None
@@ -480,6 +498,17 @@ class ResourceSearchTab(QWidget):
         """목록은 더블클릭으로 열므로 남아 있던 통합검색 열기 단추를 숨긴다."""
         self.detail_button.hide()
 
+    def apply_body_margins(self, expanded: bool) -> None:
+        """카테고리 바 아래 내용 칸의 여백을 정한다.
+
+        크게 보기에서는 카테고리 바까지 접으므로 좌우ㆍ위 여백을 모두
+        없애 본문이 창 끝까지 찬다. 조문검색 화면도 이 칸에 들어 있어
+        같은 여백을 쓴다.
+        """
+        side = 0 if expanded else self.BODY_SIDE_MARGIN
+        top = 0 if expanded else self.BODY_TOP_MARGIN
+        self.root_layout.setContentsMargins(side, top, side, 0)
+
     def attach_keyword_page(self, widget) -> None:
         """키워드검색 화면을 카테고리 바 아래 스택에 끼운다.
 
@@ -607,11 +636,11 @@ class ResourceSearchTab(QWidget):
         root = QVBoxLayout(self)
         # 위아래 여백을 두지 않는다. 왼쪽 메뉴 카드는 이 탭 바깥에 있어
         # 여기 여백만큼 본문이 늦게 시작하고 먼저 끝나 두 칸의 위아래 선이
-        # 어긋난다.
-        root.setContentsMargins(12, 0, 12, 0)
-        root.setSpacing(12)
-
-        self.root_layout = root
+        # 어긋난다. 좌우 여백도 여기서는 두지 않는다. 카테고리 바의 밑줄이
+        # 왼쪽 메뉴 경계와 창 오른쪽 가장자리에 닿아야 화면 위쪽 선이
+        # 끊기지 않는다. 좌우 여백은 그 아래 내용 칸이 따로 갖는다.
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
         # 카테고리 바는 캡슐 하나에 분류 하나만 둔다. 지능형 법령검색과
         # 별표ㆍ서식처럼 같은 성격의 API가 여럿인 분류는 캡슐을 나누지 않고
@@ -644,6 +673,15 @@ class ResourceSearchTab(QWidget):
         self.category_tabs.add_stretch()
         self.category_tabs.setCurrentIndex(default_category_index)
         root.addWidget(self.category_tabs)
+
+        # 카테고리 바 아래 내용만 좌우 여백을 갖는 칸. 크게 보기에서는
+        # 이 여백을 접어 본문이 창 끝까지 차게 한다.
+        self.content_holder = QWidget()
+        content_layout = QVBoxLayout(self.content_holder)
+        content_layout.setSpacing(12)
+        self.root_layout = content_layout
+        root.addWidget(self.content_holder, 1)
+        self.apply_body_margins(False)
 
         search_card = QFrame()
         search_card.setObjectName("card")
@@ -761,6 +799,7 @@ class ResourceSearchTab(QWidget):
         self.result_table.setItemDelegateForColumn(4, self.related_delegate)
         self.result_table.verticalHeader().setVisible(False)
         configure_adaptive_result_rows(self.result_table, (3, 4))
+        apply_result_header_height(self.result_table)
         table_header = self.result_table.horizontalHeader()
         # 마지막 열(공포·발령일자)을 늘리면 날짜 한 줄만 넓게 비어 보인다.
         # 남는 폭은 가장 길게 쓰는 명칭 열이 가져간다.
@@ -769,7 +808,7 @@ class ResourceSearchTab(QWidget):
         # 드래그한 폭을 곧바로 되돌려 버려 쓰지 않는다. 명칭 열만 늘림으로
         # 두어 표가 넓어져도 오른쪽에 빈 바탕이 남지 않게 한다.
         table_header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        for column, width in enumerate((56, 90, 90, 360, 240, 105, 115)):
+        for column, width in enumerate((56, 90, 90, 300, 240, 105, 115)):
             self.result_table.setColumnWidth(column, width)
         # 저장 체크 칸은 폭이 정해져 있다. 끌어 바꿀 일도, 여백을 떠안을
         # 일도 없다.
@@ -1200,7 +1239,7 @@ class ResourceSearchTab(QWidget):
         body_layout.setContentsMargins(0, 0, 0, 0)
         body_layout.setSpacing(12)
         self.content_stack.addWidget(self.resource_body)
-        root.addWidget(self.content_stack, 1)
+        content_layout.addWidget(self.content_stack, 1)
         body_layout.addWidget(splitter, 1)
 
         # 상태줄은 창 하나에 하나만 두는 것이 원칙이라, main_window가
@@ -1231,6 +1270,10 @@ class ResourceSearchTab(QWidget):
         self._normal_window_margins: tuple[int, int, int, int] | None = None
         self.reading_mode_shortcut = QShortcut(QKeySequence("F11"), self)
         self.reading_mode_shortcut.activated.connect(self._toggle_reading_mode)
+        # 빈 표만 있는 첫 화면에서 무엇을 하면 되는지 알려 준다.
+        self.result_empty_label.show_message(
+            self.result_empty_label.IDLE_MESSAGE, pulse=False
+        )
 
     def _toggle_reading_mode(self, *_args: object) -> None:
         self._set_reading_mode(not self._reading_mode)
@@ -1372,12 +1415,7 @@ class ResourceSearchTab(QWidget):
         if central_layout is not None:
             if self._normal_window_margins is not None:
                 central_layout.setContentsMargins(*self._normal_window_margins)
-        self.root_layout.setContentsMargins(
-            0 if expanded else 12,
-            0,
-            0 if expanded else 12,
-            0,
-        )
+        self.apply_body_margins(expanded)
 
         scroll_bar = self.detail_view.verticalScrollBar()
         scroll_ratio = (
@@ -3055,7 +3093,11 @@ class ResourceSearchTab(QWidget):
         if self.result_table.rowCount():
             label.clear_message()
             return
-        label.show_message("검색 결과가 없습니다.")
+        label.show_message(
+            label.EMPTY_MESSAGE
+            if self._search_performed
+            else label.IDLE_MESSAGE
+        )
 
     def eventFilter(self, watched, event) -> bool:
         if (
@@ -6988,12 +7030,14 @@ class ResourceSearchTab(QWidget):
             "sort_column": self._sort_column,
             "sort_ascending": self._sort_ascending,
             "highlight_terms": tuple(self.highlight_terms),
+            "searched": self._search_performed,
         }
 
     def _restore_resource_category_state(
         self, state: dict[str, object]
     ) -> None:
         self.query_input.setText(str(state.get("query") or ""))
+        self._search_performed = bool(state.get("searched"))
         scope = state.get("scope")
         scope_index = self.search_scope.findData(scope)
         if scope_index >= 0:
@@ -7086,7 +7130,17 @@ class ResourceSearchTab(QWidget):
     def start_search(self, *_args: object, force_api: bool = False) -> None:
         query = self.query_input.text().strip()
         if not query:
-            QMessageBox.information(self, "검색어 확인", "검색어를 입력해 주세요.")
+            # 빈 칸으로 검색을 눌렀다고 상자를 띄워 길을 막지 않는다.
+            # 찾은 것이 없을 때와 같은 자리에 같은 말을 띄우고, 커서만
+            # 검색칸으로 돌려준다.
+            self.result_table.setRowCount(0)
+            self.result_rows.clear()
+            self.result_count.setText("0건")
+            self._search_performed = True
+            self.result_empty_label.show_message(
+                self.result_empty_label.EMPTY_MESSAGE
+            )
+            self.status_label.setText("검색 결과가 없습니다.")
             self.query_input.setFocus()
             return
 
@@ -7098,6 +7152,7 @@ class ResourceSearchTab(QWidget):
         self.result_table.setRowCount(0)
         self.result_rows.clear()
         self.result_count.setText("0건")
+        self._search_performed = True
         self.result_empty_label.show_message("검색 중", animate_dots=True)
         self._prepare_preview_for_outer_search()
         self.current_detail_text = ""
@@ -7870,7 +7925,9 @@ class ResourceSearchTab(QWidget):
             self._replace_detail_content(text="검색 결과가 없습니다.")
 
     def _render_result_rows(self) -> None:
-        saved_keys = self.law_cache.saved_keys_for_rows(self.result_rows)
+        saved_keys = self.law_cache.saved_keys_for_rows(
+            [self._storage_row(row) for row in self.result_rows]
+        )
         self._updating_cache_checks = True
         try:
             with batch_table_updates(self.result_table):
@@ -7949,7 +8006,41 @@ class ResourceSearchTab(QWidget):
         if self.result_rows:
             self.result_table.selectRow(0)
 
+    def _article_storage_row(
+        self, row: dict[str, object]
+    ) -> dict[str, object] | None:
+        """AI추천 조문 줄이 저장ㆍ체크에 쓸 조문 단위 행.
+
+        조문 즐겨찾기는 그 법령의 저장본에 얹히기 때문에, 법령을 한 번
+        저장하면 같은 법령의 조문 줄까지 모두 저장된 것처럼 보였다. 조문
+        줄은 그 조항호목만 가리키는 별도 이름으로 저장해 서로 섞이지
+        않게 한다.
+        """
+        unit = self._keyword_article_unit(row)
+        if unit is None:
+            return None
+        law_id = str(row.get("id") or "")
+        unit_label = self._law_reference_label(
+            unit["jo"], unit["hang"], unit["ho"], unit["mok"]
+        )
+        return {
+            "target": "law_article",
+            "id": ":".join(
+                (law_id, unit["jo"], unit["hang"], unit["ho"], unit["mok"])
+            ),
+            "label": "조항호목",
+            "name": f"{row.get('name') or ''} {unit_label}".strip(),
+            "source_row": dict(row),
+            "favorite_unit": dict(unit),
+        }
+
+    def _storage_row(self, row: dict[str, object]) -> dict[str, object]:
+        """저장ㆍ체크에 쓸 행. 조문 줄만 조문 단위 행으로 바꿔 준다."""
+        article_row = self._article_storage_row(row)
+        return article_row if article_row is not None else row
+
     def _row_is_saved(self, row: dict[str, object]) -> bool:
+        row = self._storage_row(row)
         target = str(row.get("target") or "")
         return (
             self.law_cache.has(row)
@@ -8001,6 +8092,25 @@ class ResourceSearchTab(QWidget):
             str(row.get("keyword_mok") or ""),
             label,
         )
+
+    @staticmethod
+    def _keyword_article_unit(
+        row: dict[str, object],
+    ) -> dict[str, str] | None:
+        """AI추천 줄이 가리키는 조항호목. 그런 줄이 아니면 None."""
+        if not row.get("ai_recommended"):
+            return None
+        if str(row.get("target") or "") != "law":
+            return None
+        jo = str(row.get("keyword_jo") or "").strip()
+        if not jo:
+            return None
+        return {
+            "jo": jo,
+            "hang": str(row.get("keyword_hang") or ""),
+            "ho": str(row.get("keyword_ho") or ""),
+            "mok": str(row.get("keyword_mok") or ""),
+        }
 
     def _is_favorite_at_row(self, row_index: int) -> bool:
         if not (0 <= row_index < len(self.result_rows)):
@@ -8316,7 +8426,7 @@ class ResourceSearchTab(QWidget):
         # 체크박스 오른쪽이 별도 버튼처럼 보이지 않도록 선택 대상에서 뺀다.
         flags = Qt.ItemFlag.ItemIsEnabled
         cached = (
-            self.law_cache.key_for_row(row) in saved_keys
+            self.law_cache.key_for_row(self._storage_row(row)) in saved_keys
             if saved_keys is not None
             else self._row_is_saved(row)
         )
@@ -8403,7 +8513,7 @@ class ResourceSearchTab(QWidget):
         if wants_saved == cached:
             return
         if not wants_saved:
-            if self.law_cache.delete(row):
+            if self.law_cache.delete(self._storage_row(row)):
                 self.status_label.setText("저장된 본문을 삭제했습니다.")
             else:
                 self.status_label.setText(
@@ -8709,6 +8819,27 @@ class ResourceSearchTab(QWidget):
                 # 이미지가 실제로 있는 문서만 최초 재열람 때 백그라운드에서
                 # 한 번 새로 받아 이후에는 내장 이미지까지 로컬에서 연다.
                 if not law_payload_images_need_refresh(cached_payload):
+                    # AI추천 줄은 저장본에서 열 때도 전문이 아니라 그
+                    # 조항호목만 연다. API로 받아 열 때(_show_detail)와
+                    # 같은 화면이 되어야 저장 여부에 따라 결과가 달라지지
+                    # 않는다.
+                    keyword_unit = self._keyword_article_unit(row)
+                    if keyword_unit is not None:
+                        try:
+                            self.open_cached_favorite_article(
+                                cached_record, keyword_unit
+                            )
+                        except ValueError:
+                            # 저장 전문에서 그 조문을 못 찾으면 예전처럼
+                            # 전문을 열고 그 자리로 옮긴다.
+                            pass
+                        else:
+                            # 목록의 저장 칸이 이 조문만 가리키도록, 저장본
+                            # 에서 열었을 때도 그 조문 이름으로 남긴다.
+                            self._save_keyword_article_snapshot(
+                                self._storage_row(row)
+                            )
+                            return True
                     self.open_cached_law(cached_record, clear_highlights=False)
                     self._schedule_keyword_article_scroll(row)
                     return True
@@ -8856,6 +8987,9 @@ class ResourceSearchTab(QWidget):
                     build_toc=True,
                     administrative_rule=True,
                     embedded_images=self._admin_rule_images(record),
+                    # 별첨 목록은 저장할 때 함께 담아 둔다. 넘기지 않으면
+                    # 저장 본문에서만 본문 끝 별첨이 통째로 사라진다.
+                    law_annexes=self._cached_annex_entries(record),
                 )
                 restored_formats = self._restore_cached_formatting(record)
                 restored_memos = self._restore_cached_memos(record)
@@ -8888,6 +9022,11 @@ class ResourceSearchTab(QWidget):
                 administrative_rule=target == "admrul",
                 embedded_images=(
                     self._admin_rule_images(payload)
+                    if target == "admrul"
+                    else None
+                ),
+                law_annexes=(
+                    self._law_annex_entries(payload)
                     if target == "admrul"
                     else None
                 ),
@@ -8925,6 +9064,20 @@ class ResourceSearchTab(QWidget):
         self.status_label.setText(
             f"{row['label']} ID {row['id']} 저장된 본문 열기"
         )
+
+    @staticmethod
+    def _cached_annex_entries(
+        record: dict[str, object],
+    ) -> list[dict[str, str]]:
+        """저장본에 담아 둔 별표ㆍ별첨 목록을 꺼낸다."""
+        entries = record.get("annex_entries")
+        if not isinstance(entries, list):
+            return []
+        return [
+            {str(key): str(value) for key, value in entry.items()}
+            for entry in entries
+            if isinstance(entry, dict)
+        ]
 
     @staticmethod
     def _cached_admrul_sections(
@@ -8983,20 +9136,66 @@ class ResourceSearchTab(QWidget):
                 sections.append((label, normalize_admin_rule_text(value)))
         return sections
 
+    @classmethod
+    def _annex_row_entry(cls, row: dict[str, object]) -> dict[str, str]:
+        """별표ㆍ서식 검색 결과 한 줄을 본문 별표 목록과 같은 항목으로 만든다.
+
+        목록 API는 번호를 ``000200`` 같은 여섯 자리 코드로 준다. 본문
+        API의 ``별표번호``ㆍ``별표가지번호``와 같은 모양으로 풀어 넘겨야
+        ``별표 2``ㆍ``별지 제3호의2서식``으로 읽힌다.
+        """
+        raw = row["raw"] if isinstance(row.get("raw"), dict) else {}
+        decoded = from_annex_code(json_text(raw.get("별표번호")))
+        unit = {
+            "별표구분": raw.get("별표종류"),
+            "별표번호": (
+                str(decoded[0]) if decoded else json_text(raw.get("별표번호"))
+            ),
+            "별표가지번호": (
+                str(decoded[1]) if decoded and decoded[1] else ""
+            ),
+        }
+        return {
+            "label": cls._law_annex_label(unit),
+            "kind": json_text(raw.get("별표종류")),
+            "title": str(row.get("name") or ""),
+            "file_url": full_law_url(raw.get("별표서식파일링크")),
+            "pdf_url": full_law_url(raw.get("별표서식PDF파일링크")),
+        }
+
+    def _save_keyword_article_snapshot(
+        self, tab_row: dict[str, object]
+    ) -> None:
+        """AI추천 줄로 연 조항호목 화면을 그 조문 이름으로 저장한다."""
+        self._save_active_document_state()
+        state = self._document_states.get(
+            self._active_document_key, self._empty_document_state()
+        )
+        self.law_cache.save_snapshot(
+            dict(tab_row),
+            html=str(state.get("html") or ""),
+            plain_text=self.current_detail_text,
+            extra={
+                "toc_entries": list(state.get("toc_entries") or []),
+                "font_size": float(
+                    state.get("font_size") or self.detail_font_size
+                ),
+                "memos": list(state.get("memos") or []),
+            },
+        )
+        self._refresh_cache_checkmarks()
+
     def _show_annex_links(self, row: dict[str, object]) -> None:
+        """별표ㆍ서식 검색 결과를 법령 본문 속 별표 목록과 같게 보여 준다.
+
+        예전에는 내려받기 주소 세 줄만 글자 링크로 늘어놓았다. 지금은 본문
+        아래 별표 목록과 같은 줄(제목ㆍ한글ㆍPDF 아이콘)을 쓰고, 한 건만
+        보는 화면이므로 미리보기를 처음부터 펼쳐 둔다.
+        """
         self._open_document_tab(row, defer_restore=True)
         self._populate_toc([])
         raw = row["raw"] if isinstance(row.get("raw"), dict) else {}
-        file_url = full_law_url(raw.get("별표서식파일링크"))
-        pdf_url = full_law_url(raw.get("별표서식PDF파일링크"))
-        links = [
-            ("원본 첨부파일 다운로드", file_url),
-            ("PDF 다운로드", pdf_url),
-            (
-                "PDF 미리보기",
-                f"pdfpreview:{quote(pdf_url, safe='')}" if pdf_url else "",
-            ),
-        ]
+        entry = self._annex_row_entry(row)
         metadata = [
             ("구분", str(row["label"])),
             ("ID", str(row["id"])),
@@ -9007,22 +9206,29 @@ class ResourceSearchTab(QWidget):
             ("별표종류", json_text(raw.get("별표종류", ""))),
         ]
         html_parts, plain_parts = self._detail_header(str(row["name"]), metadata)
-        html_parts.append("<h2>별표·서식 링크</h2>")
-        available = False
-        for label, url in links:
-            if not url:
-                continue
-            available = True
-            html_parts.append(
-                '<div class="link-item" style="margin:0 0 10px 0;">'
-                f'<a href="{escape(url)}">{escape(label)}</a></div>'
-            )
-            plain_parts.append(f"{label}: {url}")
-        if not available:
-            html_parts.append('<div class="content">제공된 링크가 없습니다.</div>')
-            plain_parts.append("제공된 링크가 없습니다.")
+        # 한 건만 여는 화면이라 미리보기를 처음부터 펼친 상태로 그린다.
+        preview_key = self._annex_preview_key(entry, 0)
+        if entry["pdf_url"] and preview_key not in self._annex_previews:
+            self._annex_previews[preview_key] = {
+                "zoom": self.ANNEX_PREVIEW_DEFAULT_ZOOM,
+                "pages": self.ANNEX_PREVIEW_PAGE_LIMIT,
+                "data": None,
+                "error": "",
+            }
+            self._active_annex_preview_key = preview_key
+        self._append_law_annex_section(html_parts, plain_parts, [entry])
         self._commit_detail(html_parts, plain_parts)
         self._set_three_stage_articles([])
+        # 별표ㆍ서식은 그림 한 장이 곧 본문이다. 좁은 칸에서는 표가 잘려
+        # 읽을 수 없으므로 열자마자 크게 보기로 넘긴다.
+        self._set_reading_mode(True)
+        if entry["pdf_url"]:
+            panel = self._annex_panel_for_key(preview_key)
+            panel.show_loading(self._annex_display_title(entry))
+            self._place_inline_annex_preview()
+            QTimer.singleShot(0, self._place_inline_annex_preview)
+            QTimer.singleShot(50, self._place_inline_annex_preview)
+            self._start_annex_download(preview_key, entry)
         self._save_active_document_state()
         state = self._document_states.get(
             self._active_document_key, self._empty_document_state()
@@ -9062,7 +9268,50 @@ class ResourceSearchTab(QWidget):
         short_name, subtitle = (
             self._law_document_headline(payload) if target == "law" else ("", "")
         )
-        self._open_document_tab(self.pending_row, defer_restore=True)
+        # AI추천 줄은 조문 하나를 답으로 받은 것이다. 두 지능형 API가
+        # 전문을 주지 않아 법령 본문 API로 다시 받을 뿐이므로, 받은 전문을
+        # 통째로 펼치지 않고 찾던 조항호목만 남겨 연다. 전문을 보려면
+        # 목록의 법령 줄을 열면 된다.
+        tab_row = dict(self.pending_row)
+        keyword_unit = (
+            self._keyword_article_unit(self.pending_row)
+            if target == "law"
+            else None
+        )
+        article_text = ""
+        if keyword_unit is not None:
+            article_text = extract_law_article(
+                payload,
+                keyword_unit["jo"],
+                keyword_unit["hang"],
+                keyword_unit["ho"],
+                keyword_unit["mok"],
+            )
+        if article_text:
+            sections = [("조문내용", article_text)]
+            unit_label = self._law_reference_label(
+                keyword_unit["jo"],
+                keyword_unit["hang"],
+                keyword_unit["ho"],
+                keyword_unit["mok"],
+            )
+            tab_row = {
+                "target": "law_article",
+                "id": ":".join(
+                    (
+                        str(self.pending_row.get("id") or ""),
+                        keyword_unit["jo"],
+                        keyword_unit["hang"],
+                        keyword_unit["ho"],
+                        keyword_unit["mok"],
+                    )
+                ),
+                "label": "조항호목",
+                "name": f"{title} {unit_label}".strip(),
+                "source_row": dict(self.pending_row),
+                "favorite_unit": dict(keyword_unit),
+            }
+        self._open_document_tab(tab_row, defer_restore=True)
         self._set_detail_document(
             title,
             metadata,
@@ -9077,7 +9326,12 @@ class ResourceSearchTab(QWidget):
                 else None
             ),
             law_annexes=(
-                self._law_annex_entries(payload) if target == "law" else None
+                # 조문 하나만 연 화면에 그 법령 전체의 별표를 붙이지 않는다.
+                None
+                if article_text
+                else self._law_annex_entries(payload)
+                if target in ("law", "admrul")
+                else None
             ),
         )
         status = (
@@ -9099,6 +9353,11 @@ class ResourceSearchTab(QWidget):
                 status += " · 실행 폴더에 저장됨"
             else:
                 status += f" · 저장 실패: {self.law_cache.last_error}"
+            if article_text:
+                # 목록의 저장 칸이 이 조문 하나만 가리키도록, 법령 전문과
+                # 다른 이름으로 화면을 한 번 더 남긴다. 법령을 즐겨찾기해도
+                # 같은 법령의 다른 조문 줄까지 켜지지 않는다.
+                self._save_keyword_article_snapshot(tab_row)
         elif target in ("admrul", "ordin") and save_cache:
             self._save_active_document_state()
             state = self._document_states.get(
@@ -9127,6 +9386,12 @@ class ResourceSearchTab(QWidget):
                         "administrative_rule_images": self._admin_rule_images(
                             payload
                         ),
+                        # 본문 끝 별첨은 원문 payload에서만 뽑을 수 있다.
+                        # 저장본에는 payload가 없으므로 여기서 함께 담는다.
+                        "annex_entries": [
+                            dict(entry)
+                            for entry in self._law_annex_entries(payload)
+                        ],
                     }
                 )
             if self.law_cache.save_snapshot(
@@ -9469,15 +9734,24 @@ class ResourceSearchTab(QWidget):
         }
         short_name, subtitle = self._law_document_headline(payload)
         self._open_document_tab(tab_row, defer_restore=True)
-        self._set_detail_document(
-            title,
-            metadata,
-            [("조문내용", article_text)],
-            build_toc=True,
-            short_name=short_name,
-            subtitle=subtitle,
-            embedded_images=self._admin_rule_images(payload),
-        )
+        # 본문 옆 조문 별과 3단비교 단추는 지금 화면이 어느 법령인지를
+        # ``pending_row``로 판단한다. 즐겨찾기 목록에서 바로 열면 그 값이
+        # 비어 있어, 조문만 뜨고 별이 하나도 붙지 않았다. 화면을 그리는
+        # 동안 이 조문의 법령을 가리키게 한 뒤 원래대로 돌린다.
+        original_pending_row = self.pending_row
+        self.pending_row = dict(source_row)
+        try:
+            self._set_detail_document(
+                title,
+                metadata,
+                [("조문내용", article_text)],
+                build_toc=True,
+                short_name=short_name,
+                subtitle=subtitle,
+                embedded_images=self._admin_rule_images(payload),
+            )
+        finally:
+            self.pending_row = original_pending_row
         self.status_label.setText(
             f"{tab_row['name']} 저장 본문 열기 완료 · API 호출 없음"
         )
@@ -9615,10 +9889,17 @@ class ResourceSearchTab(QWidget):
 
     @classmethod
     def _law_annex_entries(cls, data: object) -> list[dict[str, str]]:
-        """법령 본문 응답에 같이 든 별표·서식 다운로드 정보를 꺼낸다."""
+        """법령ㆍ행정규칙 본문 응답에 같이 든 별표ㆍ별첨 정보를 꺼낸다.
+
+        행정규칙 응답도 ``AdmRulService`` 아래에 법령과 똑같은 ``별표단위``를
+        담아 준다(``별표구분``만 ``별첨``이다). 그래서 루트만 갈아 끼우고
+        같은 코드로 읽는다.
+        """
         if not isinstance(data, dict):
             return []
         law = data.get("법령")
+        if not isinstance(law, dict):
+            law = data.get("AdmRulService")
         if not isinstance(law, dict):
             return []
         annex = law.get("별표")
@@ -9639,6 +9920,7 @@ class ResourceSearchTab(QWidget):
             entries.append(
                 {
                     "label": cls._law_annex_label(unit),
+                    "kind": json_text(unit.get("별표구분")),
                     "title": title,
                     "file_url": file_url,
                     "pdf_url": pdf_url,
@@ -9819,8 +10101,8 @@ class ResourceSearchTab(QWidget):
         )
         self.pinned_headline.show()
         # 한글 저장은 법령 전문에서만 뜻이 있다. 제목 줄이 뜨는 문서가
-        # 곧 그 대상이다.
-        self.hwp_export_button.show()
+        # 곧 그 대상이다. 지금은 서식을 더 다듬을 때까지 단추를 감춰 둔다.
+        self.hwp_export_button.setVisible(self.HWP_EXPORT_BUTTON_ENABLED)
         self.pinned_headline_bar.show()
 
     def _pinned_headline_parts(self) -> tuple[str, str]:
@@ -10150,7 +10432,7 @@ class ResourceSearchTab(QWidget):
         self._annex_section_entries = list(entries)
         if not entries:
             return
-        section_label = f"별표·서식 ({len(entries)}건)"
+        section_label = f"{self._annex_section_kind(entries)} ({len(entries)}건)"
         section_anchor = "law-annexes"
         # 별표를 펼치고 접을 때 본문 전체를 다시 만들지 않고 이 구간만
         # 갈아 끼운다. 주석 표식은 화면에 보이지 않는다.
@@ -10188,14 +10470,14 @@ class ResourceSearchTab(QWidget):
                 icons.append(
                     f'<a href="{escape(file_url, quote=True)}">'
                     f'<img src="{icon_data_uri(ANNEX_HWP_ICON_PATH)}" '
-                    f'width="16" height="16" {icon_style} alt="원본 내려받기">'
+                    f'width="16" height="19" {icon_style} alt="원본 내려받기">'
                     "</a>"
                 )
             if pdf_url:
                 icons.append(
                     f'<a href="{escape(pdf_url, quote=True)}">'
                     f'<img src="{icon_data_uri(ANNEX_PDF_ICON_PATH)}" '
-                    f'width="16" height="16" {icon_style} alt="PDF 내려받기">'
+                    f'width="16" height="19" {icon_style} alt="PDF 내려받기">'
                     "</a>"
                 )
             icon_html = "&nbsp;".join(icons)
@@ -10252,16 +10534,34 @@ class ResourceSearchTab(QWidget):
         html_parts.append(self.ANNEX_SECTION_END)
 
     @staticmethod
-    def _annex_display_title(entry: dict[str, str]) -> str:
-        """``[별표1] 이름`` 형식으로 맞춘다.
+    def _annex_section_kind(entries: list[dict[str, str]]) -> str:
+        """구간 제목에 쓸 이름. 담긴 종류가 하나면 그 이름을 그대로 쓴다.
 
-        API가 주는 표지는 ``별표 1``ㆍ``별표 1의2``처럼 띄어쓰기가 섞여 있다.
-        묶음표 안에서는 붙여 써야 목록에서 제목이 한눈에 들어온다.
+        행정규칙은 ``별첨``만 오고 법령은 ``별표``ㆍ``별지``가 섞인다.
+        섞였을 때만 두루 이르는 ``별표·서식``으로 부른다.
         """
-        label = str(entry.get("label") or "별표·서식").strip()
+        kinds = {
+            str(entry.get("kind") or "").strip()
+            for entry in entries
+            if str(entry.get("kind") or "").strip()
+        }
+        if len(kinds) == 1:
+            only = kinds.pop()
+            if only == "별첨":
+                return only
+        return "별표·서식"
+
+    @staticmethod
+    def _annex_display_title(entry: dict[str, str]) -> str:
+        """``[별표 1] 이름`` 형식으로 맞춘다.
+
+        API가 주는 표지는 ``별표1``ㆍ``별지제1호서식``처럼 붙여 쓴 것과
+        ``별표 1의2``처럼 띄어 쓴 것이 섞여 있다. 묶음표 안에서도 종류와
+        번호는 한 칸 띄어 ``[별표 1]``ㆍ``[별지 제1호서식]``으로 읽는다.
+        """
+        label = " ".join(str(entry.get("label") or "별표·서식").split())
         title = str(entry.get("title") or "").strip()
-        compact = re.sub(r"\s+", "", label)
-        return f"[{compact}] {title}" if title else f"[{compact}]"
+        return f"[{label}] {title}" if title else f"[{label}]"
 
     @staticmethod
     def _annex_preview_key(entry: dict[str, str], index: int) -> str:

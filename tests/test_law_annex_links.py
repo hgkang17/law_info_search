@@ -133,8 +133,8 @@ def test_annex_links_are_rendered_after_articles(qt_app, tmp_path) -> None:
     # 조문 구간은 제목을 달지 않으므로 첫 조문 글자를 기준으로 본다.
     assert html.index("제1조(목적)") < html.index('<a name="law-annexes">')
     # 제목을 누르면 그 자리에서 펼쳐지고, 내려받기는 오른쪽 작은 표시로 연다.
-    assert "[별표1] 시험 기준(제1조 관련)" in html
-    assert "[별지제2호의3서식] 시험 신청서" in html
+    assert "[별표 1] 시험 기준(제1조 관련)" in html
+    assert "[별지 제2호의3서식] 시험 신청서" in html
     assert 'href="annex:0"' in html
     # 펼침 표시는 글자가 아니라 단추 모양 그림이다. 그림은 파일 경로가
     # 아니라 주소 안에 담아 넣는다. 저장본을 다음 실행에서 열 때
@@ -163,7 +163,7 @@ def test_annex_links_are_rendered_after_articles(qt_app, tmp_path) -> None:
     assert "annex-item-1" in anchors
     labels = {anchor: label for _depth, label, anchor in toc}
     assert labels["law-annexes"] == "별표·서식 (2건)"
-    assert labels["annex-item-0"] == "[별표1] 시험 기준(제1조 관련)"
+    assert labels["annex-item-0"] == "[별표 1] 시험 기준(제1조 관련)"
     tab.close()
 
 
@@ -333,7 +333,7 @@ def test_annex_section_split_finds_saved_html_without_comments() -> None:
     source = (
         '<h1>시험법</h1>'
         '<a name="law-annexes"></a>'
-        '<div class="content">[별표1]</div>'
+        '<div class="content">[별표 1]</div>'
     )
     head, tail = ResourceSearchTab._split_annex_section_html(source)
     assert head.endswith("<h1>시험법</h1>")

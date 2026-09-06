@@ -66,6 +66,7 @@ from PySide6.QtWidgets import (
     QStyledItemDelegate,
     QStyleOptionViewItem,
     QSplitter,
+    QSplitterHandle,
     QTableWidget,
     QTabBar,
     QTextBrowser,
@@ -86,6 +87,7 @@ from PySide6.QtWidgets import (
 )
 from storage.recent import RecentSearchManager
 from ui.assets import CLOSE_MARK_ICON_PATH
+from ui.theme import ui_font
 from utils.constants import (
     DEFAULT_DETAIL_FONT_POINT,
     DETAIL_FONT_DEFAULTS_VERSION,
@@ -111,13 +113,18 @@ def draw_favorite_star(
     center = rect.center()
     radius = max(3.0, min(rect.width(), rect.height()) * 0.32)
     inner = radius * 0.45
+    # 오각별은 위 꼭짓점이 ``-radius``까지 뻗는데 아래 두 꼭짓점은
+    # ``+0.809 × radius``에서 멈춘다. 그래서 기하 중심에 그리면 칠해지는
+    # 부분이 위로 치우쳐, 옆 칸의 체크 표시나 글자보다 별만 올라가 보인다.
+    # 실제로 칠해지는 위아래 범위의 가운데를 칸 가운데에 맞춘다.
+    center_y = center.y() + radius * (1.0 - sin(pi * 0.3)) / 2.0
     path = QPainterPath()
     for index in range(10):
         angle = -pi / 2 + index * pi / 5
         distance = radius if index % 2 == 0 else inner
         point = QPointF(
             center.x() + cos(angle) * distance,
-            center.y() + sin(angle) * distance,
+            center_y + sin(angle) * distance,
         )
         if index == 0:
             path.moveTo(point)
@@ -563,6 +570,121 @@ def configure_expanding_column(
     return manager
 
 
+class _CollapseAwareHandle(QSplitterHandle):
+    """옆 칸이 접히면 그 자리를 눈에 띄게 그리는 분할선 손잡이."""
+
+    # 접힌 쪽을 알리는 색과 화살촉 크기.
+    MARK_COLOR = "#8c93a0"
+    MARK_BACKGROUND = "#dfe3ea"
+    MARK_SIZE = 4
+    # 두 번 눌러 되살릴 때 접힌 칸에 줄 폭.
+    RESTORE_SIZE = 180
+
+    def _neighbours(self) -> tuple[int, int, list[int]]:
+        splitter = self.splitter()
+        sizes = splitter.sizes()
+        for index in range(1, splitter.count()):
+            if splitter.handle(index) is self:
+                return index - 1, index, sizes
+        return -1, -1, sizes
+
+    def _collapsed_side(self) -> int:
+        """왼쪽(-1)ㆍ오른쪽(1)ㆍ없음(0) 중 접힌 쪽."""
+        before, after, sizes = self._neighbours()
+        if before < 0 or after >= len(sizes):
+            return 0
+        if sizes[before] == 0:
+            return -1
+        if sizes[after] == 0:
+            return 1
+        return 0
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        side = self._collapsed_side()
+        if not side:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        rect = self.rect()
+        painter.fillRect(rect, QColor(self.MARK_BACKGROUND))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(self.MARK_COLOR))
+        middle = rect.center()
+        size = self.MARK_SIZE
+        # 접힌 칸이 있는 쪽을 가리키는 작은 삼각형. 여기를 끌거나 두 번
+        # 누르면 숨은 칸이 다시 나온다는 표시다.
+        if self.orientation() == Qt.Orientation.Horizontal:
+            tip_x = middle.x() + (size if side < 0 else -size)
+            points = [
+                QPointF(tip_x, middle.y()),
+                QPointF(middle.x() - (size if side < 0 else -size), middle.y() - size),
+                QPointF(middle.x() - (size if side < 0 else -size), middle.y() + size),
+            ]
+        else:
+            tip_y = middle.y() + (size if side < 0 else -size)
+            points = [
+                QPointF(middle.x(), tip_y),
+                QPointF(middle.x() - size, middle.y() - (size if side < 0 else -size)),
+                QPointF(middle.x() + size, middle.y() - (size if side < 0 else -size)),
+            ]
+        painter.drawPolygon(points)
+        painter.end()
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        """접힌 칸은 두 번 눌러 되살린다."""
+        side = self._collapsed_side()
+        if not side:
+            super().mouseDoubleClickEvent(event)
+            return
+        before, after, sizes = self._neighbours()
+        target = before if side < 0 else after
+        donor = after if side < 0 else before
+        room = min(self.RESTORE_SIZE, max(0, sizes[donor] - 80))
+        if room <= 0:
+            super().mouseDoubleClickEvent(event)
+            return
+        sizes[target] = room
+        sizes[donor] -= room
+        self.splitter().setSizes(sizes)
+        self.update()
+
+
+class CollapseAwareSplitter(QSplitter):
+    """칸을 0까지 줄여 감췄을 때 그 자리를 남기는 분할 화면.
+
+    즐겨찾기처럼 칸이 여럿인 화면에서 폭을 끝까지 줄이면 칸이 통째로
+    사라져, 무엇이 숨었는지도 어디를 끌어야 다시 나오는지도 알 수 없었다.
+    접힌 쪽 손잡이에 삼각형을 그려 두고, 두 번 누르면 되살린다.
+    """
+
+    def createHandle(self) -> QSplitterHandle:
+        handle = _CollapseAwareHandle(self.orientation(), self)
+        handle.setToolTip(
+            "칸 경계입니다. 끌어서 넓히거나 좁히고, 접힌 칸은 두 번 눌러 "
+            "되살립니다."
+        )
+        return handle
+
+    def setSizes(self, sizes) -> None:
+        super().setSizes(sizes)
+        self._refresh_handles()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._refresh_handles()
+
+    def moveSplitter(self, position: int, index: int) -> None:
+        super().moveSplitter(position, index)
+        self._refresh_handles()
+
+    def _refresh_handles(self) -> None:
+        for index in range(1, self.count()):
+            handle = self.handle(index)
+            if handle is not None:
+                handle.update()
+
+
 def configure_horizontal_splitter(splitter: QSplitter) -> None:
     """분할선에서 좌우 드래그 커서와 사용 안내를 명확히 표시."""
     splitter.setHandleWidth(10)
@@ -831,17 +953,70 @@ class SearchResultHead:
     refresh: QPushButton
 
 
+def flowing_glow_text(
+    text: str,
+    step: int,
+    *,
+    idle_color: str,
+    active_color: str,
+    spread: float,
+) -> str:
+    """글자마다 밝기를 달리해 빛이 왼쪽에서 오른쪽으로 흐르게 그린다.
+
+    ``step``을 1씩 올려 다시 부르면 밝은 자리가 한 칸씩 옮겨 간다. 결과표
+    한가운데의 "검색 중"과 시작 화면의 기다림 문구가 같은 결로 움직이도록
+    두 화면이 이 함수를 함께 쓴다.
+    """
+    span = max(1, len(text))
+    start = QColor(idle_color)
+    end = QColor(active_color)
+    pieces: list[str] = []
+    for index, character in enumerate(text):
+        distance = (index - step) % span
+        if distance > span / 2:
+            distance = span - distance
+        weight = max(0.0, 1.0 - distance / spread)
+        color = QColor(
+            round(start.red() + (end.red() - start.red()) * weight),
+            round(start.green() + (end.green() - start.green()) * weight),
+            round(start.blue() + (end.blue() - start.blue()) * weight),
+        )
+        # 리치 텍스트는 이어진 공백을 하나로 줄인다. 문구 안의 공백은
+        # 자리를 지키도록 그대로 넣는다.
+        shown = "&nbsp;" if character == " " else escape(character)
+        pieces.append(f'<span style="color:{color.name()};">{shown}</span>')
+    return "".join(pieces)
+
+
 class ResultOverlayLabel(QLabel):
     """빈 결과와 검색 진행 상태를 표 가운데에서 짧게 강조해 보여준다."""
 
+    # 아직 한 번도 찾아보지 않은 표와, 찾았는데 없는 표를 다른 말로
+    # 구분한다. 둘 다 "검색 결과가 없습니다."이면 프로그램을 막 켰을 때와
+    # 검색이 헛친 때를 가릴 수 없다.
+    IDLE_MESSAGE = "검색어를 입력하세요."
+    EMPTY_MESSAGE = "검색 결과가 없습니다."
+
     DOT_COUNT = 3
-    DOT_INTERVAL_MS = 280
-    DOT_ACTIVE_COLOR = "#2f6fb5"
-    DOT_IDLE_COLOR = "#c3ccd6"
+    DOT_INTERVAL_MS = 130
+    # 빛이 지나가는 자리는 화면의 강조 파랑, 지나간 자리도 본문 글자만큼
+    # 또렷하게 남긴다. 옅은 회색으로 두었더니 문구 대부분이 배경에 묻혔다.
+    DOT_ACTIVE_COLOR = "#1f57c8"
+    DOT_IDLE_COLOR = "#93a3b8"
+    # 검색이 도는 동안만 글자를 키운다. 표 한가운데에서 멀리서도 눈에
+    # 들어와야 지금 무슨 일이 벌어지는지 알 수 있다.
+    BUSY_FONT_SIZE_PX = 15
+    # 밝은 빛이 번지는 폭(글자 수). 좁으면 한 글자만 깜빡이고, 넓으면
+    # 문구 전체가 함께 밝아져 흐르는 느낌이 사라진다.
+    GLOW_SPREAD = 3.5
 
     def __init__(self, viewport: QWidget) -> None:
-        super().__init__("검색 결과가 없습니다.", viewport)
+        super().__init__(self.IDLE_MESSAGE, viewport)
         self.setObjectName("resultEmptyNotice")
+        # 화면 UI 글꼴 한 벌을 그대로 쓴다(힌팅 끔). 스타일시트로는 힌팅을
+        # 정할 수 없어서, 글자를 키운 "검색 중" 표시만 획이 화소에 눌려
+        # 다른 안내 문구와 굵기가 달라 보였다.
+        self.setFont(ui_font())
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self._opacity = QGraphicsOpacityEffect(self)
@@ -851,11 +1026,13 @@ class ResultOverlayLabel(QLabel):
         self._pulse.setStartValue(0.35)
         self._pulse.setEndValue(1.0)
         self._pulse.setEasingCurve(QEasingCurve.Type.OutCubic)
-        # 진행 중임을 알리는 점 애니메이션. 점 개수를 늘렸다 줄이면 글자
-        # 폭이 바뀌어 가운데 문구가 좌우로 흔들린다. 점은 늘 세 개를
-        # 그려 두고 밝기만 차례로 옮겨 흐르는 것처럼 보이게 한다.
+        # 진행 중임을 알리는 애니메이션. 점 개수를 늘렸다 줄이면 글자
+        # 폭이 바뀌어 가운데 문구가 좌우로 흔들린다. 점은 늘 같은 수를
+        # 그려 두고 밝기만 차례로 옮긴다. 밝기는 문구 글자까지 함께
+        # 훑어 지나가서 빛이 왼쪽에서 오른쪽으로 흐르는 것처럼 보인다.
         self._dot_base = ""
         self._dot_step = 0
+        self._glow_span = 1
         self._dot_timer = QTimer(self)
         self._dot_timer.setInterval(self.DOT_INTERVAL_MS)
         self._dot_timer.timeout.connect(self._advance_dots)
@@ -890,21 +1067,23 @@ class ResultOverlayLabel(QLabel):
             self._pulse.start()
 
     def _advance_dots(self) -> None:
-        self._dot_step = (self._dot_step + 1) % self.DOT_COUNT
+        self._dot_step = (self._dot_step + 1) % max(1, self._glow_span)
         self._render_dots()
 
     def _render_dots(self) -> None:
-        dots = "".join(
-            '<span style="color:{color};">.</span>'.format(
-                color=(
-                    self.DOT_ACTIVE_COLOR
-                    if index == self._dot_step
-                    else self.DOT_IDLE_COLOR
-                )
-            )
-            for index in range(self.DOT_COUNT)
+        text = f"{self._dot_base}{'.' * self.DOT_COUNT}"
+        self._glow_span = max(1, len(text))
+        body = flowing_glow_text(
+            text,
+            self._dot_step,
+            idle_color=self.DOT_IDLE_COLOR,
+            active_color=self.DOT_ACTIVE_COLOR,
+            spread=self.GLOW_SPREAD,
         )
-        self.setText(f"{escape(self._dot_base)}{dots}")
+        self.setText(
+            f'<span style="font-size:{self.BUSY_FONT_SIZE_PX}px; '
+            f'font-weight:600;">{body}</span>'
+        )
 
     def clear_message(self) -> None:
         self._pulse.stop()
@@ -973,6 +1152,17 @@ def close_hovered_reference_popup(owner) -> bool:
         except RuntimeError:
             continue
     return False
+
+
+# 결과표 제목 줄 높이. 화면마다 표 글꼴이 달라(통합검색만 9pt) 그대로
+# 두면 제목 줄이 2px 낮아, 탭을 옮길 때 표 머리와 그 아래 첫 줄이 위아래로
+# 흔들린다. 글꼴과 무관하게 같은 높이로 못박는다.
+RESULT_HEADER_HEIGHT = 33
+
+
+def apply_result_header_height(table: QTableWidget) -> None:
+    """결과표 제목 줄을 모든 화면에서 같은 높이로 맞춘다."""
+    table.horizontalHeader().setFixedHeight(RESULT_HEADER_HEIGHT)
 
 
 class ResultHeaderView(QHeaderView):
@@ -1103,6 +1293,10 @@ class PairedCategoryBar(QWidget):
         button.setCheckable(True)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.setFixedHeight(self.FRAME_HEIGHT - self.TRACK_PADDING * 2)
+        # 분류는 키보드로도 옮겨 다닌다. Tabㆍ←ㆍ→ 를 이 바가 직접 받아
+        # 다음 분류를 고르고 그 화면까지 바꾼다.
+        button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        button.installEventFilter(self)
         index = len(self._buttons)
         self._buttons.append(button)
         self._tab_data.append(None)
@@ -1151,6 +1345,30 @@ class PairedCategoryBar(QWidget):
             return
         self._current_index = index
         self.currentChanged.emit(index)
+
+    # 키보드로 분류를 옮길 때 쓰는 키. Tab은 오른쪽, Shift+Tab(Backtab)은
+    # 왼쪽이다. 브라우저 탭처럼 옮기는 즉시 그 화면이 열린다.
+    _FORWARD_KEYS = (Qt.Key.Key_Tab, Qt.Key.Key_Right)
+    _BACKWARD_KEYS = (Qt.Key.Key_Backtab, Qt.Key.Key_Left)
+
+    def eventFilter(self, watched, event) -> bool:
+        if (
+            event.type() == QEvent.Type.KeyPress
+            and watched in self._buttons
+        ):
+            key = event.key()
+            if key in self._FORWARD_KEYS or key in self._BACKWARD_KEYS:
+                step = 1 if key in self._FORWARD_KEYS else -1
+                target = self._buttons.index(watched) + step
+                # 양 끝에서는 가로채지 않는다. 그래야 Tab이 이 바를 벗어나
+                # 검색칸으로 이어져, 키보드만으로도 갇히지 않는다.
+                if 0 <= target < len(self._buttons):
+                    self.setCurrentIndex(target)
+                    self._buttons[target].setFocus(
+                        Qt.FocusReason.TabFocusReason
+                    )
+                    return True
+        return super().eventFilter(watched, event)
 
 
 class StatusLine:
@@ -1229,20 +1447,13 @@ class SharedStatusBar(QFrame):
         layout.setSpacing(10)
         self.label = QLabel("")
         self.label.setObjectName("mutedText")
-        self.progress = QProgressBar()
-        self.progress.setRange(0, 0)
-        self.progress.setFixedSize(120, 8)
-        self.progress.setTextVisible(False)
-        # 껐다 켜면 상태줄 폭이 바뀌어 그 위 본문까지 흔들린다. 자리는 늘
-        # 차지하되 투명도만 조절한다.
-        self._opacity = QGraphicsOpacityEffect(self.progress)
-        self._opacity.setOpacity(0.0)
-        self.progress.setGraphicsEffect(self._opacity)
+        # 진행 막대는 두지 않는다. 검색이 도는 동안은 결과 표 한가운데의
+        # "검색 중" 표시가 알려 주므로, 창 아래에서 파란 막대가 따로
+        # 오가면 눈길만 둘로 갈린다.
         layout.addWidget(self.label, 1)
         # 상태 문구를 숨겨도 오른쪽 도구들이 가운데로 당겨지지 않게 하는
         # 독립적인 탄성 여백이다.
         layout.addStretch(1)
-        layout.addWidget(self.progress, 0)
         self._layout = layout
         self._active: StatusLine | None = None
         self._owners: dict[QWidget, StatusLine] = {}
@@ -1273,8 +1484,6 @@ class SharedStatusBar(QFrame):
         self.label.setText(line.text())
         self.label.setToolTip(line.toolTip())
         self.label.setVisible(line.isVisible())
-        self.progress.setVisible(line.isVisible())
-        self._opacity.setOpacity(line.opacity())
 
     def eventFilter(self, watched, event) -> bool:
         if event.type() == QEvent.Type.Show:
@@ -1584,6 +1793,31 @@ class DeferredWrapTextBrowser(QTextBrowser):
         # Qt 기본 문서 여백 4px은 글자가 테두리에 붙어 보인다. 본문을 쓰는
         # 세 화면이 모두 이 클래스를 쓰므로 여기서 한 번만 넓혀 둔다.
         self.document().setDocumentMargin(DETAIL_DOCUMENT_MARGIN)
+
+    def keyPressEvent(self, event) -> None:
+        """읽기만 하는 본문이라 Homeㆍ End를 문서 처음ㆍ끝으로 쓴다.
+
+        Qt 기본값은 줄의 처음ㆍ끝이고 문서 처음ㆍ끝은 Ctrl과 함께 눌러야
+        한다. 글을 고치지 않는 화면에서 줄 끝으로 가는 일은 없으므로,
+        긴 법령을 한 번에 오르내리는 쪽에 그 키를 준다. Ctrl을 함께 눌러도
+        같게 동작한다.
+        """
+        if event.key() in (Qt.Key.Key_Home, Qt.Key.Key_End) and not (
+            event.modifiers()
+            & (
+                Qt.KeyboardModifier.ShiftModifier
+                | Qt.KeyboardModifier.AltModifier
+            )
+        ):
+            scroll_bar = self.verticalScrollBar()
+            scroll_bar.setValue(
+                scroll_bar.minimum()
+                if event.key() == Qt.Key.Key_Home
+                else scroll_bar.maximum()
+            )
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def createMimeDataFromSelection(self):
         # 드래그 복사ㆍCtrl+Cㆍ우클릭 복사가 모두 이 경로를 지나므로,

@@ -1,4 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="-15 0 190 196" width="20" height="20">
+<!-- 아래 여백은 일부러 비워 둔 자리다. 별표 목록 줄에서 아이콘을
+     글자 높이보다 3px쯤 위로 올려, 글자와 아이콘의 가운데가
+     눈으로 보기에 맞게 한다. HTML에서 height를 19로 그린다. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-15 0 190 225.6" width="20" height="23.75">
   <title>PDF 다운로드 아이콘</title>
 
   <!-- 문서 외곽 -->

@@ -935,8 +935,14 @@ def insert_admin_clause_breaks(text: str) -> str:
             if _HEADING_RANGE_TAIL_PATTERN.match(line, match.end()):
                 # ``제1장부터 제3장까지``는 제목이 아니라 범위 인용이다.
                 continue
-            prefix = line[segment_start : match.start()].strip()
             previous_character = line[match.start() - 1]
+            if previous_character in "편장절관":
+                # ``제4편제2장제4절``처럼 표지가 잇달아 붙은 것은 조문
+                # 인용이다. 편ㆍ장ㆍ절 제목은 저마다 이름을 달고 있어
+                # 표지끼리 곧바로 붙지 않는다. 여기서 자르면 부칙 본문
+                # 한 줄이 표지마다 토막 난다.
+                continue
+            prefix = line[segment_start : match.start()].strip()
             if (
                 prefix.endswith(".")
                 or prefix.endswith("삭제")

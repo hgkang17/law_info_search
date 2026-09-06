@@ -6,6 +6,7 @@ from ui.assets import (
     FAVORITE_PLUS_ICON_PATH,
 )
 from ui.widgets import (
+    CollapseAwareSplitter,
     DropdownComboBox,
     FavoriteCategoryTree,
     FAVORITE_PROJECT_MIME,
@@ -371,9 +372,10 @@ class ViewedLawsTab(QWidget):
             cards_layout = QHBoxLayout(cards)
             cards_layout.setContentsMargins(0, 0, 0, 0)
             cards_layout.setSpacing(0)
-            splitter = QSplitter(Qt.Orientation.Horizontal)
+            # 칸을 0까지 줄여도 그 자리가 손잡이에 남는 분할 화면을 쓴다.
+            splitter = CollapseAwareSplitter(Qt.Orientation.Horizontal)
             splitter.setChildrenCollapsible(True)
-            splitter.setHandleWidth(5)
+            splitter.setHandleWidth(7)
             for category, label in self.FAVORITE_CATEGORIES:
                 card = QFrame()
                 card.setObjectName("favoriteCategoryCard")
@@ -502,10 +504,12 @@ class ViewedLawsTab(QWidget):
             union_layout.setSpacing(4)
             union_label = QLabel("즐겨찾기 모아보기")
             union_label.setObjectName("favoriteUnionLabel")
-            self.union_splitter = QSplitter(Qt.Orientation.Horizontal)
+            self.union_splitter = CollapseAwareSplitter(
+                Qt.Orientation.Horizontal
+            )
             self.union_splitter.setObjectName("favoriteUnionSplitter")
             self.union_splitter.setChildrenCollapsible(True)
-            self.union_splitter.setHandleWidth(5)
+            self.union_splitter.setHandleWidth(7)
             for category, _label in self.FAVORITE_CATEGORIES:
                 column = QWidget()
                 column.setObjectName("favoriteUnionColumn")

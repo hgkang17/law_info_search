@@ -40,6 +40,7 @@ from ui.widgets import (
     prompt_oc_api_key,
     replace_search_term_backgrounds,
     configure_adaptive_result_rows,
+    apply_result_header_height,
     configure_horizontal_splitter,
     resize_adaptive_result_rows,
     restore_text_view_scroll,
@@ -132,6 +133,10 @@ class AiLawSearchTab(QWidget):
         self._reading_mode = False
         self._sort_column = -1
         self._sort_ascending = True
+        # 아직 한 번도 찾아보지 않은 표에는 결과가 없다는 말 대신 무엇을
+        # 하라는 안내를 띄운다. 켜자마자 "검색 결과가 없습니다."가 떠 있으면
+        # 검색이 실제로 돌았는지 알 수 없다.
+        self._search_performed = False
         self._normal_window_margins: tuple[int, int, int, int] | None = None
         self.ai_chat_panel: AiChatPanel | None = None
         # 조문 참조 팝업과 3단비교는 법령검색 탭이 이미 갖고 있으므로
@@ -292,6 +297,7 @@ class AiLawSearchTab(QWidget):
         self.result_table.setItemDelegateForColumn(3, self.name_delegate)
         self.result_table.verticalHeader().setVisible(False)
         configure_adaptive_result_rows(self.result_table, (2, 3))
+        apply_result_header_height(self.result_table)
         table_header = self.result_table.horizontalHeader()
         table_header.setStretchLastSection(False)
         # 자동 맞춤ㆍ늘림 모드는 헤더 경계를 끌어도 폭을 곧바로 되돌린다.
@@ -510,6 +516,10 @@ class AiLawSearchTab(QWidget):
 
         self.reading_mode_shortcut = QShortcut(QKeySequence("F11"), self)
         self.reading_mode_shortcut.activated.connect(self._toggle_reading_mode)
+        # 빈 표만 있는 첫 화면에서 무엇을 하면 되는지 알려 준다.
+        self.result_empty_label.show_message(
+            self.result_empty_label.IDLE_MESSAGE, pulse=False
+        )
 
     def _show_detail_split(self) -> None:
         """검색 목록 오른쪽에 직접검색·연관검색 본문 칸을 연다."""
@@ -689,19 +699,16 @@ class AiLawSearchTab(QWidget):
             category_tabs = getattr(host, "category_tabs", None)
             if category_tabs is not None:
                 category_tabs.setVisible(not expanded)
-            host_layout = getattr(host, "root_layout", None)
-            if host_layout is not None:
-                host_layout.setContentsMargins(
-                    0 if expanded else 12,
-                    0,
-                    0 if expanded else 12,
-                    0,
-                )
+            apply_body_margins = getattr(host, "apply_body_margins", None)
+            if callable(apply_body_margins):
+                apply_body_margins(expanded)
 
         if central_layout is not None:
-            if expanded:
-                central_layout.setContentsMargins(6, 6, 6, 6)
-            elif self._normal_window_margins is not None:
+            # 크게 보기에서도 창 가장자리 여백은 두지 않는다. 6px을 주면
+            # 머리글(열린 본문 탭) 바탕 바깥으로 회색 띠가 한 겹 돌아
+            # 창 안에 창이 하나 더 있는 것처럼 보였다. 다른 화면의 크게
+            # 보기도 창 여백을 건드리지 않고 원래대로 둔다.
+            if self._normal_window_margins is not None:
                 central_layout.setContentsMargins(*self._normal_window_margins)
         self.root_layout.setContentsMargins(0, 0, 0, 0)
 
@@ -1274,7 +1281,17 @@ class AiLawSearchTab(QWidget):
     def start_search(self, *_args: object, force_api: bool = False) -> None:
         query = self.query_input.text().strip()
         if not query:
-            QMessageBox.information(self, "검색어 확인", "키워드를 입력해 주세요.")
+            # 빈 칸으로 검색을 눌렀다고 상자를 띄워 길을 막지 않는다.
+            # 찾은 것이 없을 때와 같은 자리에 같은 말을 띄우고, 커서만
+            # 검색칸으로 돌려준다.
+            self.result_table.setRowCount(0)
+            self.result_rows.clear()
+            self.result_count.setText("0건")
+            self._search_performed = True
+            self.result_empty_label.show_message(
+                self.result_empty_label.EMPTY_MESSAGE
+            )
+            self.status_label.setText("검색 결과가 없습니다.")
             self.query_input.setFocus()
             return
 
@@ -1287,6 +1304,7 @@ class AiLawSearchTab(QWidget):
         self.result_table.setRowCount(0)
         self.result_rows.clear()
         self.result_count.setText("0건")
+        self._search_performed = True
         self.result_empty_label.show_message("검색 중", animate_dots=True)
         self.detail_view.clear()
         self.current_detail_text = ""
@@ -1584,8 +1602,12 @@ class AiLawSearchTab(QWidget):
             self.result_empty_label.clear_message()
             self.result_table.selectRow(0)
         else:
-            self.result_empty_label.show_message("검색 결과가 없습니다.")
-            self.detail_view.setPlainText("검색 결과가 없습니다.")
+            self.result_empty_label.show_message(
+                self.result_empty_label.EMPTY_MESSAGE
+            )
+            self.detail_view.setPlainText(
+                self.result_empty_label.EMPTY_MESSAGE
+            )
 
     def _render_result_rows(self) -> None:
         """result_rows 차례 그대로 표를 다시 그린다."""
@@ -1781,6 +1803,27 @@ class AiLawSearchTab(QWidget):
             mok=target["mok"],
         )
         self.result_table.viewport().update()
+        if not removing:
+            self._save_row_for_favorite(row_index)
+
+    def _save_row_for_favorite(self, row_index: int) -> None:
+        """즐겨찾기를 건 조문의 저장본까지 함께 만든다.
+
+        조문 즐겨찾기는 그 법령 저장본 안에 얹히지만, 목록의 저장 칸은
+        이 조문 자체의 저장본을 본다. 그래서 별만 켜고 저장 칸은 빈 채로
+        남아, 본문을 한 번 열었다 나와야 체크가 되던 자리다. 저장 칸을
+        직접 켤 때와 같은 길로 본문을 받아 저장한다.
+        """
+        if not (0 <= row_index < len(self.result_rows)):
+            return
+        row = self.result_rows[row_index]
+        if self.law_cache.has_snapshot(row):
+            return
+        self.result_table.selectRow(row_index)
+        if self.is_related and not row.get("content"):
+            self._request_related_article(row_index, row)
+            return
+        self._show_selected_result(force_live=True)
 
     def _refresh_favorite_stars(self) -> None:
         """저장ㆍ즐겨찾기가 바뀌면 목록의 별을 다시 그린다."""
