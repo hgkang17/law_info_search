@@ -1439,10 +1439,13 @@ class PairedCategoryBar(QWidget):
             key = event.key()
             if key in self._FORWARD_KEYS or key in self._BACKWARD_KEYS:
                 step = 1 if key in self._FORWARD_KEYS else -1
-                target = self._buttons.index(watched) + step
-                # 양 끝에서는 가로채지 않는다. 그래야 Tab이 이 바를 벗어나
-                # 검색칸으로 이어져, 키보드만으로도 갇히지 않는다.
-                if 0 <= target < len(self._buttons):
+                # 분류 사이만 오간다. 끝에서 한 번 더 누르면 반대쪽 끝으로
+                # 돌아온다. Tab이 바를 벗어나 검색칸으로 새면 분류를 훑어
+                # 보려다 엉뚱한 칸에 커서가 가 있곤 했다.
+                if self._buttons:
+                    target = (
+                        self._buttons.index(watched) + step
+                    ) % len(self._buttons)
                     self.setCurrentIndex(target)
                     self._buttons[target].setFocus(
                         Qt.FocusReason.TabFocusReason

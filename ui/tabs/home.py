@@ -41,8 +41,8 @@ class HomeSearchPage(QWidget):
     # 기다리는 동안 이 화면에 그대로 머물며 보여 주는 문구. 결과가 다
     # 나온 뒤에 법령검색 화면으로 넘어간다. 무엇을 찾는 중인지 그대로
     # 되뇌어 주면, 같은 시간도 덜 길게 느껴진다.
-    BUSY_TITLE = "‘{query}’ 찾는 중"
-    BUSY_TITLE_FALLBACK = "찾는 중"
+    BUSY_TITLE = "‘{query}’ 찾는 중..."
+    BUSY_TITLE_FALLBACK = "찾는 중..."
     BUSY_HINT = "법령ㆍ행정규칙ㆍ자치법규와 AI 추천 조문을 함께 모으고 있습니다."
     # 검색어가 길면 제목이 화면 밖으로 밀린다. 넘치면 끝을 줄인다.
     BUSY_QUERY_LIMIT = 18
