@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 
 from ui.assets import HOME_ANIMATION_PATH, LOGO_PATH
 from ui.theme import ui_font
-from ui.widgets import RecentSearchBar, SearchProgressBar
+from ui.widgets import RecentSearchBar, SearchProgressBar, ShimmerTextLabel
 
 
 class HomeSearchPage(QWidget):
@@ -98,7 +98,8 @@ class HomeSearchPage(QWidget):
                     )
                 )
 
-        self.title_label = QLabel(self.IDLE_TITLE)
+        # 기다리는 동안 제목(찾는 말까지 한 줄로) 위로 빛이 흐른다.
+        self.title_label = ShimmerTextLabel(self.IDLE_TITLE)
         self.title_label.setObjectName("homeTitle")
         # 화면 UI 글꼴 한 벌(힌팅 끔)을 그대로 쓴다. 스타일시트로는 힌팅을
         # 정할 수 없어, 큰 글씨인 이 줄만 획이 뭉개져 보였다.
@@ -186,12 +187,14 @@ class HomeSearchPage(QWidget):
         self.search_button.setEnabled(False)
         self.recent_search_bar.setEnabled(False)
         self.title_label.setText(self._busy_title(query))
+        self.title_label.start_shimmer()
         self.hint_label.setText(self.BUSY_HINT)
         self.progress_bar.start()
 
     def end_search(self) -> None:
         """검색이 끝나 화면을 넘길 때 원래 모습으로 되돌린다."""
         self.progress_bar.stop()
+        self.title_label.stop_shimmer()
         self._searching = False
         self.query_input.setEnabled(True)
         self.search_button.setEnabled(True)

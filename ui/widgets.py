@@ -991,6 +991,89 @@ def flowing_glow_text(
     return "".join(pieces)
 
 
+class ShimmerTextLabel(QLabel):
+    """기다리는 동안 글자 위로 밝은 띠가 지나가는 제목.
+
+    글자마다 색을 달리 칠하면 칸칸이 끊겨 계단처럼 보인다. 글자 전체에
+    좌우 그라디언트를 입히고 그 위치만 옮기면 빛이 매끄럽게 훑고 지나간다.
+    평소에는 보통 라벨과 똑같이 그리고, 시작할 때만 이 그리기로 바꾼다.
+    """
+
+    BASE_COLOR = "#242529"
+    SHIMMER_COLOR = "#1f57c8"
+    CYCLE_MS = 1600
+    # 밝은 띠가 글자 폭에서 차지하는 몫. 좁으면 점처럼 튀고 넓으면
+    # 글자 전체가 함께 밝아져 흐르는 느낌이 사라진다.
+    BAND = 0.26
+
+    def __init__(self, text: str = "", parent=None) -> None:
+        super().__init__(text, parent)
+        self._shimmering = False
+        self._phase = 0.0
+        self._animation = QVariantAnimation(self)
+        self._animation.setStartValue(-self.BAND)
+        self._animation.setEndValue(1.0 + self.BAND)
+        self._animation.setDuration(self.CYCLE_MS)
+        self._animation.setEasingCurve(QEasingCurve.Type.InOutSine)
+        self._animation.setLoopCount(-1)
+        self._animation.valueChanged.connect(self._advance)
+
+    def _advance(self, value: object) -> None:
+        try:
+            self._phase = float(value)
+        except (TypeError, ValueError):
+            self._phase = 0.0
+        self.update()
+
+    def start_shimmer(self) -> None:
+        self._shimmering = True
+        if self._animation.state() != QVariantAnimation.State.Running:
+            self._animation.start()
+        self.update()
+
+    def stop_shimmer(self) -> None:
+        self._animation.stop()
+        self._shimmering = False
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        if not self._shimmering:
+            super().paintEvent(event)
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        painter.setFont(self.font())
+        rect = self.rect()
+        # 그라디언트는 라벨 폭이 아니라 글자가 실제로 차지하는 폭에 건다.
+        # 라벨은 가운데 정렬이라 좌우에 빈자리가 넓은데, 거기까지 걸면
+        # 빛이 여백을 지나는 동안 아무 일도 없어 보인다.
+        metrics = QFontMetrics(self.font())
+        text_width = min(
+            float(rect.width()),
+            float(metrics.horizontalAdvance(self.text())),
+        )
+        left = rect.left() + (rect.width() - text_width) / 2.0
+        gradient = QLinearGradient(
+            QPointF(left, 0.0), QPointF(left + text_width, 0.0)
+        )
+        base = QColor(self.BASE_COLOR)
+        glow = QColor(self.SHIMMER_COLOR)
+        gradient.setColorAt(0.0, base)
+        gradient.setColorAt(1.0, base)
+        for offset, color in (
+            (-self.BAND, base),
+            (0.0, glow),
+            (self.BAND, base),
+        ):
+            position = self._phase + offset
+            if 0.0 < position < 1.0:
+                gradient.setColorAt(position, color)
+        painter.setPen(QPen(QBrush(gradient), 1))
+        painter.drawText(rect, int(self.alignment()), self.text())
+        painter.end()
+
+
 class SearchProgressBar(QWidget):
     """검색이 도는 동안 좌우로 흐르는 얇은 막대.
 
