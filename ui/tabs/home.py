@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QMovie, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 
 from ui.assets import HOME_ANIMATION_PATH, LOGO_PATH
 from ui.theme import ui_font
-from ui.widgets import RecentSearchBar, flowing_glow_text
+from ui.widgets import RecentSearchBar, SearchProgressBar
 
 
 class HomeSearchPage(QWidget):
@@ -39,14 +39,13 @@ class HomeSearchPage(QWidget):
     RECENT_SEARCH_LIMIT = 4
 
     # 기다리는 동안 이 화면에 그대로 머물며 보여 주는 문구. 결과가 다
-    # 나온 뒤에 법령검색 화면으로 넘어간다.
-    BUSY_TITLE = "검색 중입니다"
-    BUSY_HINT = "잠시만 기다려 주세요"
-    BUSY_INTERVAL_MS = 130
-    BUSY_IDLE_COLOR = "#93a3b8"
-    BUSY_ACTIVE_COLOR = "#1f57c8"
-    BUSY_GLOW_SPREAD = 3.5
-    BUSY_DOT_COUNT = 3
+    # 나온 뒤에 법령검색 화면으로 넘어간다. 무엇을 찾는 중인지 그대로
+    # 되뇌어 주면, 같은 시간도 덜 길게 느껴진다.
+    BUSY_TITLE = "‘{query}’ 찾는 중"
+    BUSY_TITLE_FALLBACK = "찾는 중"
+    BUSY_HINT = "법령ㆍ행정규칙ㆍ자치법규와 AI 추천 조문을 함께 모으고 있습니다."
+    # 검색어가 길면 제목이 화면 밖으로 밀린다. 넘치면 끝을 줄인다.
+    BUSY_QUERY_LIMIT = 18
 
     IDLE_TITLE = "무엇을 찾아 드릴까요?"
     IDLE_HINT = (
@@ -59,10 +58,6 @@ class HomeSearchPage(QWidget):
         self.setObjectName("homePage")
 
         self._searching = False
-        self._busy_step = 0
-        self._busy_timer = QTimer(self)
-        self._busy_timer.setInterval(self.BUSY_INTERVAL_MS)
-        self._busy_timer.timeout.connect(self._advance_busy)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 24, 24, 24)
@@ -148,10 +143,15 @@ class HomeSearchPage(QWidget):
         )
         self.recent_search_bar.setObjectName("homeRecentSearchBar")
 
+        # 검색칸 바로 아래에 붙는 얇은 진행 막대. 평소에는 숨어 있다가
+        # 검색이 도는 동안만 좌우로 흐른다.
+        self.progress_bar = SearchProgressBar()
+
         column.addWidget(self.logo_label)
         column.addWidget(self.title_label)
         column.addSpacing(4)
         column.addWidget(self.search_box)
+        column.addWidget(self.progress_bar)
         column.addWidget(self.hint_label)
         column.addSpacing(6)
         column.addWidget(self.recent_search_bar)
@@ -177,22 +177,21 @@ class HomeSearchPage(QWidget):
         root.addLayout(row)
         root.addStretch(6)
 
-    def begin_search(self) -> None:
+    def begin_search(self, query: str = "") -> None:
         """검색이 끝날 때까지 이 화면에서 기다린다는 것을 보여 준다."""
         if self._searching:
             return
         self._searching = True
-        self._busy_step = 0
         self.query_input.setEnabled(False)
         self.search_button.setEnabled(False)
-        self.hint_label.setText(self.BUSY_HINT)
         self.recent_search_bar.setEnabled(False)
-        self._render_busy_title()
-        self._busy_timer.start()
+        self.title_label.setText(self._busy_title(query))
+        self.hint_label.setText(self.BUSY_HINT)
+        self.progress_bar.start()
 
     def end_search(self) -> None:
         """검색이 끝나 화면을 넘길 때 원래 모습으로 되돌린다."""
-        self._busy_timer.stop()
+        self.progress_bar.stop()
         self._searching = False
         self.query_input.setEnabled(True)
         self.search_button.setEnabled(True)
@@ -200,21 +199,13 @@ class HomeSearchPage(QWidget):
         self.title_label.setText(self.IDLE_TITLE)
         self.hint_label.setText(self.IDLE_HINT)
 
-    def _advance_busy(self) -> None:
-        self._busy_step += 1
-        self._render_busy_title()
-
-    def _render_busy_title(self) -> None:
-        text = f"{self.BUSY_TITLE}{'.' * self.BUSY_DOT_COUNT}"
-        self.title_label.setText(
-            flowing_glow_text(
-                text,
-                self._busy_step,
-                idle_color=self.BUSY_IDLE_COLOR,
-                active_color=self.BUSY_ACTIVE_COLOR,
-                spread=self.BUSY_GLOW_SPREAD,
-            )
-        )
+    def _busy_title(self, query: str) -> str:
+        shown = " ".join(str(query or "").split())
+        if not shown:
+            return self.BUSY_TITLE_FALLBACK
+        if len(shown) > self.BUSY_QUERY_LIMIT:
+            shown = f"{shown[: self.BUSY_QUERY_LIMIT - 1]}…"
+        return self.BUSY_TITLE.format(query=shown)
 
     def focus_query(self) -> None:
         """화면이 앞으로 나올 때마다 바로 칠 수 있게 커서를 둔다."""

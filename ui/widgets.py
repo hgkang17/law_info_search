@@ -23,6 +23,8 @@ from PySide6.QtCore import (
     Signal,
     QRegularExpression,
     QPropertyAnimation,
+    QRectF,
+    QVariantAnimation,
 )
 from PySide6.QtGui import (
     QBrush,
@@ -33,6 +35,7 @@ from PySide6.QtGui import (
     QFontMetrics,
     QIcon,
     QKeySequence,
+    QLinearGradient,
     QPainter,
     QPainterPath,
     QPen,
@@ -986,6 +989,83 @@ def flowing_glow_text(
         shown = "&nbsp;" if character == " " else escape(character)
         pieces.append(f'<span style="color:{color.name()};">{shown}</span>')
     return "".join(pieces)
+
+
+class SearchProgressBar(QWidget):
+    """검색이 도는 동안 좌우로 흐르는 얇은 막대.
+
+    끝을 알 수 없는 기다림에는 퍼센트를 세는 막대보다, 계속 움직이는
+    한 줄이 낫다. 글자를 깜빡이는 것보다 조용하면서도 "지금 돌고 있다"가
+    분명해진다. 트랙 위를 밝은 캡슐 하나가 오가고, 양 끝은 투명하게
+    풀어 빛이 스치듯 지나가게 그린다.
+    """
+
+    BAR_HEIGHT = 4
+    TRACK_COLOR = "#e4e7ec"
+    GLOW_COLOR = "#1f57c8"
+    # 한 번 오가는 데 걸리는 시간과 캡슐이 트랙에서 차지하는 몫.
+    CYCLE_MS = 1250
+    GLOW_RATIO = 0.38
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setObjectName("searchProgressBar")
+        self.setFixedHeight(self.BAR_HEIGHT)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._phase = 0.0
+        self._animation = QVariantAnimation(self)
+        self._animation.setStartValue(0.0)
+        self._animation.setEndValue(1.0)
+        self._animation.setDuration(self.CYCLE_MS)
+        self._animation.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        self._animation.setLoopCount(-1)
+        self._animation.valueChanged.connect(self._advance)
+        self.hide()
+
+    def _advance(self, value: object) -> None:
+        try:
+            self._phase = float(value)
+        except (TypeError, ValueError):
+            self._phase = 0.0
+        self.update()
+
+    def start(self) -> None:
+        self.show()
+        if self._animation.state() != QVariantAnimation.State.Running:
+            self._animation.start()
+
+    def stop(self) -> None:
+        self._animation.stop()
+        self._phase = 0.0
+        self.hide()
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        rect = QRectF(self.rect())
+        radius = rect.height() / 2
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(self.TRACK_COLOR))
+        painter.drawRoundedRect(rect, radius, radius)
+
+        glow_width = max(48.0, rect.width() * self.GLOW_RATIO)
+        travel = max(0.0, rect.width() - glow_width)
+        # 0→1을 그대로 쓰면 오른쪽 끝에서 곧바로 왼쪽으로 튄다. 접어서
+        # 오갈 길을 만들면 한 줄이 부드럽게 왕복한다.
+        offset = travel * (
+            self._phase * 2 if self._phase <= 0.5 else (1 - self._phase) * 2
+        )
+        glow = QRectF(rect.left() + offset, rect.top(), glow_width, rect.height())
+        gradient = QLinearGradient(glow.topLeft(), glow.topRight())
+        edge = QColor(self.GLOW_COLOR)
+        edge.setAlpha(0)
+        middle = QColor(self.GLOW_COLOR)
+        gradient.setColorAt(0.0, edge)
+        gradient.setColorAt(0.5, middle)
+        gradient.setColorAt(1.0, edge)
+        painter.setBrush(gradient)
+        painter.drawRoundedRect(glow, radius, radius)
+        painter.end()
 
 
 class ResultOverlayLabel(QLabel):

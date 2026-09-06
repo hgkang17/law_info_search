@@ -1,4 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+<!-- 아래 여백은 일부러 비워 둔 자리다. 별표 목록 줄은 줄간격이 1.35라
+     글자가 줄 상자 위쪽에 앉는데, 가운데 맞춘 아이콘은 상자 한가운데
+     그려져 글자보다 아래로 처진다. 상자 아래를 늘려 글자 높이에 맞춘다.
+     HTML에서 그리는 높이(마커 21, 내려받기 22)와 짝이 맞아야 한다. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="21" viewBox="0 0 16 21">
   <rect x="1.5" y="1.0" width="13" height="13" rx="2.6" fill="none" stroke="#98a1ab" stroke-width="1.2"/>
   <path d="M8 4.2v6.6M4.7 7.5h6.6" fill="none" stroke="#4d5661" stroke-width="1.4" stroke-linecap="round"/>
 </svg>

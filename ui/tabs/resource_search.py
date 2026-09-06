@@ -10470,14 +10470,14 @@ class ResourceSearchTab(QWidget):
                 icons.append(
                     f'<a href="{escape(file_url, quote=True)}">'
                     f'<img src="{icon_data_uri(ANNEX_HWP_ICON_PATH)}" '
-                    f'width="16" height="19" {icon_style} alt="원본 내려받기">'
+                    f'width="16" height="22" {icon_style} alt="원본 내려받기">'
                     "</a>"
                 )
             if pdf_url:
                 icons.append(
                     f'<a href="{escape(pdf_url, quote=True)}">'
                     f'<img src="{icon_data_uri(ANNEX_PDF_ICON_PATH)}" '
-                    f'width="16" height="19" {icon_style} alt="PDF 내려받기">'
+                    f'width="16" height="22" {icon_style} alt="PDF 내려받기">'
                     "</a>"
                 )
             icon_html = "&nbsp;".join(icons)
@@ -10499,7 +10499,10 @@ class ResourceSearchTab(QWidget):
                     f'style="color:{color}; text-decoration:none; '
                     'font-weight:400; vertical-align:middle;">'
                     f'<img src="{icon_data_uri(marker_icon)}" width="16" '
-                    'height="16" style="vertical-align:middle;" '
+                    # 아이콘 파일 아래는 비워 둔 자리다(주석 참고). 그만큼
+                    # 높이를 더 주어야 그림이 줄 상자 가운데가 아니라 글자
+                    # 높이에 선다.
+                    'height="21" style="vertical-align:middle;" '
                     f'alt="{"접기" if expanded else "펼치기"}">'
                     f"&nbsp;{escape(shown)}</a>"
                 )

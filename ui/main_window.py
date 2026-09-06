@@ -1557,7 +1557,7 @@ class LawSearchWindow(QMainWindow):
         화면에 그대로 머물며 기다렸다가 결과가 다 나온 뒤에 넘어간다.
         """
         self._home_search_pending = True
-        self.home_page.begin_search()
+        self.home_page.begin_search(query)
         # 화면을 아직 옮기지 않으므로 검색 진행은 이 창이 대신 지켜본다.
         self.resource_tab.run_integrated_search(query)
         worker = self.resource_tab.worker
