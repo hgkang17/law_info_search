@@ -393,6 +393,9 @@ def test_favorite_article_opens_in_full_reading_mode_with_back_button(
             },
         }
         window._activate_favorites_page()
+        # 이 회귀 시험은 API가 없을 때 저장 전문 fallback으로 즉시 여는
+        # 경로를 본다. 개발 PC의 실제 OC 설정값에 좌우되지 않게 한다.
+        window.resource_tab.oc_provider = lambda: ""
 
         window._open_favorite(record)
         qt_app.processEvents()

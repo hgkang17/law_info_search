@@ -28,11 +28,11 @@ ROW = {
 }
 
 
-def _tab(tmp_path) -> ResourceSearchTab:
+def _tab(tmp_path, *, oc: str = "test-oc") -> ResourceSearchTab:
     QApplication.instance() or QApplication([])
     settings = QSettings(str(tmp_path / "res.ini"), QSettings.Format.IniFormat)
     return ResourceSearchTab(
-        lambda: "test-oc",
+        lambda: oc,
         RecentSearchManager(settings),
         LawDocumentCache(tmp_path / "saved"),
     )
@@ -60,7 +60,7 @@ def test_document_tab_gets_a_favorite_star(tmp_path) -> None:
 
 
 def test_article_favorite_opens_only_selected_unit_as_body(tmp_path) -> None:
-    tab = _tab(tmp_path)
+    tab = _tab(tmp_path, oc="")
     payload = {
         "법령": {
             "기본정보": {
@@ -92,9 +92,83 @@ def test_article_favorite_opens_only_selected_unit_as_body(tmp_path) -> None:
     assert state["row"]["target"] == "law_article"
 
 
+def test_favorite_article_uses_api_then_unit_cache(tmp_path) -> None:
+    tab = _tab(tmp_path)
+    row = {**ROW, "id": "009419", "name": "국토기본법 시행령"}
+    fallback = _decree_payload(
+        row["name"],
+        row["id"],
+        [{"조문번호": "7", "조문내용": "제7조 저장 전문의 옛 본문"}],
+    )
+    record = {"row": row, "payload": fallback}
+    unit = {
+        "jo": "000700",
+        "hang": "000200",
+        "ho": "",
+        "mok": "",
+        "label": "제7조제2항",
+    }
+    started = []
+    tab._start_worker = lambda worker, _message: started.append(worker)
+
+    tab.open_cached_favorite_article(record, unit)
+
+    assert len(started) == 1
+    assert started[0].operation == "favorite_article_detail"
+    assert started[0].jo == "000700"
+    api_payload = _decree_payload(
+        row["name"],
+        row["id"],
+        [
+            {
+                "조문번호": "7",
+                "조문내용": "제7조(실천계획의 내용 등)",
+                "항": [
+                    {"항번호": "1", "항내용": "① API 첫째 항"},
+                    {"항번호": "2", "항내용": "② API 둘째 항"},
+                ],
+            }
+        ],
+    )
+    tab._show_favorite_article_api_result({"payload": api_payload})
+
+    assert "API 둘째 항" in tab.current_detail_text
+    assert "API 첫째 항" not in tab.current_detail_text
+    assert "저장 전문의 옛 본문" not in tab.current_detail_text
+    assert tab._load_favorite_article_cache(row, unit) == api_payload
+
+    reopened = _tab(tmp_path)
+    reopened._start_worker = lambda *_args: (_ for _ in ()).throw(
+        AssertionError("캐시가 있으면 API 작업을 시작하면 안 된다")
+    )
+    reopened.open_cached_favorite_article(record, unit)
+    assert "API 둘째 항" in reopened.current_detail_text
+    assert "조항호목 캐시" in reopened.status_label.text()
+
+
+def test_favorite_article_api_failure_falls_back_to_saved_full_text(
+    tmp_path,
+) -> None:
+    tab = _tab(tmp_path)
+    payload = _decree_payload(
+        ROW["name"],
+        ROW["id"],
+        [{"조문번호": "7", "조문내용": "제7조 저장 전문 fallback 본문"}],
+    )
+    record = {"row": dict(ROW), "payload": payload}
+    unit = {"jo": "000700", "hang": "", "ho": "", "mok": "", "label": "제7조"}
+    tab._start_worker = lambda _worker, _message: None
+
+    tab.open_cached_favorite_article(record, unit)
+    tab._worker_failed("favorite_article_detail", "네트워크 끊김")
+
+    assert "저장 전문 fallback 본문" in tab.current_detail_text
+    assert "조문 API 실패" in tab.status_label.text()
+
+
 def test_returning_from_favorite_article_keeps_full_law_document(tmp_path) -> None:
     app = QApplication.instance() or QApplication([])
-    tab = _tab(tmp_path)
+    tab = _tab(tmp_path, oc="")
     payload = {
         "법령": {
             "기본정보": {
@@ -499,7 +573,7 @@ def test_article_tab_never_overwrites_another_law_snapshot(tmp_path) -> None:
     법령의 저장 파일에 그대로 저장돼 즐겨찾기로 열 때마다 엉뚱한 본문이
     떴다.
     """
-    tab = _tab(tmp_path)
+    tab = _tab(tmp_path, oc="")
     law_row = {
         **ROW,
         "id": "009419",

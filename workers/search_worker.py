@@ -420,6 +420,23 @@ class ResourceApiWorker(QThread):
                     attach_admin_rule_images(result)
                 elif self.detail_target in ("law", "eflaw"):
                     attach_law_images(result)
+            elif self.operation == "favorite_article_detail":
+                # 즐겨찾기의 항ㆍ호ㆍ목을 API 요청에 직접 넣으면 응답 형식이
+                # 단위마다 달라진다. 조 전체를 한 번 받고 화면 쪽에서 같은
+                # 절단기로 항ㆍ호ㆍ목을 고른다.
+                payload = get_law_article(
+                    self.oc, self.item_id, self.jo
+                )
+                attach_law_images(payload)
+                result = {
+                    "payload": payload,
+                    "item_id": self.item_id,
+                    "law_name": self.law_name,
+                    "jo": self.jo,
+                    "hang": self.hang,
+                    "ho": self.ho,
+                    "mok": self.mok,
+                }
             elif self.operation == "law_reference_detail":
                 named_row = None
                 if self.law_name:

@@ -102,6 +102,7 @@ from workers.download_worker import (
     PdfDownloadWorker,
 )
 from ui.tabs.ai_chat_panel import AiChatPanel
+from llm.law_aliases import resolve_law_alias
 from llm.inquiries import is_inquiry_target, split_doc_reference
 from molit_cgm_expc_api import (
     ADMIN_RULE_IMAGES_KEY,
@@ -269,18 +270,48 @@ def annex_name_similarity(left: str, right: str) -> float:
 
 
 _SEARCH_NAME_PARENTHETICAL_PATTERN = re.compile(r"\([^()]*\)")
+_SEARCH_NAME_HEAD_LABEL_PATTERN = re.compile(r"^\s*\[[^\]]*\]\s*")
 _SEARCH_NAME_NOISE_PATTERN = re.compile(r"[\s·ㆍ・,、_\-()\[\]{}「」『』\"\']+")
+_SEARCH_APPROXIMATE_SHORT_NAME_RATIO = 0.7
 
 
 def search_name_key(value: str) -> str:
     """검색어ㆍ자료 이름에서 괄호 부가 설명과 공백ㆍ기호를 덜어 낸다."""
     text = _SEARCH_NAME_PARENTHETICAL_PATTERN.sub("", str(value or ""))
+    # 별표ㆍ서식 API가 붙이는 ``[별표 1]`` 같은 맨 앞 머리표는 자료의
+    # 실제 제목이 아니다. 제목 중간의 대괄호 내용은 건드리지 않는다.
+    text = _SEARCH_NAME_HEAD_LABEL_PATTERN.sub("", text)
     return _SEARCH_NAME_NOISE_PATTERN.sub("", text).strip()
 
 
-def search_name_similarity(query: str, name: str) -> float:
-    """검색어와 자료 이름이 얼마나 같은지 0~1로 센다."""
-    return name_similarity(search_name_key(query), search_name_key(name))
+def search_name_similarity(
+    query: str, name: str, short_name: str = ""
+) -> float:
+    """검색어ㆍ정식명ㆍ공식 약칭이 얼마나 같은지 0~1로 센다."""
+    query_keys = [search_name_key(query)]
+    canonical = search_name_key(resolve_law_alias(query).canonical)
+    if canonical and canonical not in query_keys:
+        query_keys.append(canonical)
+    name_keys = [search_name_key(name)]
+    short_key = search_name_key(short_name)
+    if short_key:
+        name_keys.append(short_key)
+    score = max(
+        (name_similarity(query_key, name_key)
+         for query_key in query_keys
+         for name_key in name_keys),
+        default=0.0,
+    )
+    # 공식 약칭 필드가 있는 결과에 한해서 한 글자 정도 어긋난 검색도
+    # 최상단 기준을 넘긴다. 정식 명칭끼리의 기준은 낮추지 않아 하위법령
+    # 포함 관계가 전부 올라오는 일을 막는다.
+    if short_key:
+        short_score = max(
+            name_similarity(query_key, short_key) for query_key in query_keys
+        )
+        if short_score >= _SEARCH_APPROXIMATE_SHORT_NAME_RATIO:
+            score = max(score, 0.8)
+    return score
 
 
 # 본문 조문 링크는 글자 폭이 좁아, 커서 한 점이 살짝 벗어나도
@@ -394,6 +425,11 @@ class ResourceSearchTab(QWidget):
         # 이미지 처리 전 저장된 조문 즐겨찾기는 전문을 한 번 갱신한 뒤
         # 사용자가 고른 조항호목 화면으로 곧바로 되돌아간다.
         self._pending_cached_article_open: tuple[
+            dict[str, object], dict[str, object]
+        ] | None = None
+        # 즐겨찾기 조항호목 API 응답을 기다리는 (저장 전문, 단위).
+        # 실패하면 이 저장 전문에서 같은 단위를 잘라 여는 fallback이 된다.
+        self._pending_favorite_article_api: tuple[
             dict[str, object], dict[str, object]
         ] | None = None
         self._article_favorite_waiting_for_worker = False
@@ -7852,6 +7888,8 @@ class ResourceSearchTab(QWidget):
                         )
             elif operation == "law_reference_detail":
                 self._show_law_reference_detail(payload)
+            elif operation == "favorite_article_detail":
+                self._show_favorite_article_api_result(payload)
             elif operation == "document_reference_detail":
                 self._show_document_reference_detail(payload)
             elif operation == "inquiry_reference_detail":
@@ -7918,6 +7956,8 @@ class ResourceSearchTab(QWidget):
         action = (
             "검색"
             if operation == "resource_search"
+            else "즐겨찾기 조문 조회"
+            if operation == "favorite_article_detail"
             else "인용 조문 조회"
             if operation == "law_reference_detail"
             else "문서 본문 조회"
@@ -7931,6 +7971,35 @@ class ResourceSearchTab(QWidget):
             else "본문 조회"
         )
         self.status_label.setText(f"{action}에 실패했습니다.")
+        if operation == "favorite_article_detail":
+            pending = self._pending_favorite_article_api
+            self._pending_favorite_article_api = None
+            if pending is None:
+                return
+            record, unit = pending
+            fallback = record.get("payload")
+            if not isinstance(fallback, dict):
+                QMessageBox.critical(
+                    self,
+                    "즐겨찾기 조문 열기 실패",
+                    f"조문 API와 저장 전문을 모두 사용할 수 없습니다.\n\n{error}",
+                )
+                return
+            try:
+                self._show_favorite_article_payload(
+                    record,
+                    unit,
+                    fallback,
+                    "저장 전문 fallback · 조문 API 실패",
+                )
+            except Exception as fallback_error:
+                QMessageBox.critical(
+                    self,
+                    "즐겨찾기 조문 열기 실패",
+                    "조문 API 조회에 실패했고 저장 전문에서도 해당 단위를 "
+                    f"찾지 못했습니다.\n\n{fallback_error}",
+                )
+            return
         if operation == "law_reference_detail":
             self._pending_reference_popup.set_error(error)
             return
@@ -8528,7 +8597,9 @@ class ResourceSearchTab(QWidget):
             query_text = self.query_input.text().strip()
             name_scores = {
                 id(row): search_name_similarity(
-                    query_text, str(row.get("name") or "")
+                    query_text,
+                    str(row.get("name") or ""),
+                    str(row.get("short_name") or ""),
                 )
                 for row in rows
             }
@@ -8538,6 +8609,10 @@ class ResourceSearchTab(QWidget):
                 matched = score >= self.INTEGRATED_NAME_MATCH_RATIO
                 return (
                     0 if matched else 1,
+                    # 농지법을 찾았을 때 농지법 AI추천 조문도 이름 점수가
+                    # 100%다. 이름 일치 묶음 안에서는 자료 본체가 조문보다
+                    # 먼저여야 정확히 찾은 법령ㆍ별표가 맨 위에 선다.
+                    1 if matched and row.get("ai_recommended") else 0,
                     # 이름이 같은 자료끼리는 더 닮은 쪽을 앞에 둔다.
                     # 나머지는 지금까지처럼 구분 차례를 따른다.
                     -score if matched else 0.0,
@@ -10489,30 +10564,178 @@ class ResourceSearchTab(QWidget):
         record: dict[str, object],
         unit: dict[str, object],
     ) -> None:
-        """저장 전문에서 선택한 조항호목만 뽑아 본문 화면으로 연다."""
+        """조문 API를 우선해 즐겨찾기 조항호목을 열고 실패하면 전문을 쓴다."""
         source_row = record.get("row")
-        payload = record.get("payload")
-        if not isinstance(source_row, dict) or not isinstance(payload, dict):
+        fallback_payload = record.get("payload")
+        if not isinstance(source_row, dict) or not isinstance(fallback_payload, dict):
             raise ValueError("저장된 법령 본문을 찾지 못했습니다.")
+        jo = str(unit.get("jo") or "")
+        if not jo:
+            raise ValueError("즐겨찾기 조문 번호를 찾지 못했습니다.")
+
+        cached_payload = self._load_favorite_article_cache(source_row, unit)
+        if isinstance(cached_payload, dict):
+            self._show_favorite_article_payload(
+                record, unit, cached_payload, "조항호목 캐시"
+            )
+            return
+
+        oc = self.oc_provider().strip()
+        if not oc or (self.worker and self.worker.isRunning()):
+            reason = "API 인증키 없음" if not oc else "다른 API 조회 진행 중"
+            self._show_favorite_article_payload(
+                record, unit, fallback_payload, f"저장 전문 fallback · {reason}"
+            )
+            return
+
+        self._pending_favorite_article_api = (dict(record), dict(unit))
+        self._start_worker(
+            ResourceApiWorker(
+                "favorite_article_detail",
+                oc=oc,
+                target="law",
+                item_id=str(source_row.get("id") or ""),
+                law_name=str(source_row.get("name") or ""),
+                jo=jo,
+                hang=str(unit.get("hang") or ""),
+                ho=str(unit.get("ho") or ""),
+                mok=str(unit.get("mok") or ""),
+                parent=self,
+            ),
+            f"{unit.get('label') or self._law_reference_label(jo)} 조문 API 조회 중...",
+        )
+
+    def _show_favorite_article_api_result(self, result: object) -> None:
+        pending = self._pending_favorite_article_api
+        if pending is None:
+            return
+        record, unit = pending
+        payload = result.get("payload") if isinstance(result, dict) else None
+        if not isinstance(payload, dict):
+            raise ValueError("즐겨찾기 조문 API 응답 형식이 올바르지 않습니다.")
+        source_row = record.get("row")
+        if not isinstance(source_row, dict):
+            raise ValueError("즐겨찾기 조문의 법령 정보를 찾지 못했습니다.")
+        try:
+            self._show_favorite_article_payload(
+                record, unit, payload, "조문 API"
+            )
+        except ValueError:
+            fallback = record.get("payload")
+            if not isinstance(fallback, dict):
+                raise
+            self._show_favorite_article_payload(
+                record,
+                unit,
+                fallback,
+                "저장 전문 fallback · API 응답에 단위 없음",
+            )
+            self._pending_favorite_article_api = None
+            return
+        cached = self._save_favorite_article_cache(source_row, unit, payload)
+        self._pending_favorite_article_api = None
+        if cached:
+            self.status_label.setText(
+                self.status_label.text() + " · 조항호목 캐시 저장 완료"
+            )
+
+    def _favorite_article_cache_path(
+        self, row: dict[str, object], unit: dict[str, object]
+    ) -> Path:
+        identity = self._document_identity(row)
+        unit_key = ":".join(
+            str(unit.get(key) or "").strip()
+            for key in ("jo", "hang", "ho", "mok")
+        )
+        digest = hashlib.sha256(
+            f"{identity}|{unit_key}".encode("utf-8")
+        ).hexdigest()[:16]
+        directory = self.law_cache.directory.parent / "조문"
+        return directory / f"favorite_article_{digest}.json"
+
+    def _load_favorite_article_cache(
+        self, row: dict[str, object], unit: dict[str, object]
+    ) -> dict | None:
+        path = self._favorite_article_cache_path(row, unit)
+        try:
+            cached = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            return None
+        expected_unit = {
+            key: str(unit.get(key) or "").strip()
+            for key in ("jo", "hang", "ho", "mok")
+        }
         if (
-            law_payload_images_need_refresh(payload)
-            and not (self.worker and self.worker.isRunning())
+            not isinstance(cached, dict)
+            or cached.get("schema") != 1
+            or cached.get("document") != self._document_identity(row)
+            or cached.get("unit") != expected_unit
+            or not isinstance(cached.get("payload"), dict)
         ):
-            self._pending_cached_article_open = (dict(source_row), dict(unit))
-            if self._request_resource_detail(dict(source_row)):
-                return
-            self._pending_cached_article_open = None
+            return None
+        return dict(cached["payload"])
+
+    def _save_favorite_article_cache(
+        self,
+        row: dict[str, object],
+        unit: dict[str, object],
+        payload: dict,
+    ) -> bool:
+        path = self._favorite_article_cache_path(row, unit)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary_path = path.with_suffix(".json.tmp")
+            temporary_path.write_text(
+                json.dumps(
+                    {
+                        "schema": 1,
+                        "document": self._document_identity(row),
+                        "unit": {
+                            key: str(unit.get(key) or "").strip()
+                            for key in ("jo", "hang", "ho", "mok")
+                        },
+                        "saved_at": datetime.now().astimezone().isoformat(
+                            timespec="seconds"
+                        ),
+                        "payload": payload,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            temporary_path.replace(path)
+            return True
+        except (OSError, TypeError, ValueError):
+            return False
+
+    def _show_favorite_article_payload(
+        self,
+        record: dict[str, object],
+        unit: dict[str, object],
+        article_payload: dict,
+        source_label: str,
+    ) -> None:
+        source_row = record.get("row")
+        fallback_payload = record.get("payload")
+        if not isinstance(source_row, dict) or not isinstance(fallback_payload, dict):
+            raise ValueError("저장된 법령 본문을 찾지 못했습니다.")
         jo = str(unit.get("jo") or "")
         hang = str(unit.get("hang") or "")
         ho = str(unit.get("ho") or "")
         mok = str(unit.get("mok") or "")
-        article_text = extract_law_article(payload, jo, hang, ho, mok)
+        article_text = extract_law_article(article_payload, jo, hang, ho, mok)
         if not article_text:
-            raise ValueError("저장된 본문에서 선택한 조항호목을 찾지 못했습니다.")
+            raise ValueError(f"{source_label}에서 선택한 조항호목을 찾지 못했습니다.")
         original_pending_row = self.pending_row
         self.pending_row = dict(source_row)
         try:
-            title, metadata, _sections = self._parse_law_detail(payload)
+            try:
+                title, metadata, _sections = self._parse_law_detail(article_payload)
+            except ValueError:
+                title, metadata, _sections = self._parse_law_detail(
+                    fallback_payload
+                )
         finally:
             self.pending_row = original_pending_row
         unit_label = self._law_reference_label(jo, hang, ho, mok)
@@ -10532,7 +10755,9 @@ class ResourceSearchTab(QWidget):
             "source_row": dict(source_row),
             "favorite_unit": dict(unit),
         }
-        short_name, subtitle = self._law_document_headline(payload)
+        short_name, subtitle = self._law_document_headline(article_payload)
+        if not short_name and not subtitle:
+            short_name, subtitle = self._law_document_headline(fallback_payload)
         self._open_document_tab(tab_row, defer_restore=True)
         # 본문 옆 조문 별과 3단비교 단추는 지금 화면이 어느 법령인지를
         # ``pending_row``로 판단한다. 즐겨찾기 목록에서 바로 열면 그 값이
@@ -10548,12 +10773,12 @@ class ResourceSearchTab(QWidget):
                 build_toc=True,
                 short_name=short_name,
                 subtitle=subtitle,
-                embedded_images=self._admin_rule_images(payload),
+                embedded_images=self._admin_rule_images(article_payload),
             )
         finally:
             self.pending_row = original_pending_row
         self.status_label.setText(
-            f"{tab_row['name']} 저장 본문 열기 완료 · API 호출 없음"
+            f"{tab_row['name']} 열기 완료 · {source_label}"
         )
 
     def _restore_cached_formatting(self, record: dict[str, object]) -> int:

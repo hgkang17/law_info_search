@@ -44,6 +44,34 @@ def test_parenthetical_reference_is_ignored_for_name_match() -> None:
     )
 
 
+def test_annex_head_label_and_parenthetical_reference_are_both_ignored() -> None:
+    ratio = ResourceSearchTab.INTEGRATED_NAME_MATCH_RATIO
+    result_name = "[별표 1] 용도별 건축물의 종류(제3조의5 관련)"
+
+    assert search_name_key(result_name) == "용도별건축물의종류"
+    assert search_name_similarity("용도별 건축물의 종류", result_name) >= ratio
+
+
+def test_known_or_nearly_matching_short_name_is_promoted() -> None:
+    ratio = ResourceSearchTab.INTEGRATED_NAME_MATCH_RATIO
+    assert (
+        search_name_similarity(
+            "국토계획법", "국토의 계획 및 이용에 관한 법률"
+        )
+        >= ratio
+    )
+    assert (
+        search_name_similarity(
+            "국토계획벚",
+            "국토의 계획 및 이용에 관한 법률",
+            "국토계획법",
+        )
+        >= ratio
+    )
+    # 상위법 이름이 하위법령에 들어간 것만으로는 약칭 일치가 아니다.
+    assert search_name_similarity("건축법", "건축법 시행령") < ratio
+
+
 def test_unrelated_name_stays_below_the_threshold() -> None:
     ratio = ResourceSearchTab.INTEGRATED_NAME_MATCH_RATIO
     assert (
@@ -54,3 +82,25 @@ def test_unrelated_name_stays_below_the_threshold() -> None:
     )
     # 하위법령은 상위법 이름을 그대로 품지만 맨 위로 올리지는 않는다.
     assert search_name_similarity("건축법", "건축법 시행령") < ratio
+
+
+def test_exact_resource_precedes_same_named_ai_article() -> None:
+    """농지법 본체와 농지법 추천 조문이 모두 100%여도 본체가 먼저다."""
+    ratio = ResourceSearchTab.INTEGRATED_NAME_MATCH_RATIO
+    rows = [
+        {"target": "law", "name": "농지법", "ai_recommended": True},
+        {"target": "law", "name": "농지법"},
+    ]
+
+    def key(row):
+        score = search_name_similarity("농지법", row["name"])
+        matched = score >= ratio
+        return (
+            0 if matched else 1,
+            1 if matched and row.get("ai_recommended") else 0,
+            -score if matched else 0.0,
+            ResourceSearchTab._integrated_group_order(row),
+        )
+
+    rows.sort(key=key)
+    assert not rows[0].get("ai_recommended")
