@@ -444,7 +444,10 @@ class LawSearchWindow(QMainWindow):
 
         self.open_documents_empty = QLabel("열린 본문 없음")
         self.open_documents_empty.setObjectName("openDocumentsEmpty")
-        self.open_documents_layout.addWidget(self.open_documents_empty, 1)
+        self.open_documents_layout.addWidget(self.open_documents_empty, 0)
+        # 남는 자리는 모두 오른쪽에 몰아 준다. 이 여백이 없으면 탭과 단추가
+        # 띠 가운데로 모여 왼쪽 끝에서 시작하지 않았다.
+        self.open_documents_layout.addStretch(1)
         # 창 제목 표시줄에 이미 프로그램 이름이 있어 머리글에서는 로고만
         # 남긴다. 이름 라벨이 차지하던 자리는 열린 본문 띠가 넘겨받는다.
         header_layout.addWidget(logo_label)
