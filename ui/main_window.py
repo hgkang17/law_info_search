@@ -1106,10 +1106,12 @@ class LawSearchWindow(QMainWindow):
         self.open_document_tab_strip.setVisible(bool(documents))
         self.close_all_documents_button.setVisible(bool(documents))
         if documents:
-            # 탭 줄 높이에 맞춰 나란히 선다. 탭 제목이 두 줄이라 단추도
-            # 두 줄이며, 높이는 탭이 정하는 대로 따라간다.
+            # 탭 줄 높이에 맞춰 나란히 선다. 탭에는 위ㆍ아래 1px margin이
+            # 있어 tabRect 전체 높이를 그대로 쓰면 단추의 칠해진 면만 2px
+            # 더 크다. 그 여백을 뺀 실제 탭 면 높이에 맞춘다.
+            tab_height = self.open_document_tabs.tabRect(0).height()
             self.close_all_documents_button.setFixedHeight(
-                max(24, self.open_document_tabs.sizeHint().height())
+                max(24, tab_height - 2)
             )
         self.open_documents_empty.setVisible(not documents)
         if documents:

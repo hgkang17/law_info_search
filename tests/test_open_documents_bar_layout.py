@@ -56,6 +56,10 @@ def test_open_documents_bar_starts_at_the_left(window) -> None:
     assert main_window.open_document_tabs.count() == 3
     assert strip.x() == 0
     assert button.isVisible()
+    # 탭 사각형의 위ㆍ아래 1px margin을 뺀, 실제로 칠해지는 높이와 같다.
+    assert button.height() == (
+        main_window.open_document_tabs.tabRect(0).height() - 2
+    )
     # 단추는 탭 오른쪽 끝에 바짝 붙는다(레이아웃 간격만큼만 떨어진다).
     gap = button.x() - (strip.x() + strip.width())
     assert 0 <= gap <= 12

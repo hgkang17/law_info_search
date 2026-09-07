@@ -425,7 +425,11 @@ class InlinePdfPreviewPanel(QFrame):
         # 부모는 본문 뷰포트다. 예전처럼 parent.height()-24를 쓰면
         # 미리보기가 문서 전체를 덮고, 자리 표시 높이도 같이 커져
         # 본문을 밀어 낸다. 크게 보기는 기본 높이의 정확히 두 배다.
-        self._expanded = not self._expanded
+        self.set_expanded(not self._expanded)
+
+    def set_expanded(self, expanded: bool) -> None:
+        """미리보기 높이를 기본 또는 크게 상태로 명시해서 맞춘다."""
+        self._expanded = bool(expanded)
         self.setFixedHeight(680 if self._expanded else 340)
         self.expand_button.setText("축소" if self._expanded else "크게")
 

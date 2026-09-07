@@ -30,6 +30,20 @@ def test_matched_name_passes_the_promotion_threshold() -> None:
     )
 
 
+def test_parenthetical_reference_is_ignored_for_name_match() -> None:
+    ratio = ResourceSearchTab.INTEGRATED_NAME_MATCH_RATIO
+    assert search_name_key(
+        "용도별 건축물의 종류(제3조의5 관련)"
+    ) == "용도별건축물의종류"
+    assert (
+        search_name_similarity(
+            "용도별 건축물의 종류",
+            "용도별 건축물의 종류(제3조의5 관련)",
+        )
+        >= ratio
+    )
+
+
 def test_unrelated_name_stays_below_the_threshold() -> None:
     ratio = ResourceSearchTab.INTEGRATED_NAME_MATCH_RATIO
     assert (

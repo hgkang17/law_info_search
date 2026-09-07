@@ -79,6 +79,9 @@ def test_double_click_path_still_opens_the_body(tmp_path) -> None:
     app.processEvents()
 
     assert tab.document_tabs.count() == 1
+    panel = tab._annex_preview_panels[tab._active_annex_preview_key]
+    assert panel.expand_button.text() == "축소"
+    assert panel.height() == 680
 
 
 def test_saving_the_body_again_keeps_the_favorite(tmp_path) -> None:

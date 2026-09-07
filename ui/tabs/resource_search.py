@@ -268,12 +268,14 @@ def annex_name_similarity(left: str, right: str) -> float:
     return name_similarity(annex_name_key(left), annex_name_key(right))
 
 
+_SEARCH_NAME_PARENTHETICAL_PATTERN = re.compile(r"\([^()]*\)")
 _SEARCH_NAME_NOISE_PATTERN = re.compile(r"[\s·ㆍ・,、_\-()\[\]{}「」『』\"\']+")
 
 
 def search_name_key(value: str) -> str:
-    """검색어ㆍ자료 이름을 견주기 좋게 다듬는다(공백ㆍ기호 제거)."""
-    return _SEARCH_NAME_NOISE_PATTERN.sub("", str(value or "")).strip()
+    """검색어ㆍ자료 이름에서 괄호 부가 설명과 공백ㆍ기호를 덜어 낸다."""
+    text = _SEARCH_NAME_PARENTHETICAL_PATTERN.sub("", str(value or ""))
+    return _SEARCH_NAME_NOISE_PATTERN.sub("", text).strip()
 
 
 def search_name_similarity(query: str, name: str) -> float:
@@ -10009,6 +10011,9 @@ class ResourceSearchTab(QWidget):
         self._set_reading_mode(True)
         if self._annex_can_preview(entry):
             panel = self._annex_panel_for_key(preview_key)
+            # 별표ㆍ서식 검색에서 연 본문은 미리보기 자체도 항상 큰 높이로
+            # 시작한다. 이전에 같은 패널을 접었거나 줄여 둔 상태도 덮는다.
+            panel.set_expanded(True)
             panel.show_loading(self._annex_display_title(entry))
             self._place_inline_annex_preview()
             QTimer.singleShot(0, self._place_inline_annex_preview)
