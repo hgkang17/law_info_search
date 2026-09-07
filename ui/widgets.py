@@ -2651,6 +2651,10 @@ class DetailSearchBar(QWidget):
         self._place_over_browser()
         self.show()
         self.raise_()
+        # 찾기 창은 본문 위에 따로 뜨는 창(Qt.Tool)이다. show()만 하면
+        # 글쇠 입력은 여전히 본체 창이 받아, Ctrl+F를 누르고도 검색칸을
+        # 한 번 눌러야 글자가 들어갔다. 창 자체를 앞으로 세워야 한다.
+        self.activateWindow()
         vertical_position = self.browser.verticalScrollBar().value()
         horizontal_position = self.browser.horizontalScrollBar().value()
         selected_query = re.sub(
@@ -2690,8 +2694,13 @@ class DetailSearchBar(QWidget):
         horizontal_position = self.browser.horizontalScrollBar().value()
         self.query_input.clear()
         self._set_query_highlight(False)
-        self.browser.setFocus(Qt.FocusReason.ShortcutFocusReason)
         self.hide()
+        # 찾기 창을 앞세웠으므로 닫을 때 본체 창을 다시 앞으로 세운다.
+        # 그러지 않으면 Esc 뒤 방향키ㆍPageDown이 본문에 먹지 않는다.
+        window = self.browser.window()
+        if window is not None:
+            window.activateWindow()
+        self.browser.setFocus(Qt.FocusReason.ShortcutFocusReason)
         self._restore_scroll_if_changed(vertical_position, horizontal_position)
 
     def keyPressEvent(self, event) -> None:

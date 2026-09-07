@@ -362,6 +362,10 @@ class ResourceSearchTab(QWidget):
         self._annex_previews: dict[str, dict[str, object]] = {}
         self._annex_preview_panels: dict[str, InlinePdfPreviewPanel] = {}
         self._annex_section_entries: list[dict[str, str]] = []
+        # 본문을 갈아 끼우는 동안 스크롤 막대가 잠깐 옛 자리를 들고 있다.
+        # 그 값을 새 문서의 자리로 적어 두면, 다시 열 때 엉뚱한 곳에서
+        # 시작한다. 갈아 끼우는 동안에는 기억하지 않는다.
+        self._scroll_memory_suspended = 0
         # 아직 한 번도 찾아보지 않은 표에는 "검색 결과가 없습니다."가 아니라
         # 무엇을 하라는 안내를 띄운다. 프로그램을 막 켠 화면과 헛친 검색을
         # 같은 말로 알리면 검색이 실제로 돌았는지 알 수 없다.
@@ -996,10 +1000,26 @@ class ResourceSearchTab(QWidget):
         self.document_tab_strip = TabStripScrollArea(self.document_tabs)
         self.document_tab_strip.setObjectName("documentTabStrip")
 
+        # 탭이 여러 개 쌓이면 하나씩 × 를 누르는 것이 번거롭다. 띠
+        # 오른쪽 끝에 한 번에 닫는 단추를 둔다.
+        self.close_all_documents_button = QPushButton("전체 닫기")
+        self.close_all_documents_button.setObjectName("documentTabsCloseAll")
+        self.close_all_documents_button.setCursor(
+            Qt.CursorShape.PointingHandCursor
+        )
+        self.close_all_documents_button.setToolTip(
+            "열려 있는 본문 탭을 모두 닫습니다. 저장한 본문은 그대로 남습니다."
+        )
+        self.close_all_documents_button.clicked.connect(
+            self._close_all_document_tabs
+        )
+        self.close_all_documents_button.hide()
+
         document_tabs_layout = QHBoxLayout()
         document_tabs_layout.setContentsMargins(0, 0, 0, 0)
-        document_tabs_layout.setSpacing(0)
+        document_tabs_layout.setSpacing(4)
         document_tabs_layout.addWidget(self.document_tab_strip, 1)
+        document_tabs_layout.addWidget(self.close_all_documents_button)
         detail_layout.addLayout(document_tabs_layout)
         detail_layout.addLayout(detail_head)
         self.document_tab_strip.hide()
@@ -1366,15 +1386,49 @@ class ResourceSearchTab(QWidget):
             self._show_ai_chat()
         self._ai_chat_was_open = self.ai_chat_panel.isVisible()
 
+    def _detail_reading_position(self) -> int:
+        """지금 화면 맨 위에 걸린 본문 글자의 자리."""
+        cursor = self.detail_view.cursorForPosition(QPoint(0, 0))
+        return int(cursor.position())
+
+    def _restore_detail_reading_position(self, position: int) -> None:
+        """본문 폭이 바뀐 뒤에도 그 글자가 다시 화면 맨 위에 오게 한다.
+
+        패널을 열면 본문이 좁아지며 줄바꿈이 다시 잡힌다. 스크롤 막대의
+        픽셀 값은 그대로여서, 보던 조문이 화면 밖으로 밀려 어디를 읽고
+        있었는지 놓치게 된다.
+        """
+        settle = getattr(self.detail_view, "settle_wrap_now", None)
+        if callable(settle):
+            settle()
+        document = self.detail_view.document()
+        limit = max(0, document.characterCount() - 1)
+        cursor = QTextCursor(document)
+        cursor.setPosition(min(max(0, position), limit))
+        scroll_bar = self.detail_view.verticalScrollBar()
+        offset = self.detail_view.cursorRect(cursor).top()
+        scroll_bar.setValue(
+            max(0, min(scroll_bar.value() + offset, scroll_bar.maximum()))
+        )
+
+    def _keep_reading_position(self, position: int) -> None:
+        """폭 변화가 한 프레임 뒤에 반영되는 경우까지 자리를 지킨다."""
+        self._restore_detail_reading_position(position)
+        QTimer.singleShot(
+            0, lambda target=position: self._restore_detail_reading_position(target)
+        )
+
     def _show_ai_chat(self) -> None:
         sizes = self.main_splitter.sizes()
         total = sum(sizes) or self.main_splitter.width()
         # 본문을 가리지 않도록 다섯 중 하나만 쓴다. 다만 너무 좁으면
         # 글이 한 줄에 몇 자 안 들어가므로 최소 폭은 지킨다.
         chat_width = max(300, total // 5)
+        reading_position = self._detail_reading_position()
         self.ai_chat_panel.show()
         self.main_splitter.setSizes([0, max(1, total - chat_width), chat_width])
         self.ai_chat_panel.input_edit.setFocus()
+        self._keep_reading_position(reading_position)
 
     def _close_ai_chat(self, *_args: object) -> None:
         """× 로 닫으면 다음 크게 보기에서도 닫힌 채로 시작한다."""
@@ -1385,10 +1439,12 @@ class ResourceSearchTab(QWidget):
         if not self.ai_chat_panel.isVisible():
             return
         total = sum(self.main_splitter.sizes())
+        reading_position = self._detail_reading_position()
         self.ai_chat_panel.hide()
         if self._reading_mode:
             self.main_splitter.setSizes([0, max(1, total), 0])
             self.detail_view.setFocus()
+        self._keep_reading_position(reading_position)
 
     def _exit_reading_mode(self) -> None:
         if self._reading_mode:
@@ -1461,6 +1517,7 @@ class ResourceSearchTab(QWidget):
             self._set_expand_button_mode("ai")
             self.restore_view_button.show()
             self.document_tab_strip.hide()
+            self.close_all_documents_button.hide()
             self.detail_view.setFocus()
             # 지난번에 열어 둔 채로 나왔으면 이번에도 열어 둔다. 켜고
             # 끄는 것은 사람이 정한 것이지 화면이 바뀌었다고 되돌릴
@@ -1478,6 +1535,7 @@ class ResourceSearchTab(QWidget):
             self.restore_view_button.hide()
             if self.document_tabs.count():
                 self.document_tab_strip.show()
+                self.close_all_documents_button.show()
             callback = getattr(self, "_reading_mode_exit_callback", None)
             if callback is not None:
                 self._reading_mode_exit_callback = None
@@ -1702,6 +1760,7 @@ class ResourceSearchTab(QWidget):
             self.detail_view.document()
         )
         self.detail_search.begin_document_change()
+        self._scroll_memory_suspended += 1
         try:
             font = make_detail_font(
                 self.detail_font_size, self.detail_font_family
@@ -1737,6 +1796,9 @@ class ResourceSearchTab(QWidget):
                 # 실제로 글자색을 바꾸는 선택 범위에서만 기록한다.
                 pass
         finally:
+            self._scroll_memory_suspended = max(
+                0, self._scroll_memory_suspended - 1
+            )
             self.detail_search.end_document_change()
         # 글자 크기ㆍ글꼴을 바꾼 직후, 문서는 새로 배치됐는데 화면은 이전
         # 그림이 남아 본문이 빈 것처럼 보이는 일이 있었다(창을 최소화했다
@@ -1753,7 +1815,7 @@ class ResourceSearchTab(QWidget):
         탭을 오갈 때)이 생기면 보던 자리를 잃고 맨 위로 튀어 올랐다.
         스크롤 값만 따로 계속 맞춰 두면 그 일이 없어진다.
         """
-        if self._restoring_document:
+        if self._restoring_document or self._scroll_memory_suspended:
             return
         state = self._document_states.get(self._active_document_key)
         if isinstance(state, dict):
@@ -1978,8 +2040,8 @@ class ResourceSearchTab(QWidget):
                 self.copy_button.setEnabled(bool(self.current_detail_text))
                 self._populate_toc(list(state.get("toc_entries", []) or []))
                 self._restore_toc_scroll(key)
-                self.detail_view.verticalScrollBar().setValue(
-                    int(state.get("scroll", 0) or 0)
+                self._apply_document_scroll(
+                    key, int(state.get("scroll", 0) or 0)
                 )
                 QTimer.singleShot(
                     16,
@@ -1992,6 +2054,11 @@ class ResourceSearchTab(QWidget):
                 self._replace_detail_content(
                     html=html, source_font_size=source_font_size
                 )
+                # 저장 HTML은 Qt가 다시 뽑은 것이라 ``text-decoration:none``이
+                # 빠져 있다. 그대로 두면 탭을 다녀올 때마다 별표 줄에 밑줄이
+                # 생겼다. 글자 서식으로 다시 끈다.
+                if self._annex_section_entries:
+                    self._apply_annex_text_font()
             else:
                 self._replace_detail_content()
             # 3단비교 버튼 자리를 위한 본문 오른쪽 여백은
@@ -2017,9 +2084,7 @@ class ResourceSearchTab(QWidget):
             )
             self.toc_search_input.setText(str(state.get("toc_query", "") or ""))
             self.copy_button.setEnabled(bool(self.current_detail_text))
-            self.detail_view.verticalScrollBar().setValue(
-                int(state.get("scroll", 0) or 0)
-            )
+            self._apply_document_scroll(key, int(state.get("scroll", 0) or 0))
             state["font_size"] = self.detail_font_size
             state["memos"] = [dict(memo) for memo in self._visible_memos]
             state["three_stage_articles"] = [
@@ -2036,6 +2101,29 @@ class ResourceSearchTab(QWidget):
                 self.detail_view.document().size()
             self.detail_view.setUpdatesEnabled(True)
             self.detail_view.viewport().update()
+
+    def _apply_document_scroll(self, key: str, position: int) -> None:
+        """되살린 본문을 보던 자리에 세운다.
+
+        별표 줄 글꼴ㆍ3단비교 여백처럼 배치가 뒤늦게 바뀌는 것이 있어,
+        한 번 맞춘 자리가 곧바로 다시 밀린다(펼쳐 둔 별표가 있는 본문에서
+        특히 그랬다). 배치가 끝난 뒤 한 번 더 같은 자리로 맞춘다.
+        """
+        scroll_bar = self.detail_view.verticalScrollBar()
+        scroll_bar.setValue(min(position, scroll_bar.maximum()))
+        QTimer.singleShot(
+            0,
+            lambda restore_key=key, target=position: (
+                self._reassert_document_scroll(restore_key, target)
+            ),
+        )
+
+    def _reassert_document_scroll(self, key: str, position: int) -> None:
+        if key != self._active_document_key:
+            return
+        scroll_bar = self.detail_view.verticalScrollBar()
+        if scroll_bar.value() != position:
+            scroll_bar.setValue(min(position, scroll_bar.maximum()))
 
     def _restore_cached_document_controls(self, key: str) -> None:
         if key != self._active_document_key:
@@ -2121,8 +2209,10 @@ class ResourceSearchTab(QWidget):
                 self._restore_document_state(key)
         if self._reading_mode:
             self.document_tab_strip.hide()
+            self.close_all_documents_button.hide()
         else:
             self.document_tab_strip.show()
+            self.close_all_documents_button.show()
         self.document_tab_strip.refresh()
         self.document_tabs.blockSignals(True)
         self.document_tabs.setCurrentIndex(index)
@@ -2148,6 +2238,26 @@ class ResourceSearchTab(QWidget):
         self.document_tabs.setTabButton(
             index, QTabBar.ButtonPosition.LeftSide, star
         )
+
+    def _close_all_document_tabs(self) -> None:
+        """열려 있는 본문 탭을 모두 닫는다.
+
+        저장한 본문은 저장내역에 그대로 남으므로 되살릴 수 있다. 닫기는
+        탭마다 원래 신호를 울려, 바깥 상단바의 "열린 본문" 목록도 함께
+        비워지게 한다.
+        """
+        keys = [
+            str(self.document_tabs.tabData(index) or "")
+            for index in range(self.document_tabs.count())
+        ]
+        closed = 0
+        for key in keys:
+            if not key or key == "__preview__":
+                continue
+            self._close_document_tab_by_key(key)
+            closed += 1
+        if closed:
+            self.status_label.setText(f"열린 본문 {closed}개를 닫았습니다.")
 
     def _close_document_tab_by_key(self, key: str) -> None:
         """탭 자리는 닫을 때마다 밀리므로, 누른 탭을 키로 다시 찾는다.
@@ -2295,6 +2405,7 @@ class ResourceSearchTab(QWidget):
             self._document_cache_order.remove(key)
         if self.document_tabs.count() == 0:
             self.document_tab_strip.hide()
+            self.close_all_documents_button.hide()
         else:
             # 탭이 하나 줄었으니 띠 안쪽 폭도 다시 맞춘다.
             self.document_tab_strip.refresh()
@@ -3109,7 +3220,11 @@ class ResourceSearchTab(QWidget):
             self.detail_search.set_base_selections([])
             return
 
-        start = self._anchor_position(anchor)
+        self._highlight_anchor_line(anchor)
+
+    def _highlight_anchor_line(self, anchor: str) -> None:
+        """앵커가 놓인 줄 하나만 아주 옅게 표시한다."""
+        start = self._anchor_position(anchor) if anchor else None
         if start is None:
             self.detail_search.set_base_selections([])
             return
@@ -5704,15 +5819,37 @@ class ResourceSearchTab(QWidget):
         }
         self._active_annex_preview_key = key
         panel = self._annex_panel_for_key(key)
-        # 누른 별표 줄이 화면에서 움직이지 않게 그 줄을 기준으로 다시
-        # 그린다. 예전에는 scrollToAnchor로 목록 맨 위까지 끌어올려,
-        # 보고 있던 자리가 통째로 밀렸다.
-        self._rerender_annex_section(keep_anchor=f"annex-item-{index}")
+        anchor = f"annex-item-{index}"
+        # 다시 그리는 동안에는 누른 줄을 기준으로 삼아 화면이 튀지 않게 하고,
+        # 그린 뒤에 그 줄을 화면 맨 위로 올린다. 펼친 원문은 그 줄 아래에
+        # 붙으므로, 줄을 위로 올려야 미리보기가 한눈에 들어온다.
+        self._rerender_annex_section(keep_anchor=anchor)
         panel.show_loading(self._annex_display_title(entry))
+        self._focus_annex_item(anchor)
         self._place_inline_annex_preview()
-        QTimer.singleShot(0, self._place_inline_annex_preview)
+        QTimer.singleShot(
+            0,
+            lambda item_anchor=anchor: (
+                self._focus_annex_item(item_anchor),
+                self._place_inline_annex_preview(),
+            ),
+        )
         QTimer.singleShot(50, self._place_inline_annex_preview)
         self._start_annex_download(key, entry)
+
+    def _focus_annex_item(self, anchor: str) -> None:
+        """펼친 별표 줄을 화면 맨 위에 세우고 음영으로 짚어 준다."""
+        position = self._anchor_position(anchor)
+        if position is None:
+            return
+        cursor = QTextCursor(self.detail_view.document())
+        cursor.setPosition(position)
+        scroll_bar = self.detail_view.verticalScrollBar()
+        offset = self.detail_view.cursorRect(cursor).top()
+        scroll_bar.setValue(
+            max(0, min(scroll_bar.value() + offset, scroll_bar.maximum()))
+        )
+        self._highlight_anchor_line(anchor)
 
     def _restore_inline_annex_preview(self, state: dict[str, object]) -> None:
         """탭을 다녀왔을 때 펼쳐 둔 별표 미리보기들을 다시 띄운다."""
@@ -9182,6 +9319,13 @@ class ResourceSearchTab(QWidget):
         record: dict[str, object],
     ) -> None:
         """행정규칙·자치법규 저장 본문을 API 호출 없이 문서 탭으로 엶."""
+        if str(row.get("target") or "") in ANNEX_TARGETS:
+            # 별표ㆍ서식은 본문 HTML이 아니라 파일(한글ㆍPDF)이라 저장본에
+            # 담긴 화면이 없다. 검색 결과에서 열 때와 같은 미리보기 줄을
+            # 그린다. 예전에는 빈 본문이 떠서 "검색결과에서 항목을
+            # 선택하세요"만 남았다.
+            self._show_annex_links(dict(row))
+            return
         self.pending_row = dict(row)
         self._open_document_tab(row, defer_restore=True)
         target = str(row.get("target") or "")

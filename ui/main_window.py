@@ -2810,6 +2810,7 @@ class LawSearchWindow(QMainWindow):
                 font-size: 9pt;
                 font-weight: 600;
             }
+            QPushButton#favoriteFoldFoldersButton,
             QPushButton#favoriteAddFolderButton {
                 background: white;
                 color: #1768aa;
@@ -2823,12 +2824,32 @@ class LawSearchWindow(QMainWindow):
                 font-size: 13pt;
                 font-weight: 700;
             }
+            QPushButton#favoriteFoldFoldersButton:hover,
             QPushButton#favoriteAddFolderButton:hover {
                 background: #dcecf9;
                 border-color: #6fa3c9;
             }
+            QPushButton#favoriteFoldFoldersButton:pressed,
             QPushButton#favoriteAddFolderButton:pressed {
                 background: #c7e1f4;
+            }
+            QPushButton#documentTabsCloseAll {
+                background: white;
+                color: #4a5b6e;
+                border: 1px solid #cbd8e4;
+                border-radius: 4px;
+                min-height: 24px;
+                max-height: 24px;
+                padding: 0 8px;
+                font-size: 9pt;
+            }
+            QPushButton#documentTabsCloseAll:hover {
+                background: #eef4fa;
+                border-color: #8fb4d3;
+                color: #1768aa;
+            }
+            QPushButton#documentTabsCloseAll:pressed {
+                background: #dcecf9;
             }
             QTreeWidget#favoriteCategoryTree {
                 background: #fbfcfe;
@@ -4805,12 +4826,14 @@ class LawSearchWindow(QMainWindow):
                 color: #34363b;
                 font-weight: 600;
             }
+            QPushButton#favoriteFoldFoldersButton,
             QPushButton#favoriteAddFolderButton {
                 background: #ffffff;
                 color: #4f5258;
                 border: 1px solid #cfd0d2;
                 border-radius: 4px;
             }
+            QPushButton#favoriteFoldFoldersButton:hover,
             QPushButton#favoriteAddFolderButton:hover {
                 background: #eeeeed;
                 color: #242529;

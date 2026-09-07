@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from ui.assets import (
+    ANNEX_COLLAPSE_ICON_PATH,
+    ANNEX_EXPAND_ICON_PATH,
     FAVORITE_PLUS_ICON_PATH,
 )
 from ui.widgets import (
@@ -360,6 +362,7 @@ class ViewedLawsTab(QWidget):
         self.favorite_trees: dict[str, FavoriteCategoryTree] = {}
         self.favorite_category_titles: dict[str, QLabel] = {}
         self.favorite_add_buttons: dict[str, QPushButton] = {}
+        self.favorite_fold_buttons: dict[str, QPushButton] = {}
         self._active_favorite_category = "law"
         self.favorite_folders: list[dict[str, object]] = []
         self._populating_favorite_tree = False
@@ -406,7 +409,24 @@ class ViewedLawsTab(QWidget):
                         self._create_favorite_folder(selected_category)
                     )
                 )
+                fold_button = QPushButton()
+                fold_button.setObjectName("favoriteFoldFoldersButton")
+                fold_button.setFixedSize(28, 28)
+                fold_button.setIcon(QIcon(str(ANNEX_COLLAPSE_ICON_PATH)))
+                fold_button.setIconSize(QSize(12, 12))
+                fold_button.setCursor(Qt.CursorShape.PointingHandCursor)
+                fold_button.setToolTip("폴더를 모두 접습니다.")
+                fold_button.clicked.connect(
+                    lambda _checked=False, selected_category=category: (
+                        self._toggle_favorite_folders(selected_category)
+                    )
+                )
                 title_layout.addWidget(category_title, 1)
+                title_layout.addWidget(
+                    fold_button,
+                    0,
+                    Qt.AlignmentFlag.AlignVCenter,
+                )
                 title_layout.addWidget(
                     add_folder_button,
                     0,
@@ -493,6 +513,7 @@ class ViewedLawsTab(QWidget):
                 self.favorite_trees[category] = tree
                 self.favorite_category_titles[category] = category_title
                 self.favorite_add_buttons[category] = add_folder_button
+                self.favorite_fold_buttons[category] = fold_button
             self.favorite_cards = cards
             self.favorite_splitter = splitter
             self.favorite_tree = self.favorite_trees["law"]
@@ -1498,6 +1519,7 @@ class ViewedLawsTab(QWidget):
                     label.replace("\n", " ")
                 )
                 self.favorite_add_buttons[category].setVisible(True)
+                self._refresh_favorite_fold_button(category)
                 self.favorite_add_buttons[category].setEnabled(not query_active)
         finally:
             for tree in self.favorite_trees.values():
@@ -1981,6 +2003,48 @@ class ViewedLawsTab(QWidget):
             self.status_label.setText(
                 f"즐겨찾기 해제에 실패했습니다: {self.law_cache.last_error}"
             )
+
+    def _toggle_favorite_folders(self, category: str) -> None:
+        """그 칸의 폴더를 한꺼번에 접거나 편다.
+
+        폴더가 하나라도 펼쳐져 있으면 모두 접고, 다 접혀 있으면 모두 편다.
+        단추 그림과 설명도 다음에 할 일에 맞춰 바꾼다.
+        """
+        tree = self.favorite_trees.get(category)
+        if tree is None:
+            return
+        if self._favorite_folders_expanded(tree):
+            tree.collapseAll()
+        else:
+            tree.expandAll()
+        self._refresh_favorite_fold_button(category)
+
+    @staticmethod
+    def _favorite_folders_expanded(tree) -> bool:
+        for index in range(tree.topLevelItemCount()):
+            item = tree.topLevelItem(index)
+            if item.childCount() and item.isExpanded():
+                return True
+        return False
+
+    def _refresh_favorite_fold_button(self, category: str) -> None:
+        button = self.favorite_fold_buttons.get(category)
+        tree = self.favorite_trees.get(category)
+        if button is None or tree is None:
+            return
+        expanded = self._favorite_folders_expanded(tree)
+        button.setIcon(
+            QIcon(
+                str(
+                    ANNEX_COLLAPSE_ICON_PATH
+                    if expanded
+                    else ANNEX_EXPAND_ICON_PATH
+                )
+            )
+        )
+        button.setToolTip(
+            "폴더를 모두 접습니다." if expanded else "폴더를 모두 폅니다."
+        )
 
     def _schedule_favorite_tree_persist(self) -> None:
         if (

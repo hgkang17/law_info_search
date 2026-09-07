@@ -443,18 +443,37 @@ def detail_font_css_family(family: str = "") -> str:
     return ", ".join(f"'{name}'" for name in names)
 
 
+# 문서 제목 덩어리. 제목 글꼴은 h1 안의 span에 실려 오므로 태그 하나가
+# 아니라 여는 h1부터 닫는 h1까지를 통째로 지켜야 한다.
+_DOCUMENT_TITLE_BLOCK_PATTERN = re.compile(
+    r"<h1\b.*?</h1>", re.IGNORECASE | re.DOTALL
+)
+
+
 def apply_detail_font_family(html: str, family: str = "") -> str:
     """저장된 본문 HTML을 지금 고른 본문 글꼴과 기본 두께로 통일.
 
     ``family``를 주지 않으면 기본 글꼴로 맞춘다. 예전에는 늘 기본 글꼴로
     덮어써서, 글꼴 칸에서 다른 글꼴을 골라도 본문은 그대로였다.
     """
+    # 문서 제목(h1)은 본문과 달리 화면 UI 글꼴을 일부러 쓴다. 여기까지
+    # 본문 글꼴로 덮으면 탭을 오갔다 올 때마다 제목만 굴림으로 바뀌었다.
+    # 제목 덩어리를 잠시 빼 두고 나머지만 본문 글꼴로 맞춘다.
+    titles: list[str] = []
+
+    def protect_title(match: "re.Match[str]") -> str:
+        titles.append(match.group(0))
+        return f"__DETAIL_TITLE_BLOCK_{len(titles) - 1}__"
+
+    html = _DOCUMENT_TITLE_BLOCK_PATTERN.sub(protect_title, html)
     html = re.sub(
         r"font-family\s*:\s*[^;\"]+",
         f"font-family:{detail_font_css_family(family)}",
         html,
         flags=re.IGNORECASE,
     )
+    for index, title in enumerate(titles):
+        html = html.replace(f"__DETAIL_TITLE_BLOCK_{index}__", title)
     return re.sub(
         r"font-weight\s*:\s*(?:300|normal)\b",
         "font-weight:400",
