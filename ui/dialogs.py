@@ -358,9 +358,14 @@ class InlinePdfPreviewPanel(QFrame):
             f"보고 있는 쪽 (전체 {whole}쪽)"
             + (f" · 앞 {loaded}쪽 표시" if whole > loaded else "")
         )
-        self._refresh_image_sizes()
+        # 크기를 먼저 재면 아직 감춰져 있는 스크롤 칸의 기본 폭(100px)에
+        # 맞춰 그림이 아주 작게 들어간다. 예전에는 확대ㆍ축소를 한 번
+        # 눌러야 제 크기가 됐다. 보이게 한 뒤에 재고, 배치가 끝난 다음
+        # 한 번 더 맞춘다.
         self.status_label.hide()
         self.image_scroll.show()
+        self._refresh_image_sizes()
+        QTimer.singleShot(0, self._refresh_image_sizes)
 
     def _set_zoom(self, value: int) -> None:
         if self._mode == "images":

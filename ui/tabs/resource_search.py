@@ -2068,6 +2068,7 @@ class ResourceSearchTab(QWidget):
                 # 생겼다. 글자 서식으로 다시 끈다.
                 if self._annex_section_entries:
                     self._apply_annex_text_font()
+                self._apply_inline_annex_links()
             else:
                 self._replace_detail_content()
             # 3단비교 버튼 자리를 위한 본문 오른쪽 여백은
@@ -8536,10 +8537,34 @@ class ResourceSearchTab(QWidget):
     def _row_is_saved(self, row: dict[str, object]) -> bool:
         row = self._storage_row(row)
         target = str(row.get("target") or "")
-        return (
-            self.law_cache.has(row)
-            if target == "law"
-            else self.law_cache.has_snapshot(row)
+        if target == "law":
+            return self.law_cache.has(row)
+        if self.law_cache.has_snapshot(row):
+            return True
+        # 조문 줄은 그 조항호목만 담은 화면으로도 저장되지만, 별을 눌러
+        # 조문 즐겨찾기에 건 것도 그 법령 저장본 안에 남는다. 즐겨찾기에
+        # 걸어 두고도 저장 칸이 비어 보이던 것을 맞춘다.
+        return self._article_favorite_saved(row)
+
+    def _article_favorite_saved(self, storage_row: dict[str, object]) -> bool:
+        """조문 줄이 그 법령 저장본의 조항호목 즐겨찾기에 들어 있는지."""
+        if str(storage_row.get("target") or "") != "law_article":
+            return False
+        source = storage_row.get("source_row")
+        unit = storage_row.get("favorite_unit")
+        if not isinstance(source, dict) or not isinstance(unit, dict):
+            return False
+        law_row = self._law_row(
+            str(source.get("id") or ""), str(source.get("name") or "")
+        )
+        if law_row is None:
+            return False
+        return self.law_cache.is_article_favorite(
+            law_row,
+            str(unit.get("jo") or ""),
+            hang=str(unit.get("hang") or ""),
+            ho=str(unit.get("ho") or ""),
+            mok=str(unit.get("mok") or ""),
         )
 
     def _filter_result_rows(self, text: str) -> None:
@@ -8651,6 +8676,8 @@ class ResourceSearchTab(QWidget):
                 str(law_row["id"]), jo, label, str(law_row["name"]),
                 hang=hang, ho=ho, mok=mok,
             )
+            # 조문 즐겨찾기도 그 법령 저장본에 남으므로 저장 칸을 다시 센다.
+            self._refresh_cache_checkmarks()
             self.result_table.viewport().update()
             return
         wants_favorite = not self.law_cache.is_favorite(row)
@@ -9062,7 +9089,29 @@ class ResourceSearchTab(QWidget):
         if wants_saved == cached:
             return
         if not wants_saved:
-            if self.law_cache.delete(self._storage_row(row)):
+            storage_row = self._storage_row(row)
+            if not self.law_cache.has_snapshot(
+                storage_row
+            ) and self._article_favorite_saved(storage_row):
+                # 화면 저장본 없이 조문 즐겨찾기로만 남은 줄이다.
+                # 지울 파일이 없으므로 즐겨찾기를 푼다.
+                article = self._keyword_article_target(row)
+                if article is not None:
+                    law_row, jo, hang, ho, mok, label = article
+                    if self.law_cache.set_article_favorite(
+                        law_row, jo, label, False, hang=hang, ho=ho, mok=mok
+                    ):
+                        self.status_label.setText(
+                            f"{label} 즐겨찾기를 해제했습니다."
+                        )
+                    else:
+                        self.status_label.setText(
+                            "즐겨찾기 해제에 실패했습니다: "
+                            f"{self.law_cache.last_error}"
+                        )
+                self._refresh_cache_checkmarks()
+                return
+            if self.law_cache.delete(storage_row):
                 self.status_label.setText("저장된 본문을 삭제했습니다.")
             else:
                 self.status_label.setText(
@@ -9511,6 +9560,9 @@ class ResourceSearchTab(QWidget):
             # 담긴 화면이 없다. 검색 결과에서 열 때와 같은 미리보기 줄을
             # 그린다. 예전에는 빈 본문이 떠서 "검색결과에서 항목을
             # 선택하세요"만 남았다.
+            # 화면 코드가 "지금 여는 행"으로 pending_row를 보므로 검색에서
+            # 열 때와 같게 채워 둔다.
+            self.pending_row = dict(row)
             self._show_annex_links(dict(row))
             return
         self.pending_row = dict(row)
@@ -11221,11 +11273,107 @@ class ResourceSearchTab(QWidget):
         rendered_html = "".join(html_parts)
         self._replace_detail_content(html=rendered_html)
         self._apply_annex_text_font()
+        self._apply_inline_annex_links()
         state = self._document_states.get(self._active_document_key)
         if isinstance(state, dict):
             state["source_html"] = rendered_html
         self.current_detail_text = "\n".join(plain_parts)
         self.copy_button.setEnabled(bool(self.current_detail_text))
+
+    # 본문 문장 속 별표ㆍ별지서식 인용. ``별표 1``ㆍ``별표 제1호``ㆍ
+    # ``별표 1의2``ㆍ``별지 제3호서식``ㆍ``별지 제3호의2서식``을 잡는다.
+    _INLINE_ANNEX_REFERENCE_PATTERN = re.compile(
+        r"별지\s*제\s*(?P<form>\d+)\s*호(?:\s*의\s*(?P<form_branch>\d+))?"
+        r"\s*서식"
+        r"|별표\s*제?\s*(?P<table>\d+)(?:\s*의\s*(?P<table_branch>\d+))?"
+    )
+    # 문서 종류별로 별표를 찾을 검색 분류.
+    _ANNEX_CATEGORY_BY_TARGET = {
+        "law": "licbyl",
+        "admrul": "admbyl",
+        "ordin": "ordinbyl",
+    }
+
+    @classmethod
+    def _inline_annex_label(cls, match: "re.Match[str]") -> str:
+        """인용에서 별표 목록과 같은 표기를 만든다."""
+        if match.group("form"):
+            branch = match.group("form_branch") or ""
+            suffix = f"의{branch}" if branch else ""
+            return f"별지 제{int(match.group('form'))}호{suffix}서식"
+        number = match.group("table")
+        if not number:
+            return ""
+        branch = match.group("table_branch") or ""
+        return f"별표 {int(number)}" + (f"의{int(branch)}" if branch else "")
+
+    def _current_document_row(self) -> dict[str, object]:
+        """지금 보고 있는 본문의 행(조항호목 탭이면 그 법령의 행)."""
+        row = self._document_tab_row(self._active_document_key)
+        if isinstance(row, dict):
+            source = row.get("source_row")
+            if isinstance(source, dict):
+                return source
+            return row
+        return self.pending_row if isinstance(self.pending_row, dict) else {}
+
+    def _apply_inline_annex_links(self) -> None:
+        """본문 문장의 ``별표 1`` 같은 인용에 링크를 건다.
+
+        그 문서 아래에 별표 목록이 붙어 있으면 그 자리로 데려가 펼치고
+        (``annex:``), 조문 하나만 연 화면처럼 목록이 없으면 별표를 찾아
+        미리보기로 여는 링크(``annexref://``)를 건다.
+        """
+        document = self.detail_view.document()
+        text = document.toPlainText()
+        if not text:
+            return
+        entries_by_label = {
+            " ".join(str(entry.get("label") or "").split()): index
+            for index, entry in enumerate(self._annex_section_entries)
+        }
+        row = self._current_document_row()
+        related = str(row.get("name") or "")
+        category = self._ANNEX_CATEGORY_BY_TARGET.get(
+            str(row.get("target") or ""), "licbyl"
+        )
+        cursor = QTextCursor(document)
+        cursor.beginEditBlock()
+        try:
+            for match in self._INLINE_ANNEX_REFERENCE_PATTERN.finditer(text):
+                # ``[별표 1] 이름``은 아래 별표 목록 줄이다. 그 줄은 이미
+                # 제 링크를 갖고 있으므로 건드리지 않는다.
+                if match.start() and text[match.start() - 1] == "[":
+                    continue
+                label = self._inline_annex_label(match)
+                if not label:
+                    continue
+                index = entries_by_label.get(label)
+                if index is not None:
+                    href = f"annex:{index}"
+                elif related:
+                    href = (
+                        "annexref://open?"
+                        f"name={quote(label, safe='')}"
+                        f"&category={quote(category, safe='')}"
+                        f"&related={quote(related, safe='')}"
+                    )
+                else:
+                    continue
+                cursor.setPosition(match.start())
+                cursor.setPosition(
+                    match.end(), QTextCursor.MoveMode.KeepAnchor
+                )
+                character_format = QTextCharFormat()
+                character_format.setAnchor(True)
+                character_format.setAnchorHref(href)
+                # 조문 인용 링크와 같은 색ㆍ밑줄로 맞춘다.
+                character_format.setForeground(QColor("#006dcc"))
+                character_format.setFontUnderline(True)
+                character_format.setToolTip(f"{label}을(를) 엽니다.")
+                cursor.mergeCharFormat(character_format)
+        finally:
+            cursor.endEditBlock()
 
     # 별표 목록 글자 크기(pt). 본문 글자 크기를 바꾸면 본문 전체와 같은
     # 비율로 함께 커지고 줄어든다.

@@ -6,6 +6,69 @@ from pathlib import Path
 import sys
 
 
+def _install_error_report(cache_root) -> None:
+    """예상치 못한 오류를 파일에 남기고 사용자에게 알린다.
+
+    PySide6는 신호 처리 중에 난 예외를 그대로 두면 프로그램을 통째로
+    끝내 버린다(화면이 아무 말 없이 사라진다). 무엇이 잘못됐는지 남지
+    않으면 다시 재현하기 전에는 고칠 수가 없어, 오류 기록을 남기고
+    한 번 알려 준다.
+    """
+    import traceback
+    from datetime import datetime
+
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QMessageBox
+
+    log_path = Path(cache_root) / "오류기록.txt"
+    reported: dict[str, bool] = {"shown": False}
+    # 띄운 알림 창을 잡아 둔다. 놓으면 곧바로 지워져 창이 깜빡이고 만다.
+    boxes: list[object] = []
+
+    def report(kind, value, tb) -> None:
+        if issubclass(kind, KeyboardInterrupt):
+            sys.__excepthook__(kind, value, tb)
+            return
+        detail = "".join(traceback.format_exception(kind, value, tb))
+        stamp = datetime.now().astimezone().isoformat(timespec="seconds")
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            with log_path.open("a", encoding="utf-8") as file:
+                file.write(f"\n===== {stamp} =====\n{detail}")
+        except OSError:
+            pass
+        sys.__excepthook__(kind, value, tb)
+        if reported["shown"]:
+            return
+        reported["shown"] = True
+        try:
+            box = QMessageBox()
+            box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+            box.setIcon(QMessageBox.Icon.Critical)
+            box.setWindowTitle("예상치 못한 오류")
+            box.setText(
+                "처리 중에 오류가 났습니다. 방금 하던 동작만 멈추고 "
+                "프로그램은 계속 쓸 수 있습니다."
+            )
+            box.setInformativeText(f"오류 기록: {log_path}")
+            box.setDetailedText(detail)
+            box.addButton("확인", QMessageBox.ButtonRole.AcceptRole)
+            # exec()로 붙잡아 두면 그리기 도중에 난 오류에서 화면이 멈출 수
+            # 있다. 창만 띄우고 하던 일로 돌아간다.
+            boxes.append(box)
+            box.finished.connect(
+                lambda _result, held=box: (
+                    boxes.remove(held) if held in boxes else None,
+                    reported.__setitem__("shown", False),
+                )
+            )
+            box.show()
+        except Exception:  # noqa: BLE001 - 알림이 또 터져 프로그램을 끝내지 않게.
+            reported["shown"] = False
+
+    sys.excepthook = report
+
+
 def main() -> int:
     # 내려받은 새 onefile EXE가 기존 EXE의 종료를 기다렸다 교체하는 모드다.
     # Qt를 불러오기 전에 처리해야 도우미가 작고 빠르게 끝난다.
@@ -41,7 +104,11 @@ def main() -> int:
     from PySide6.QtGui import QIcon
     from PySide6.QtWidgets import QApplication, QMessageBox
 
-    from storage.paths import ensure_cache_dirs, migrate_legacy_cache_dirs
+    from storage.paths import (
+        CACHE_ROOT,
+        ensure_cache_dirs,
+        migrate_legacy_cache_dirs,
+    )
     from ui.assets import LOGO_PATH
     from ui.main_window import LawSearchWindow
     from ui.theme import register_bundled_pretendard_fonts, ui_font
@@ -67,6 +134,7 @@ def main() -> int:
     migrate_legacy_cache_dirs()
     ensure_cache_dirs()
     app = QApplication(sys.argv)
+    _install_error_report(CACHE_ROOT)
     register_bundled_pretendard_fonts()
     app.setApplicationName("국가법령정보 통합검색")
     app.setApplicationVersion(APP_VERSION)

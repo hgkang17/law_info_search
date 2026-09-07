@@ -416,7 +416,26 @@ class LawSearchWindow(QMainWindow):
             "QScrollArea { background: transparent; border: none; }"
             "QScrollArea > QWidget > QWidget { background: transparent; }"
         )
-        self.open_documents_layout.addWidget(self.open_document_tab_strip, 1)
+        # 탭 폭만큼만 차지하게 두면 아래 전체 끄기 단추가 탭 오른쪽에
+        # 붙어 있다가 탭이 늘 때마다 함께 밀려난다.
+        self.open_document_tab_strip.set_hug_content(True)
+        self.open_documents_layout.addWidget(self.open_document_tab_strip, 0)
+
+        self.close_all_documents_button = QPushButton("전체 끄기")
+        self.close_all_documents_button.setObjectName("openDocumentsCloseAll")
+        self.close_all_documents_button.setCursor(
+            Qt.CursorShape.PointingHandCursor
+        )
+        self.close_all_documents_button.setToolTip(
+            "열려 있는 본문을 모두 닫습니다. 저장한 본문은 그대로 남습니다."
+        )
+        self.close_all_documents_button.clicked.connect(
+            self._close_all_open_documents
+        )
+        self.close_all_documents_button.hide()
+        self.open_documents_layout.addWidget(
+            self.close_all_documents_button, 0, Qt.AlignmentFlag.AlignVCenter
+        )
 
         self.open_documents_empty = QLabel("열린 본문 없음")
         self.open_documents_empty.setObjectName("openDocumentsEmpty")
@@ -1077,6 +1096,7 @@ class LawSearchWindow(QMainWindow):
         self.open_document_tabs.blockSignals(False)
 
         self.open_document_tab_strip.setVisible(bool(documents))
+        self.close_all_documents_button.setVisible(bool(documents))
         self.open_documents_empty.setVisible(not documents)
         if documents:
             self.open_document_tab_strip.refresh()
@@ -1133,6 +1153,29 @@ class LawSearchWindow(QMainWindow):
         # 본문 탭 쪽은 자기 화면이 알아서 갱신을 예약한다. 이쪽은
         # 표시줄만 바뀌므로 여기서 직접 예약한다.
         self._schedule_open_documents_refresh()
+
+    def _close_all_open_documents(self) -> None:
+        """열려 있는 본문을 모두 닫는다.
+
+        띠에 있는 것을 위에서부터 하나씩 닫는다. 닫는 방법은 화면마다
+        달라서(법령 본문은 탭을 지우고, 해석례ㆍ판례는 본문 칸을 비운다)
+        낱개 닫기와 같은 길을 그대로 쓴다.
+        """
+        closed = 0
+        while self.open_document_tabs.count():
+            before = self.open_document_tabs.count()
+            self._close_open_document_tab(0)
+            self._refresh_open_documents()
+            if self.open_document_tabs.count() >= before:
+                # 닫히지 않는 항목이 있으면 무한히 돌지 않는다.
+                break
+            closed += 1
+        if closed:
+            # 창 아래 공용 상태줄은 화면마다 제 줄을 쓴다. 지금 보고 있는
+            # 화면의 줄에 알린다.
+            status = getattr(self.resource_tab, "status_label", None)
+            if status is not None:
+                status.setText(f"열린 본문 {closed}개를 닫았습니다.")
 
     def _activate_open_document(self, token: str) -> None:
         document = self._open_document_descriptors.get(token)
@@ -2848,6 +2891,7 @@ class LawSearchWindow(QMainWindow):
                 border-radius: 6px;
                 padding: 8px;
             }
+            QPushButton#openDocumentsCloseAll,
             QPushButton#documentTabsCloseAll {
                 background: white;
                 color: #4a5b6e;
@@ -2858,11 +2902,13 @@ class LawSearchWindow(QMainWindow):
                 padding: 0 8px;
                 font-size: 9pt;
             }
+            QPushButton#openDocumentsCloseAll:hover,
             QPushButton#documentTabsCloseAll:hover {
                 background: #eef4fa;
                 border-color: #8fb4d3;
                 color: #1768aa;
             }
+            QPushButton#openDocumentsCloseAll:pressed,
             QPushButton#documentTabsCloseAll:pressed {
                 background: #dcecf9;
             }

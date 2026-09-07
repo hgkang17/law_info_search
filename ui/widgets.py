@@ -4218,6 +4218,9 @@ class TabStripScrollArea(QScrollArea):
     def __init__(self, content: QWidget, parent=None) -> None:
         super().__init__(parent)
         self._content = content
+        # 참이면 띠가 탭 폭만큼만 차지한다. 옆에 둔 단추가 탭 오른쪽에
+        # 붙어 있다가 탭이 늘어나면 함께 밀려난다.
+        self._hug_content = False
         self.setWidget(content)
         self.setWidgetResizable(False)
         self.setFrameShape(QFrame.Shape.NoFrame)
@@ -4233,9 +4236,17 @@ class TabStripScrollArea(QScrollArea):
         self._pan_start_value = 0
         self.refresh()
 
+    def set_hug_content(self, hug: bool) -> None:
+        """탭 폭만큼만 차지할지 정한다."""
+        self._hug_content = bool(hug)
+        self.refresh()
+
     def refresh(self) -> None:
         """탭이 늘거나 줄면 안쪽 폭과 띠 높이를 다시 맞춘다."""
         hint = self._content.sizeHint()
+        if self._hug_content:
+            # 탭이 창보다 넓어지면 남는 자리를 다 쓰고 안에서 밀어 본다.
+            self.setMaximumWidth(max(1, hint.width()))
         height = max(hint.height(), self._content.minimumSizeHint().height())
         width = max(hint.width(), self.viewport().width())
         self._content.resize(width, height)
