@@ -895,6 +895,7 @@ class LawDocumentCache(QObject):
     def _projected_favorite_record(
         self, record: dict[str, object]
     ) -> dict[str, object] | None:
+        articles = self._article_favorites(record)
         membership = next(
             (
                 item
@@ -903,15 +904,19 @@ class LawDocumentCache(QObject):
             ),
             None,
         )
-        if membership is None:
+        # 예전 저장본이나 법령 별만 따로 해제한 기록은 조항 즐겨찾기가
+        # 현재 프로젝트에 남아 있어도 부모 법령 소속이 없을 수 있다.
+        # 즐겨찾기 화면은 부모 레코드를 통해 조항을 꺼내므로 이 경우까지
+        # 버리면 본문 별은 켜져 있는데 조항호목 카드에는 아무것도 안 뜬다.
+        if membership is None and not articles:
             return None
+        membership = membership or {}
         projected = dict(record)
         projected["favorite"] = True
         projected["favorite_folder"] = str(membership.get("folder") or "")
         projected["favorite_order"] = int(
             membership.get("order", 1_000_000_000)
         )
-        articles = self._article_favorites(record)
         for article in articles:
             article.pop("favorite_projects", None)
         projected["favorite_articles"] = articles

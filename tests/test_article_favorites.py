@@ -61,6 +61,45 @@ def test_article_favorite_is_kept_inside_the_law_record(tmp_path) -> None:
     assert cache.is_favorite(ROW)
 
 
+def test_article_remains_visible_if_parent_law_membership_is_missing(
+    tmp_path,
+) -> None:
+    """본문 별은 켜졌는데 즐겨찾기 탭에서 조문이 사라지는 저장본을 보정한다."""
+    cache = _cache(tmp_path)
+    assert cache.set_article_favorite(
+        ROW, "000700", "제7조(실천계획의 내용 등)", True
+    )
+    # 법령 자체 별만 따로 꺼진 예전ㆍ불일치 저장 상태를 재현한다.
+    assert cache.set_favorite(ROW, False)
+    assert cache.is_article_favorite(ROW, "000700")
+
+    entries = cache.favorite_entries()
+
+    assert len(entries) == 1
+    assert entries[0]["favorite_articles"] == [
+        {
+            "jo": "000700",
+            "hang": "",
+            "ho": "",
+            "mok": "",
+            "label": "제7조(실천계획의 내용 등)",
+        }
+    ]
+    app = QApplication.instance() or QApplication([])
+    settings = QSettings(
+        str(tmp_path / "orphan-article.ini"), QSettings.Format.IniFormat
+    )
+    tab = ViewedLawsTab(cache, favorites_only=True, settings=settings)
+    tab.show()
+    app.processEvents()
+    try:
+        article_tree = tab.favorite_trees["article"]
+        assert article_tree.topLevelItemCount() == 1
+        assert "제7조(실천계획의 내용 등)" in article_tree.topLevelItem(0).text(0)
+    finally:
+        tab.close()
+
+
 def test_subarticle_favorite_is_distinct_and_survives_resave(tmp_path) -> None:
     cache = _cache(tmp_path)
     assert cache.set_article_favorite(
