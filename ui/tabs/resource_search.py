@@ -8607,7 +8607,17 @@ class ResourceSearchTab(QWidget):
             def integrated_sort_key(row: dict[str, object]) -> tuple:
                 score = name_scores.get(id(row), 0.0)
                 matched = score >= self.INTEGRATED_NAME_MATCH_RATIO
+                exact_name = (
+                    bool(search_name_key(query_text))
+                    and search_name_key(query_text)
+                    == search_name_key(str(row.get("name") or ""))
+                )
                 return (
+                    # 별표ㆍ서식명을 그대로 검색한 행은 AI추천 조문보다
+                    # 무조건 먼저 둔다. 유사도 점수만으로 묶으면 API에서
+                    # 같은 법령명의 추천 조문도 높은 점수를 받아 앞줄을
+                    # 차지할 수 있다.
+                    0 if exact_name and not row.get("ai_recommended") else 1,
                     0 if matched else 1,
                     # 농지법을 찾았을 때 농지법 AI추천 조문도 이름 점수가
                     # 100%다. 이름 일치 묶음 안에서는 자료 본체가 조문보다
@@ -9660,6 +9670,33 @@ class ResourceSearchTab(QWidget):
         if "detail_target" not in config:
             self._show_annex_links(row)
             return True
+        keyword_unit = (
+            self._keyword_article_unit(row)
+            if str(row.get("target") or "") == "law"
+            else None
+        )
+        if keyword_unit is not None:
+            # AI추천은 조문 단위 결과다. 법령 전문 API를 받은 뒤 자르는
+            # 옛 경로 대신 즐겨찾기와 같은 조문 APIㆍ단위 캐시를 쓴다.
+            # 저장 전문은 API 장애 때에만 fallback으로 넘긴다.
+            cached_record = self.law_cache.load_for_row(row)
+            fallback_payload = (
+                cached_record.get("payload")
+                if isinstance(cached_record, dict)
+                and isinstance(cached_record.get("payload"), dict)
+                else {}
+            )
+            article_record = {"row": dict(row), "payload": fallback_payload}
+            if (
+                force_api
+                or self._load_favorite_article_cache(row, keyword_unit) is not None
+                or self.oc_provider().strip()
+                or fallback_payload
+            ):
+                self.open_cached_favorite_article(article_record, keyword_unit)
+                return True
+            prompt_oc_api_key(self)
+            return False
         if str(row.get("target") or "") == "law" and not force_api:
             cached_record = self.law_cache.load_for_row(row)
             if cached_record is not None:
@@ -11558,6 +11595,7 @@ class ResourceSearchTab(QWidget):
         plain_parts.extend(("", f"[{section_label}]"))
         for index, entry in enumerate(entries):
             shown = self._annex_display_title(entry)
+            item_anchor = f"annex-item-{index}"
             file_url = str(entry.get("file_url") or "")
             pdf_url = str(entry.get("pdf_url") or "")
             can_preview = self._annex_can_preview(entry)
@@ -11598,7 +11636,8 @@ class ResourceSearchTab(QWidget):
                 )
                 color = "#1f57c8" if expanded else "#242529"
                 title_html = (
-                    f'<a href="{escape(toggle, quote=True)}" '
+                    f'<a name="{item_anchor}" '
+                    f'href="{escape(toggle, quote=True)}" '
                     f'style="color:{color}; text-decoration:none; '
                     'font-weight:400; vertical-align:middle;">'
                     f'<img src="{icon_data_uri(marker_icon)}" width="16" '
@@ -11609,9 +11648,18 @@ class ResourceSearchTab(QWidget):
                     f'alt="{"접기" if expanded else "펼치기"}">'
                     f"&nbsp;{escape(shown)}</a>"
                 )
-            html_parts.append(f'<a name="annex-item-{index}"></a>')
+            else:
+                # Qt는 내용 없는 ``<a name=...></a>``가 여러 줄 이어지면
+                # 첫 별표 뒤의 앵커 이름을 버릴 수 있다. 실제 제목 글자에
+                # 이름을 붙여 두어 두 번째 이후 별표도 목차 음영의 시작
+                # 위치를 확실히 찾게 한다.
+                title_html = (
+                    f'<a name="{item_anchor}" style="color:#242529; '
+                    'text-decoration:none; font-weight:400;">'
+                    f'{escape(shown)}</a>'
+                )
             if toc_entries is not None:
-                toc_entries.append((4, shown, f"annex-item-{index}"))
+                toc_entries.append((4, shown, item_anchor))
             html_parts.append(
                 '<div class="annex-item" style="margin:0; padding:4px 0 10px 0; '
                 f'line-height:{BODY_LINE_HEIGHT}; '

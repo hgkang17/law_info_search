@@ -164,6 +164,18 @@ def test_annex_links_are_rendered_after_articles(qt_app, tmp_path) -> None:
     labels = {anchor: label for _depth, label, anchor in toc}
     assert labels["law-annexes"] == "별표·서식 (2건)"
     assert labels["annex-item-0"] == "[별표 1] 시험 기준(제1조 관련)"
+    # 내용 없는 이름 앵커는 Qt가 첫 줄 뒤부터 버릴 수 있다. 두 번째
+    # 별표를 눌러도 실제 제목 줄을 찾아 음영 표시하는지 지킨다.
+    second_item = next(
+        item
+        for item in tab._toc_items
+        if item.data(0, Qt.ItemDataRole.UserRole) == "annex-item-1"
+    )
+    tab._toc_item_clicked(second_item)
+    assert len(tab.detail_search.base_selections) == 1
+    assert "[별지 제2호의3서식] 시험 신청서" in (
+        tab.detail_search.base_selections[0].cursor.selectedText()
+    )
     tab.close()
 
 

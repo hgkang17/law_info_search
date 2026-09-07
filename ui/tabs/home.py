@@ -147,6 +147,9 @@ class HomeSearchPage(QWidget):
         # 검색칸 바로 아래에 붙는 얇은 진행 막대. 평소에는 숨어 있다가
         # 검색이 도는 동안만 좌우로 흐른다.
         self.progress_bar = SearchProgressBar()
+        progress_policy = self.progress_bar.sizePolicy()
+        progress_policy.setRetainSizeWhenHidden(True)
+        self.progress_bar.setSizePolicy(progress_policy)
 
         column.addWidget(self.logo_label)
         column.addWidget(self.title_label)

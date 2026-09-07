@@ -104,3 +104,32 @@ def test_exact_resource_precedes_same_named_ai_article() -> None:
 
     rows.sort(key=key)
     assert not rows[0].get("ai_recommended")
+
+
+def test_exact_annex_name_gets_a_tier_ahead_of_ai_recommendation() -> None:
+    query = "용도별 건축물의 종류(제3조의5 관련)"
+    annex = {
+        "target": "licbyl",
+        "name": "용도별 건축물의 종류(제3조의5 관련)",
+    }
+    ai = {
+        "target": "law",
+        "name": "건축법 시행령",
+        "ai_recommended": True,
+    }
+
+    def key(row):
+        score = search_name_similarity(query, row["name"])
+        matched = score >= ResourceSearchTab.INTEGRATED_NAME_MATCH_RATIO
+        exact = search_name_key(query) == search_name_key(row["name"])
+        return (
+            0 if exact and not row.get("ai_recommended") else 1,
+            0 if matched else 1,
+            1 if matched and row.get("ai_recommended") else 0,
+            -score if matched else 0.0,
+            ResourceSearchTab._integrated_group_order(row),
+        )
+
+    rows = [ai, annex]
+    rows.sort(key=key)
+    assert rows[0] is annex

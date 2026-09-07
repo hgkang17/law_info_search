@@ -146,6 +146,28 @@ def test_favorite_article_uses_api_then_unit_cache(tmp_path) -> None:
     assert "조항호목 캐시" in reopened.status_label.text()
 
 
+def test_ai_recommended_result_requests_article_api_directly(tmp_path) -> None:
+    tab = _tab(tmp_path)
+    row = {
+        **ROW,
+        "ai_recommended": True,
+        "keyword_jo": "000700",
+        "keyword_hang": "000200",
+        "keyword_ho": "",
+        "keyword_mok": "",
+        "keyword_provision": "제7조제2항",
+    }
+    started = []
+    tab._start_worker = lambda worker, _message: started.append(worker)
+
+    assert tab._request_resource_detail(row)
+
+    assert len(started) == 1
+    assert started[0].operation == "favorite_article_detail"
+    assert started[0].jo == "000700"
+    assert started[0].hang == "000200"
+
+
 def test_favorite_article_api_failure_falls_back_to_saved_full_text(
     tmp_path,
 ) -> None:
