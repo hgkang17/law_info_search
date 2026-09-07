@@ -872,6 +872,28 @@ def test_embedded_provider_header_does_not_shift_between_ais(
         widget.deleteLater()
 
 
+def test_embedded_empty_chat_hint_grows_when_panel_is_narrow(
+    qt_app, tmp_path
+) -> None:
+    """본문 옆 패널이 좁아져도 기본 안내문의 위ㆍ아래가 잘리지 않는다."""
+    settings = QSettings(
+        str(tmp_path / "narrow-hint.ini"), QSettings.Format.IniFormat
+    )
+    widget = AiChatPanel(settings=settings, standalone=False)
+    try:
+        widget.resize(260, 650)
+        widget.show()
+        qt_app.processEvents()
+
+        label = widget.transcript_hint
+        assert label.width() > 0
+        assert label.heightForWidth(label.width()) > label.fontMetrics().height() * 2
+        assert label.height() >= label.heightForWidth(label.width())
+    finally:
+        widget.shutdown()
+        widget.deleteLater()
+
+
 def test_model_menu_uses_compact_text_check_without_native_indicator(
     panel,
 ) -> None:

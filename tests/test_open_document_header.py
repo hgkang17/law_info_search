@@ -77,6 +77,58 @@ def test_text_selection_does_not_rebuild_open_document_tabs(qt_app) -> None:
         qt_app.processEvents()
 
 
+def test_favorite_back_keeps_open_document_scroll_until_tab_is_closed(
+    qt_app,
+) -> None:
+    """즐겨찾기로 돌아가도 살아 있는 상단 본문 탭의 읽던 자리는 남는다."""
+    window = LawSearchWindow()
+    try:
+        window.resize(1200, 800)
+        window.show()
+        resource = window.resource_tab
+        row = {
+            "target": "law",
+            "id": "009294",
+            "label": "법령",
+            "name": "국토의 계획 및 이용에 관한 법률",
+        }
+        resource._open_document_tab(row)
+        resource._set_detail_document(
+            row["name"],
+            [("법령ID", row["id"])],
+            [("조문", "\n".join(f"제{n}조 본문 내용" for n in range(1, 301)))],
+            build_toc=False,
+        )
+        resource._set_reading_mode(True)
+        qt_app.processEvents()
+        bar = resource.detail_view.verticalScrollBar()
+        assert bar.maximum() > 600
+        bar.setValue(600)
+        key = resource._active_document_key
+
+        resource._reading_mode_exit_callback = window._activate_favorites_page
+        resource._exit_reading_mode()
+        qt_app.processEvents()
+
+        assert resource._document_states[key]["scroll"] == 600
+        window._refresh_open_documents()
+        token = next(
+            token
+            for token, document in window._open_document_descriptors.items()
+            if document.get("key") == key
+        )
+        window._activate_open_document(token)
+        qt_app.processEvents()
+
+        assert resource.detail_view.verticalScrollBar().value() == 600
+
+        resource._close_document_tab_by_key(key)
+        assert key not in resource._document_states
+    finally:
+        window.close()
+        qt_app.processEvents()
+
+
 def test_unchanged_documents_do_not_rebuild_header_tabs(qt_app) -> None:
     """화면만 오갈 때 같은 열린 본문 탭을 삭제하고 다시 만들지 않는다."""
     window = LawSearchWindow()

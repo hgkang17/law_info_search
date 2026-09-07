@@ -1355,9 +1355,16 @@ class AiChatPanel(QFrame):
         self.transcript_layout = QVBoxLayout(self.transcript_content)
         self.transcript_layout.setContentsMargins(18, 14, 18, 14)
         self.transcript_layout.setSpacing(4)
-        self.transcript_hint = QLabel()
+        # 기본 QLabel은 좁아진 뒤에도 처음 계산한 한두 줄 높이를 붙들어
+        # 안내문의 위ㆍ아래를 잘랐다. 실제 폭으로 줄바꿈 높이를 다시
+        # 계산하는 라벨을 써 패널 폭에 따라 세로로 자연스럽게 늘린다.
+        self.transcript_hint = WidthAwareWrapLabel()
         self.transcript_hint.setObjectName("aiChatHint")
         self.transcript_hint.setWordWrap(True)
+        self.transcript_hint.setMinimumWidth(0)
+        self.transcript_hint.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Minimum
+        )
         self.transcript_layout.addWidget(self.transcript_hint)
         # 늘어나는 spacer를 두면 긴 답변을 짧은 답변으로 바꾼 뒤에도
         # 이전 여유 높이가 스크롤 범위에 남을 수 있다. 내용은 위에 붙이고

@@ -1468,6 +1468,16 @@ class ResourceSearchTab(QWidget):
         if expanded == self._reading_mode:
             return
 
+        scroll_key = self._active_document_key
+        scroll_bar = self.detail_view.verticalScrollBar()
+        scroll_position = scroll_bar.value()
+        scroll_state = self._document_states.get(scroll_key)
+        if isinstance(scroll_state, dict):
+            # 본문 카드를 숨기면 스크롤 최대값이 잠시 0이 되며 valueChanged도
+            # 0으로 온다. 화면을 떠나기 전에 읽던 자리를 먼저 확정해 둔다.
+            scroll_state["scroll"] = scroll_position
+        self._scroll_memory_suspended += 1
+
         window = self.window()
         central_widget = (
             window.centralWidget() if hasattr(window, "centralWidget") else None
@@ -1515,12 +1525,6 @@ class ResourceSearchTab(QWidget):
                 central_layout.setContentsMargins(*self._normal_window_margins)
         self.apply_body_margins(expanded)
 
-        scroll_bar = self.detail_view.verticalScrollBar()
-        scroll_ratio = (
-            scroll_bar.value() / scroll_bar.maximum()
-            if scroll_bar.maximum() > 0
-            else 0.0
-        )
         if expanded:
             self.main_splitter.setSizes(
                 [0, max(1, sum(self._normal_splitter_sizes)), 0]
@@ -1553,14 +1557,21 @@ class ResourceSearchTab(QWidget):
             if callback is not None:
                 self._reading_mode_exit_callback = None
                 callback()
-        # 패널 너비가 바뀌면 본문이 다시 줄바꿈되어 스크롤 위치가 어긋나므로
-        # 레이아웃이 반영된 뒤 같은 비율 위치로 복원함.
-        QTimer.singleShot(
-            0,
-            lambda bar=scroll_bar, ratio=scroll_ratio: bar.setValue(
-                round(ratio * bar.maximum())
-            ),
-        )
+        def settle_scroll() -> None:
+            self._scroll_memory_suspended = max(
+                0, self._scroll_memory_suspended - 1
+            )
+            if (
+                expanded
+                and self._reading_mode
+                and scroll_key == self._active_document_key
+            ):
+                # 숨겨진 화면에서 0으로 잘렸더라도 열린 본문 탭 상태에
+                # 보존한 절대 위치를 크게 보기의 최종 배치 뒤에 되살린다.
+                self.detail_view.document().size()
+                self._apply_document_scroll(scroll_key, scroll_position)
+
+        QTimer.singleShot(0, settle_scroll)
         QTimer.singleShot(0, self.memo_marker_bar.refresh_after_layout_change)
         # 크게 보기로 드나들면 본문 폭이 바뀌어 조문 줄의 자리도 바뀐다.
         # 다시 잡지 않으면 3단ㆍ즐겨찾기 단추가 옛 자리에 남아 제목 옆
@@ -8436,9 +8447,9 @@ class ResourceSearchTab(QWidget):
         "admbyl": 5,
         "ordinbyl": 6,
     }
-    # 법령과 행정규칙 다음 자리. 조문 단위 추천은 두 기본 목록 뒤에 두고,
-    # 자치법규와 별표ㆍ서식 등 나머지 자료보다는 앞에 둔다.
-    INTEGRATED_AI_ORDER = 2
+    # 이름이 80% 이상 같은 최우선 자료 다음에는 AI추천 조문을 먼저 둔다.
+    # 그 뒤로 법령 → 행정규칙 → 자치법규 → 별표ㆍ서식 차례다.
+    INTEGRATED_AI_ORDER = -1
     # 검색어와 이름이 이만큼 닮았으면 구분(법령ㆍ행정규칙ㆍ자치법규…)을
     # 가리지 않고 맨 위로 올린다. "이천시 도시계획 조례"처럼 이름을 그대로
     # 적어 찾는데 자치법규 차례가 뒤라 한참 아래에 있던 일을 없앤다.
@@ -8511,7 +8522,7 @@ class ResourceSearchTab(QWidget):
         if self.category_target == RESOURCE_ALL_TARGET:
             # 통합검색은 구분끼리 모아 보여 준다. 다만 검색어를 이름 그대로
             # 적은 자료(닮은 정도 INTEGRATED_NAME_MATCH_RATIO 이상)는 구분을
-            # 가리지 않고 맨 앞에 세운다. 그 뒤로 AI가 골라 준 조문, 법령 →
+            # 가리지 않고 맨 앞에 세운다. 그 뒤로 AI가 골라 준 조문 → 법령 →
             # 행정규칙 → 자치법규 → 별표ㆍ서식 차례다. 여러 API 결과가 뒤섞여
             # 있으면 무엇을 보고 있는지 가늠하기 어려웠다.
             query_text = self.query_input.text().strip()

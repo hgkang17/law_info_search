@@ -49,7 +49,7 @@ def test_keyword_categories_sit_next_to_integrated_search(window) -> None:
     assert targets[2:] == ["law", "admrul", "ordin", "__annex_all__"]
 
 
-def test_integrated_results_put_admin_rules_before_ai_recommendations(
+def test_integrated_results_put_ai_recommendations_before_resource_groups(
     window,
 ) -> None:
     resource = window.resource_tab
@@ -66,9 +66,9 @@ def test_integrated_results_put_admin_rules_before_ai_recommendations(
     assert [
         (row["target"], bool(row.get("ai_recommended"))) for row in rows
     ] == [
+        ("law", True),
         ("law", False),
         ("admrul", False),
-        ("law", True),
         ("ordin", False),
         ("licbyl", False),
     ]
