@@ -4009,6 +4009,13 @@ class CornerCloseTabBar(QTabBar):
     그린다.
     """
 
+    # 탭을 이만큼 띠 밖으로 끌어내고 손을 떼면 별도 창으로 꺼낸다.
+    # 좌우로 끄는 것은 순서 바꾸기이므로 위아래로만 본다.
+    DETACH_MARGIN = 40
+
+    # 탭을 띠 밖에 놓았다(탭에 담아 둔 값, 뗀 자리의 전역 좌표).
+    detachRequested = Signal(object, QPoint)
+
     # 글리프 반팔 길이와 모서리에서 띄우는 거리, 그리고 누르기 판정 크기.
     ARM = 3.0
     # 탭 테두리에 닿을 듯 붙으면 겹쳐 보인다. 한 칸 안쪽으로 들인다.
@@ -4019,6 +4026,7 @@ class CornerCloseTabBar(QTabBar):
         super().__init__(parent)
         self.closable_check = None
         self._hover_index = -1
+        self._pressed_data = None
         self.setMouseTracking(True)
 
     # --- 자리 계산 -------------------------------------------------
@@ -4109,6 +4117,7 @@ class CornerCloseTabBar(QTabBar):
         super().leaveEvent(event)
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt 규약)
+        self._pressed_data = None
         if event.button() == Qt.MouseButton.LeftButton:
             index = self.close_spot_at(event.position().toPoint())
             if index >= 0:
@@ -4116,7 +4125,34 @@ class CornerCloseTabBar(QTabBar):
                 event.accept()
                 self.tabCloseRequested.emit(index)
                 return
+            pressed = self.tabAt(event.position().toPoint())
+            if pressed >= 0:
+                # 끌기가 끝날 때는 탭 자리가 이미 바뀌어 있을 수 있다.
+                # 번호 대신 탭에 담아 둔 값을 들고 있는다.
+                self._pressed_data = self.tabData(pressed)
         super().mousePressEvent(event)
+
+    def _is_detach_spot(self, point: QPoint) -> bool:
+        """띠에서 위아래로 충분히 벗어난 자리인지."""
+        return (
+            point.y() > self.height() + self.DETACH_MARGIN
+            or point.y() < -self.DETACH_MARGIN
+        )
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 (Qt 규약)
+        data = self._pressed_data
+        self._pressed_data = None
+        detaching = (
+            data is not None
+            and event.button() == Qt.MouseButton.LeftButton
+            and self._is_detach_spot(event.position().toPoint())
+        )
+        global_point = event.globalPosition().toPoint()
+        # 먼저 Qt가 들고 있던 끌기를 정상으로 끝낸 뒤에 알린다. 여기서
+        # 바로 탭을 없애면 끌기 상태가 남아 다음 누르기가 어긋난다.
+        super().mouseReleaseEvent(event)
+        if detaching:
+            self.detachRequested.emit(data, global_point)
 
 
 class TabClickActivator(QObject):

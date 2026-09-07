@@ -64,6 +64,7 @@ from ui.widgets import (
     restore_text_view_scroll,
 )
 from ui.dialogs import (
+    DetachedDocumentWindow,
     InlinePdfPreviewPanel,
     LawReferencePopup,
     MemoNoteDialog,
@@ -997,6 +998,9 @@ class ResourceSearchTab(QWidget):
         # 탭 줄 폭이 버튼만큼 줄어 제목이 더 잘린다.
         self.document_tabs.setUsesScrollButtons(False)
         self.document_tabs.setElideMode(Qt.TextElideMode.ElideNone)
+        # 탭을 띠 밖으로 끌어 놓으면 그 본문만 별도 창으로 꺼낸다.
+        self.document_tabs.detachRequested.connect(self._detach_document_tab)
+        self._detached_document_windows: list[DetachedDocumentWindow] = []
         self.document_tab_strip = TabStripScrollArea(self.document_tabs)
         self.document_tab_strip.setObjectName("documentTabStrip")
 
@@ -2239,6 +2243,70 @@ class ResourceSearchTab(QWidget):
             index, QTabBar.ButtonPosition.LeftSide, star
         )
 
+    def _detach_document_tab(self, key: object, global_position) -> None:
+        """탭 하나를 별도 창으로 꺼낸다.
+
+        꺼낸 창은 그 본문을 그대로 보여 주고 인용 링크도 이 화면이 받아
+        연다(팝업은 본체 창에 뜬다). 원래 탭은 닫는다 — 같은 본문이 두
+        군데에 남으면 어느 쪽을 고쳤는지 알기 어렵다. 저장한 본문은
+        저장내역에 그대로 있다.
+        """
+        document_key = str(key or "")
+        if not document_key or document_key == "__preview__":
+            return
+        if self._document_tab_index(document_key) < 0:
+            return
+        if document_key == self._active_document_key:
+            self._save_active_document_state()
+        state = self._document_states.get(document_key)
+        if not isinstance(state, dict):
+            return
+        html = str(state.get("html") or state.get("source_html") or "")
+        if not html:
+            self.status_label.setText(
+                "아직 그리지 않은 본문은 꺼낼 수 없습니다."
+            )
+            return
+        try:
+            source_font_size = float(state.get("font_size") or 10)
+        except (TypeError, ValueError):
+            source_font_size = 10.0
+        row = self._document_tab_row(document_key)
+        title = str(
+            (row or {}).get("name")
+            or state.get("headline")
+            or "본문"
+        )
+        window = DetachedDocumentWindow(
+            title,
+            normalize_inline_icon_sources(
+                self._scale_document_font_sizes(
+                    html, source_font_size, self.detail_font_size
+                )
+            ),
+            self._detail_link_clicked,
+            make_detail_font(self.detail_font_size, self.detail_font_family),
+        )
+        self._detached_document_windows.append(window)
+        window.destroyed.connect(
+            lambda _obj=None, target=window: (
+                self._detached_document_windows.remove(target)
+                if target in self._detached_document_windows
+                else None
+            )
+        )
+        if global_position is not None:
+            window.move(
+                max(0, global_position.x() - window.width() // 2),
+                max(0, global_position.y() - 40),
+            )
+        window.show()
+        window.raise_()
+        window.activateWindow()
+        window.scroll_to(int(state.get("scroll") or 0))
+        self._close_document_tab_by_key(document_key)
+        self.status_label.setText(f"{title}을(를) 별도 창으로 꺼냈습니다.")
+
     def _close_all_document_tabs(self) -> None:
         """열려 있는 본문 탭을 모두 닫는다.
 
@@ -2518,12 +2586,15 @@ class ResourceSearchTab(QWidget):
 
     def _refresh_toc_search(self) -> None:
         query = self.toc_search_input.text().strip().casefold()
+        # 예전에는 조문(깊이 4)만 훑었다. 도시ㆍ군관리계획수립지침처럼
+        # 목차가 편ㆍ장ㆍ절로만 이루어진 문서에는 깊이 4 항목이 하나도
+        # 없어서, "개발진흥지구"가 제8절 제목에 있어도 한 건도 찾지
+        # 못했다. 목차에 적힌 모든 줄에서 찾는다.
         self._toc_search_matches = (
             [
                 item
                 for item in self._toc_items
-                if item.data(0, Qt.ItemDataRole.UserRole + 1) == 4
-                and query in item.text(0).casefold()
+                if query in item.text(0).casefold()
             ]
             if query
             else []
@@ -3213,13 +3284,13 @@ class ResourceSearchTab(QWidget):
         )
 
     def _highlight_toc_article(self, item: QTreeWidgetItem) -> None:
-        """이동한 조문의 첫 문단 한 줄만 아주 옅게 표시."""
-        depth = int(item.data(0, Qt.ItemDataRole.UserRole + 1) or 0)
-        anchor = str(item.data(0, Qt.ItemDataRole.UserRole) or "")
-        if depth != 4 or not anchor:
-            self.detail_search.set_base_selections([])
-            return
+        """이동한 목차 항목이 놓인 줄만 아주 옅게 표시.
 
+        조문뿐 아니라 편ㆍ장ㆍ절 제목으로 옮겨 갈 때도 같은 표시를 준다.
+        지침류는 목차가 절 제목까지밖에 없어, 조문만 표시하면 어디로
+        옮겨 왔는지 알 수 없었다.
+        """
+        anchor = str(item.data(0, Qt.ItemDataRole.UserRole) or "")
         self._highlight_anchor_line(anchor)
 
     def _highlight_anchor_line(self, anchor: str) -> None:

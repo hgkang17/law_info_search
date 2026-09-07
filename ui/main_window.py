@@ -2833,6 +2833,21 @@ class LawSearchWindow(QMainWindow):
             QPushButton#favoriteAddFolderButton:pressed {
                 background: #c7e1f4;
             }
+            QWidget#detachedDocumentWindow {
+                background: #ffffff;
+            }
+            QLabel#detachedDocumentTitle {
+                color: #173b63;
+                font-size: 11pt;
+                font-weight: 700;
+                padding: 2px 2px 4px 2px;
+            }
+            QTextBrowser#detachedDocumentBrowser {
+                background: #ffffff;
+                border: 1px solid #dbe3ec;
+                border-radius: 6px;
+                padding: 8px;
+            }
             QPushButton#documentTabsCloseAll {
                 background: white;
                 color: #4a5b6e;

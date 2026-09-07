@@ -25,6 +25,7 @@ from ui.theme import detail_font
 from utils.constants import DEFAULT_POPUP_FONT_POINT
 from ui.widgets import (
     DETAIL_FONT_SIZE_STEP,
+    DetailSearchBar,
     PopupDragBar,
     PopupResizeHandle,
     apply_close_icon,
@@ -657,6 +658,60 @@ class MemoNoteDialog(QDialog):
         if self._saved:
             return self._saved_text
         return self.editor.toPlainText().strip()
+
+
+class DetachedDocumentWindow(QWidget):
+    """열린 본문 탭을 창 밖으로 꺼내 따로 띄우는 크게 보기 창.
+
+    본문 화면과 같은 HTML을 그대로 보여 주고, 인용 링크는 원래 화면이
+    처리하도록 넘긴다. 창 안에서도 Ctrl+F로 찾을 수 있다.
+    """
+
+    def __init__(
+        self,
+        title: str,
+        html: str,
+        link_handler,
+        font,
+        parent=None,
+    ) -> None:
+        super().__init__(None, Qt.WindowType.Window)
+        self.setObjectName("detachedDocumentWindow")
+        self.setWindowTitle(title)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        self.resize(980, 720)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 8, 10, 10)
+        layout.setSpacing(6)
+
+        self.title_label = QLabel(title)
+        self.title_label.setObjectName("detachedDocumentTitle")
+        self.title_label.setWordWrap(True)
+        layout.addWidget(self.title_label)
+
+        self.browser = QTextBrowser()
+        self.browser.setObjectName("detachedDocumentBrowser")
+        self.browser.setFont(font)
+        self.browser.document().setDefaultFont(font)
+        self.browser.setOpenExternalLinks(False)
+        self.browser.setOpenLinks(False)
+        self.browser.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.TextSelectableByKeyboard
+            | Qt.TextInteractionFlag.LinksAccessibleByMouse
+        )
+        if link_handler is not None:
+            self.browser.anchorClicked.connect(link_handler)
+        self.browser.setHtml(html)
+        layout.addWidget(self.browser, 1)
+
+        # 본문 화면과 같은 찾기 창을 이 창에도 붙인다.
+        self.search_bar = DetailSearchBar(self.browser, self)
+
+    def scroll_to(self, position: int) -> None:
+        scroll_bar = self.browser.verticalScrollBar()
+        scroll_bar.setValue(max(0, min(int(position), scroll_bar.maximum())))
 
 
 class LawReferencePopup(QFrame):
