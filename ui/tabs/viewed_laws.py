@@ -2440,7 +2440,11 @@ class ViewedLawsTab(QWidget):
             record["favorite_article_jo"] = article_jo
             if article_unit is not None:
                 record["favorite_article_unit"] = dict(article_unit)
-        self.openRequested.emit(record)
+        # 두 번 눌러 여는 길이다. 여기서 곧바로 본문을 열면, 그 과정에서
+        # 저장 기록이 바뀌며(별표는 열 때 저장본을 남긴다) 이 목록이 통째로
+        # 다시 그려진다. 지금 눌린 항목이 지워진 채로 Qt가 두 번 누르기
+        # 처리를 이어가다 프로그램이 그대로 꺼졌다. 한 박자 뒤에 연다.
+        QTimer.singleShot(0, lambda payload=record: self.openRequested.emit(payload))
 
     def open_folder(self) -> None:
         try:

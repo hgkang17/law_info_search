@@ -423,6 +423,11 @@ class LawSearchWindow(QMainWindow):
 
         self.close_all_documents_button = QPushButton("전체 끄기")
         self.close_all_documents_button.setObjectName("openDocumentsCloseAll")
+        # 탭 옆에 살짝 붙는 보조 단추다. 늘어나지 않게 크기를 못박는다.
+        self.close_all_documents_button.setSizePolicy(
+            QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
+        )
+        self.close_all_documents_button.setFixedHeight(22)
         self.close_all_documents_button.setCursor(
             Qt.CursorShape.PointingHandCursor
         )
@@ -1736,7 +1741,10 @@ class LawSearchWindow(QMainWindow):
                 tab.open_cached_snapshot(record)
                 return tab
             raise ValueError("저장 본문을 열 검색 화면을 확인하지 못했습니다.")
-        except (ValueError, TypeError) as exc:
+        except Exception as exc:  # noqa: BLE001
+            # 저장 본문 하나가 잘못됐다고 프로그램이 통째로 꺼지면 그 뒤로
+            # 그 항목을 열 때마다 같은 일이 되풀이된다. 무엇이 잘못됐는지
+            # 알리고 화면은 살려 둔다(자세한 자국은 오류기록.txt에 남는다).
             QMessageBox.critical(self, "저장 본문 열기 실패", str(exc))
             return None
 
@@ -2891,7 +2899,6 @@ class LawSearchWindow(QMainWindow):
                 border-radius: 6px;
                 padding: 8px;
             }
-            QPushButton#openDocumentsCloseAll,
             QPushButton#documentTabsCloseAll {
                 background: white;
                 color: #4a5b6e;
@@ -2901,6 +2908,16 @@ class LawSearchWindow(QMainWindow):
                 max-height: 24px;
                 padding: 0 8px;
                 font-size: 9pt;
+            }
+            QPushButton#openDocumentsCloseAll {
+                background: white;
+                color: #5b6b7d;
+                border: 1px solid #cbd8e4;
+                border-radius: 4px;
+                min-height: 20px;
+                max-height: 20px;
+                padding: 0 6px;
+                font-size: 8pt;
             }
             QPushButton#openDocumentsCloseAll:hover,
             QPushButton#documentTabsCloseAll:hover {

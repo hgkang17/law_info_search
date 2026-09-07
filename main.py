@@ -68,6 +68,35 @@ def _install_error_report(cache_root) -> None:
 
     sys.excepthook = report
 
+    # Qt가 직접 내는 경고ㆍ치명 오류(스레드가 살아 있는데 지워졌다는 등)는
+    # 파이썬 예외로 오지 않는다. 그대로 두면 프로그램이 아무 말 없이 꺼진
+    # 이유를 알 수 없어, 같은 기록 파일에 남긴다.
+    from PySide6.QtCore import QtMsgType, qInstallMessageHandler
+
+    _serious = {QtMsgType.QtCriticalMsg, QtMsgType.QtFatalMsg}
+
+    def qt_message(mode, context, message) -> None:
+        if mode not in _serious:
+            return
+        stamp = datetime.now().astimezone().isoformat(timespec="seconds")
+        where = ""
+        try:
+            if context is not None and context.file:
+                where = f" ({context.file}:{context.line})"
+        except Exception:  # noqa: BLE001
+            where = ""
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            with log_path.open("a", encoding="utf-8") as file:
+                file.write(
+                    "\n===== " + stamp + " Qt =====\n"
+                    + str(message) + where + "\n"
+                )
+        except OSError:
+            pass
+
+    qInstallMessageHandler(qt_message)
+
 
 def main() -> int:
     # 내려받은 새 onefile EXE가 기존 EXE의 종료를 기다렸다 교체하는 모드다.
