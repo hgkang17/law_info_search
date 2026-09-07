@@ -82,8 +82,8 @@ def _anchor_links(tab) -> dict[str, str]:
     return links
 
 
-def test_body_annex_citation_opens_the_annex_in_place(tmp_path) -> None:
-    """문서 아래 별표 목록에 있는 인용은 그 자리로 데려간다."""
+def test_body_annex_citation_opens_a_preview_popup(tmp_path) -> None:
+    """문서 아래 별표 목록에 있는 인용은 그 별표만 미리보기 창으로 띄운다."""
     app = QApplication.instance() or QApplication([])
     tab = _tab(tmp_path)
     tab.pending_row = dict(ROW)
@@ -91,8 +91,22 @@ def test_body_annex_citation_opens_the_annex_in_place(tmp_path) -> None:
     app.processEvents()
 
     links = _anchor_links(tab)
-    assert "annex:0" in links
-    assert "별표 1" in links["annex:0"]
+    assert "annexopen:0" in links
+    assert "별표 1" in links["annexopen:0"]
+
+
+def test_body_annex_link_survives_expanding_the_list(tmp_path) -> None:
+    """아래 별표를 펼쳤다 접어도 본문 글의 링크는 그대로 남는다."""
+    app = QApplication.instance() or QApplication([])
+    tab = _tab(tmp_path)
+    tab.pending_row = dict(ROW)
+    tab._show_detail(_payload(True))
+    app.processEvents()
+
+    tab._toggle_annex_preview("0")
+    app.processEvents()
+
+    assert "annexopen:0" in _anchor_links(tab)
 
 
 def test_body_annex_citation_without_list_uses_search_link(tmp_path) -> None:
@@ -124,3 +138,31 @@ def test_inline_annex_label_reads_every_shape() -> None:
         "별지 제4호서식",
         "별지 제5호의2서식",
     ]
+
+
+def test_body_annexref_link_is_handled_inside_the_program(tmp_path) -> None:
+    """본문에서 누른 별표 링크를 바깥 프로그램으로 넘기지 않는다.
+
+    넘기면 윈도우가 "이 annexref 링크를 열려면 새 앱이 필요합니다"를 띄운다.
+    """
+    from PySide6.QtCore import QUrl
+
+    tab = _tab(tmp_path)
+    opened: list[str] = []
+    tab.open_annex_reference = lambda url: opened.append(url.toString())
+    external: list[str] = []
+    tab_module = __import__(
+        "ui.tabs.resource_search", fromlist=["QDesktopServices"]
+    )
+    original = tab_module.QDesktopServices.openUrl
+    tab_module.QDesktopServices.openUrl = staticmethod(
+        lambda url: external.append(url.toString()) or True
+    )
+    try:
+        tab._detail_link_clicked(
+            QUrl("annexref://open?name=%EB%B3%84%ED%91%9C%201&category=ordinbyl")
+        )
+    finally:
+        tab_module.QDesktopServices.openUrl = original
+
+    assert opened and not external

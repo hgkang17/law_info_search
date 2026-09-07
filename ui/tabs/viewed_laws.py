@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 from ui.assets import (
-    ANNEX_COLLAPSE_ICON_PATH,
-    ANNEX_EXPAND_ICON_PATH,
     FAVORITE_PLUS_ICON_PATH,
 )
 from ui.widgets import (
@@ -409,11 +407,12 @@ class ViewedLawsTab(QWidget):
                         self._create_favorite_folder(selected_category)
                     )
                 )
-                fold_button = QPushButton()
+                # 그림 단추는 무엇을 하는 단추인지 알기 어려웠다.
+                # 다음에 할 일을 글자로 그대로 적는다.
+                fold_button = QPushButton("접기")
                 fold_button.setObjectName("favoriteFoldFoldersButton")
-                fold_button.setFixedSize(28, 28)
-                fold_button.setIcon(QIcon(str(ANNEX_COLLAPSE_ICON_PATH)))
-                fold_button.setIconSize(QSize(12, 12))
+                # 옆의 새 폴더 단추(28×28)와 나란히 서는 작은 글자 단추다.
+                fold_button.setFixedSize(52, 28)
                 fold_button.setCursor(Qt.CursorShape.PointingHandCursor)
                 fold_button.setToolTip("폴더를 모두 접습니다.")
                 fold_button.clicked.connect(
@@ -2033,15 +2032,7 @@ class ViewedLawsTab(QWidget):
         if button is None or tree is None:
             return
         expanded = self._favorite_folders_expanded(tree)
-        button.setIcon(
-            QIcon(
-                str(
-                    ANNEX_COLLAPSE_ICON_PATH
-                    if expanded
-                    else ANNEX_EXPAND_ICON_PATH
-                )
-            )
-        )
+        button.setText("접기" if expanded else "펼치기")
         button.setToolTip(
             "폴더를 모두 접습니다." if expanded else "폴더를 모두 폅니다."
         )

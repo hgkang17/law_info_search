@@ -368,6 +368,8 @@ class ResourceSearchTab(QWidget):
         self._annex_section_entries: list[dict[str, str]] = []
         # 별만 누른 것이라 본문을 열지 않고 저장만 하는 조회.
         self._favorite_only_row: dict[str, object] | None = None
+        # 본문에서 누른 별표를 팝업으로 띄울 때 쓰는 내려받기 작업.
+        self._annex_popup_workers: dict[str, object] = {}
         # 본문을 갈아 끼우는 동안 스크롤 막대가 잠깐 옛 자리를 들고 있다.
         # 그 값을 새 문서의 자리로 적어 두면, 다시 열 때 엉뚱한 곳에서
         # 시작한다. 갈아 끼우는 동안에는 기억하지 않는다.
@@ -6022,6 +6024,57 @@ class ResourceSearchTab(QWidget):
         )
         return panel
 
+    def _open_annex_entry_preview(self, raw_index: str) -> None:
+        """본문 글에서 누른 별표를 미리보기 창으로 띄운다.
+
+        PDF가 있으면 그대로 열고, 자치법규처럼 PDF가 없으면 법제처
+        문서뷰어가 변환한 쪽 그림을 받아 같은 창에 보여 준다. 둘 다 없으면
+        예전처럼 본문 아래에서 펼친다.
+        """
+        found = self._annex_entry_at(raw_index)
+        if found is None:
+            return
+        index, entry = found
+        title = self._annex_display_title(entry)
+        pdf_url = str(entry.get("pdf_url") or "")
+        if pdf_url:
+            self._open_pdf_preview(pdf_url, title)
+            return
+        preview_url = str(entry.get("preview_url") or "")
+        if not preview_url:
+            self._toggle_annex_preview(str(index))
+            return
+        popup = self._pdf_popup_for_request(preview_url)
+        popup.show_loading(title, QCursor.pos())
+        self._place_pdf_popup(popup)
+        running = self._annex_popup_workers.pop(preview_url, None)
+        if running is not None and running.isRunning():
+            running.requestInterruption()
+        worker = OrdinanceAnnexPreviewWorker(preview_url, self)
+        self._annex_popup_workers[preview_url] = worker
+
+        def finished(result: object) -> None:
+            self._annex_popup_workers.pop(preview_url, None)
+            pages = result.get("pages") if isinstance(result, dict) else None
+            if not isinstance(pages, list) or not pages:
+                popup.show_message("별표 그림을 받지 못했습니다.")
+                return
+            popup.show_images(
+                [bytes(page) for page in pages if isinstance(page, bytes)],
+                title,
+                total=int(result.get("total") or 0),
+                url=preview_url,
+            )
+
+        def failed(message: str) -> None:
+            self._annex_popup_workers.pop(preview_url, None)
+            popup.show_message(f"별표를 불러오지 못했습니다: {message}")
+
+        worker.succeeded.connect(finished)
+        worker.failed.connect(failed)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
     def _change_annex_preview_zoom(self, raw: str) -> None:
         """펼쳐 둔 미리보기를 한 단계 크게 또는 작게 그린다."""
         parts = str(raw).split(":")
@@ -6168,6 +6221,9 @@ class ResourceSearchTab(QWidget):
                 list(self._current_three_stage_articles),
                 document_prepared=True,
             )
+        # 갈아 끼운 본문에는 글자 서식으로 얹었던 별표 링크가 없다.
+        # 다시 얹지 않으면 별표를 한 번 펼치는 순간 본문 링크가 사라진다.
+        self._apply_inline_annex_links()
         scroll_bar.setValue(min(position, scroll_bar.maximum()))
         if anchor_top is not None:
             new_top = self._anchor_viewport_top(keep_anchor)
@@ -6431,6 +6487,12 @@ class ResourceSearchTab(QWidget):
                 raw = url.toString()[len("annex:") :]
             self._toggle_annex_preview(raw)
             return
+        if url.scheme() == "annexopen":
+            raw = (url.path() or "").strip("/")
+            if not raw:
+                raw = url.toString()[len("annexopen:") :]
+            self._open_annex_entry_preview(raw)
+            return
         if url.scheme() == "annexzoom":
             self._change_annex_preview_zoom(url.toString()[len("annexzoom:") :])
             return
@@ -6443,6 +6505,12 @@ class ResourceSearchTab(QWidget):
             return
         if url.scheme() == "lawsub":
             self._show_inline_subordinate_menu(url)
+            return
+        if url.scheme() == "annexref":
+            # 본문 문장 속 ``별표 1`` 인용이다. 이 화면에 별표 목록이 없어
+            # 그 별표를 찾아 미리보기로 연다. 여기서 받지 않으면 윈도우가
+            # 바깥 프로그램으로 열려다 "새 앱이 필요합니다"를 띄운다.
+            self.open_annex_reference(url)
             return
         if url.scheme() != "lawref":
             if not QDesktopServices.openUrl(url):
@@ -11350,7 +11418,9 @@ class ResourceSearchTab(QWidget):
                     continue
                 index = entries_by_label.get(label)
                 if index is not None:
-                    href = f"annex:{index}"
+                    # 아래 목록으로 데려가면 읽던 자리를 잃는다. 그 별표만
+                    # 미리보기 창으로 띄운다.
+                    href = f"annexopen:{index}"
                 elif related:
                     href = (
                         "annexref://open?"

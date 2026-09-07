@@ -502,9 +502,24 @@ class PdfPreviewPopup(QFrame):
         self.pdf_view.hide()
         layout.addWidget(self.pdf_view, 1)
 
-        self.zoom_spin.valueChanged.connect(
-            lambda value: self.pdf_view.setZoomFactor(value / 100.0)
-        )
+        # 자치법규 별표처럼 PDF가 없는 자료는 법제처 뷰어가 변환한 쪽
+        # 그림으로 온다. 같은 창에서 그대로 보여 준다.
+        self._mode = "pdf"
+        self._image_pages: list[QPixmap] = []
+        self._image_labels: list[QLabel] = []
+        self.image_scroll = QScrollArea(self)
+        self.image_scroll.setWidgetResizable(True)
+        self.image_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        image_holder = QWidget()
+        self.image_layout = QVBoxLayout(image_holder)
+        self.image_layout.setContentsMargins(0, 0, 0, 0)
+        self.image_layout.setSpacing(8)
+        self.image_layout.addStretch(1)
+        self.image_scroll.setWidget(image_holder)
+        self.image_scroll.hide()
+        layout.addWidget(self.image_scroll, 1)
+
+        self.zoom_spin.valueChanged.connect(self._zoom_changed)
         self.pin_button.toggled.connect(self._pin_toggled)
         self.close_button.clicked.connect(self.hide)
         self._create_resize_handles()
@@ -518,7 +533,114 @@ class PdfPreviewPopup(QFrame):
         """지금 이 창이 보여 주고 있는 PDF 주소."""
         return self._url
 
+    def _zoom_changed(self, value: int) -> None:
+        if self._mode == "images":
+            self._refresh_image_sizes()
+        else:
+            self.pdf_view.setZoomFactor(value / 100.0)
+
+    def _refresh_image_sizes(self) -> None:
+        if not self._image_pages:
+            return
+        available = max(80, self.image_scroll.viewport().width() - 20)
+        zoom = self.zoom_spin.value() / 100.0
+        for pixmap, label in zip(self._image_pages, self._image_labels):
+            fit = min(1.0, available / max(1, pixmap.width()))
+            width = max(1, int(pixmap.width() * fit * zoom))
+            label.setPixmap(
+                pixmap.scaledToWidth(
+                    width, Qt.TransformationMode.SmoothTransformation
+                )
+            )
+
+    def place_at(self, global_position=None) -> None:
+        """창을 커서 옆에 세운다(고정해 둔 창은 자리를 지킨다)."""
+        position = global_position or QCursor.pos()
+        screen = QApplication.screenAt(position) or QApplication.primaryScreen()
+        if screen is not None and (
+            not self.isVisible() or not self.pin_button.isChecked()
+        ):
+            area = screen.availableGeometry()
+            self.move(
+                max(
+                    area.left(),
+                    min(position.x() - 54, area.right() - self.width()),
+                ),
+                max(
+                    area.top(),
+                    min(position.y() + 6, area.bottom() - self.height()),
+                ),
+            )
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def show_loading(self, title: str, global_position=None) -> None:
+        """받는 동안 빈 창을 먼저 띄운다."""
+        self.title_label.setText(title or "별표 미리보기")
+        self._mode = "loading"
+        self.pdf_view.hide()
+        self.image_scroll.hide()
+        self.status_label.setText("별표를 불러오는 중...")
+        self.status_label.show()
+        self.place_at(global_position)
+
+    def show_images(
+        self,
+        pages: list[bytes],
+        title: str = "별표 미리보기",
+        *,
+        total: int = 0,
+        global_position=None,
+        url: str = "",
+    ) -> None:
+        """법제처 뷰어가 변환한 쪽 그림을 보여 준다."""
+        self.title_label.setText(title or "별표 미리보기")
+        self._url = url
+        self._mode = "images"
+        self.document.close()
+        self.pdf_view.hide()
+        for label in self._image_labels:
+            self.image_layout.removeWidget(label)
+            label.deleteLater()
+        self._image_labels.clear()
+        self._image_pages.clear()
+        for data in pages:
+            pixmap = QPixmap()
+            if not pixmap.loadFromData(bytes(data)):
+                continue
+            label = QLabel()
+            label.setAlignment(
+                Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop
+            )
+            self.image_layout.insertWidget(
+                self.image_layout.count() - 1, label
+            )
+            self._image_pages.append(pixmap)
+            self._image_labels.append(label)
+        if not self._image_pages:
+            self.show_message("별표 그림을 열지 못했습니다.")
+            return
+        whole = max(len(self._image_pages), int(total or 0))
+        if whole > len(self._image_pages):
+            self.title_label.setText(
+                f"{title} · 앞 {len(self._image_pages)}쪽 (전체 {whole}쪽)"
+            )
+        self.status_label.hide()
+        self.image_scroll.show()
+        self._refresh_image_sizes()
+        QTimer.singleShot(0, self._refresh_image_sizes)
+        self.place_at(global_position)
+
+    def show_message(self, message: str) -> None:
+        self.pdf_view.hide()
+        self.image_scroll.hide()
+        self.status_label.setText(message)
+        self.status_label.show()
+
     def show_pdf(self, url: str, title: str = "PDF 미리보기", global_position=None) -> None:
+        self._mode = "pdf"
+        self.image_scroll.hide()
         self.title_label.setText(title or "PDF 미리보기")
         position = global_position or QCursor.pos()
         screen = QApplication.screenAt(position) or QApplication.primaryScreen()
@@ -590,6 +712,11 @@ class PdfPreviewPopup(QFrame):
                 self._adjust_zoom(5 if delta > 0 else -5)
             return True
         return super().eventFilter(watched, event)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 (Qt 규약)
+        super().resizeEvent(event)
+        if self._mode == "images":
+            self._refresh_image_sizes()
 
     def _create_resize_handles(self) -> None:
         specs = (

@@ -421,13 +421,13 @@ class LawSearchWindow(QMainWindow):
         self.open_document_tab_strip.set_hug_content(True)
         self.open_documents_layout.addWidget(self.open_document_tab_strip, 0)
 
-        self.close_all_documents_button = QPushButton("전체 끄기")
+        # 탭이 두 줄이라 단추도 두 줄로 적어 높이를 맞춘다.
+        self.close_all_documents_button = QPushButton("전체\n끄기")
         self.close_all_documents_button.setObjectName("openDocumentsCloseAll")
         # 탭 옆에 살짝 붙는 보조 단추다. 늘어나지 않게 크기를 못박는다.
         self.close_all_documents_button.setSizePolicy(
             QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
         )
-        self.close_all_documents_button.setFixedHeight(22)
         self.close_all_documents_button.setCursor(
             Qt.CursorShape.PointingHandCursor
         )
@@ -1105,6 +1105,12 @@ class LawSearchWindow(QMainWindow):
 
         self.open_document_tab_strip.setVisible(bool(documents))
         self.close_all_documents_button.setVisible(bool(documents))
+        if documents:
+            # 탭 줄 높이에 맞춰 나란히 선다. 탭 제목이 두 줄이라 단추도
+            # 두 줄이며, 높이는 탭이 정하는 대로 따라간다.
+            self.close_all_documents_button.setFixedHeight(
+                max(24, self.open_document_tabs.sizeHint().height())
+            )
         self.open_documents_empty.setVisible(not documents)
         if documents:
             self.open_document_tab_strip.refresh()
@@ -2864,7 +2870,19 @@ class LawSearchWindow(QMainWindow):
                 font-size: 9pt;
                 font-weight: 600;
             }
-            QPushButton#favoriteFoldFoldersButton,
+            QPushButton#favoriteFoldFoldersButton {
+                background: white;
+                color: #1768aa;
+                border: 1px solid #afc9dc;
+                border-radius: 3px;
+                min-width: 52px;
+                max-width: 52px;
+                min-height: 24px;
+                max-height: 24px;
+                padding: 0 4px;
+                font-size: 8.5pt;
+                font-weight: 600;
+            }
             QPushButton#favoriteAddFolderButton {
                 background: white;
                 color: #1768aa;
@@ -2917,8 +2935,6 @@ class LawSearchWindow(QMainWindow):
                 color: #5b6b7d;
                 border: 1px solid #cbd8e4;
                 border-radius: 4px;
-                min-height: 20px;
-                max-height: 20px;
                 padding: 0 6px;
                 font-size: 8pt;
             }
@@ -4907,7 +4923,19 @@ class LawSearchWindow(QMainWindow):
                 color: #34363b;
                 font-weight: 600;
             }
-            QPushButton#favoriteFoldFoldersButton,
+            QPushButton#favoriteFoldFoldersButton {
+                background: #ffffff;
+                color: #4f5258;
+                border: 1px solid #cfd0d2;
+                border-radius: 4px;
+                min-width: 52px;
+                max-width: 52px;
+                min-height: 24px;
+                max-height: 24px;
+                padding: 0 4px;
+                font-size: 8.5pt;
+                font-weight: 600;
+            }
             QPushButton#favoriteAddFolderButton {
                 background: #ffffff;
                 color: #4f5258;
