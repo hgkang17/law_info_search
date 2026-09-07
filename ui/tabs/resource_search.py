@@ -366,6 +366,8 @@ class ResourceSearchTab(QWidget):
         self._annex_previews: dict[str, dict[str, object]] = {}
         self._annex_preview_panels: dict[str, InlinePdfPreviewPanel] = {}
         self._annex_section_entries: list[dict[str, str]] = []
+        # 별만 누른 것이라 본문을 열지 않고 저장만 하는 조회.
+        self._favorite_only_row: dict[str, object] | None = None
         # 본문을 갈아 끼우는 동안 스크롤 막대가 잠깐 옛 자리를 들고 있다.
         # 그 값을 새 문서의 자리로 적어 두면, 다시 열 때 엉뚱한 곳에서
         # 시작한다. 갈아 끼우는 동안에는 기억하지 않는다.
@@ -7716,6 +7718,22 @@ class ResourceSearchTab(QWidget):
             elif operation == "three_stage_comparison":
                 self._show_three_stage_comparison(payload)
             else:
+                favorite_only = self._favorite_only_row
+                self._favorite_only_row = None
+                if favorite_only is not None:
+                    # 별만 누른 조회다. 목록 화면 그대로 두고 저장만 한다.
+                    if self._save_detail_payload_quietly(favorite_only, payload):
+                        self._refresh_cache_checkmarks()
+                        self._finalize_pending_favorite(dict(favorite_only))
+                    else:
+                        self._pending_favorite_row = None
+                        self.status_label.setText(
+                            "즐겨찾기 설정에 실패했습니다: "
+                            f"{self.law_cache.last_error}"
+                        )
+                    self._progress_opacity.setOpacity(0.0)
+                    self.result_table.viewport().update()
+                    return
                 if self._pending_favorite_row is not None:
                     self.status_label.setText(
                         "본문 API 응답을 받았습니다 — 화면을 정리하고 저장하는 중입니다."
@@ -7723,7 +7741,9 @@ class ResourceSearchTab(QWidget):
                     # 큰 법령은 HTML 변환 동안 이벤트 루프가 잠시 바빠진다.
                     # 그 전에 단계가 바뀌었다는 문구를 즉시 그려 멈춘 것처럼
                     # 보이지 않게 한다.
-                    self.status_label._bar.repaint()
+                    status_bar = getattr(self.status_label, "_bar", None)
+                    if status_bar is not None:
+                        status_bar.repaint()
                 self._show_detail(payload)
                 if (
                     operation == "resource_detail"
@@ -7775,6 +7795,7 @@ class ResourceSearchTab(QWidget):
             self.three_stage_popup.set_error(error)
             return
         if operation == "resource_detail":
+            self._favorite_only_row = None
             self._pending_cached_article_open = None
             self._refresh_cache_checkmarks()
             if not self._article_favorite_waiting_for_worker:
@@ -8634,27 +8655,41 @@ class ResourceSearchTab(QWidget):
             return
         wants_favorite = not self.law_cache.is_favorite(row)
         if wants_favorite and not self._row_is_saved(row):
-            if self.worker and self.worker.isRunning():
+            # 별은 즐겨찾기 단추다. 본문은 두 번 눌러야 열린다. 예전에는
+            # 저장본을 만들려고 본문 화면까지 열어 버려, 별만 누르려던
+            # 사람이 목록 밖으로 끌려 나갔다.
+            if str(row.get("target") or "") in ANNEX_TARGETS:
+                # 별표ㆍ서식은 목록 한 줄에 필요한 것이 다 들어 있다.
+                # API를 부르지 않고 그 자리에서 저장한다.
+                if not self._save_annex_row_snapshot(row):
+                    self.status_label.setText(
+                        f"즐겨찾기 설정에 실패했습니다: {self.law_cache.last_error}"
+                    )
+                    return
+            else:
+                if self.worker and self.worker.isRunning():
+                    self.status_label.setText(
+                        "다른 API 요청이 끝난 뒤 즐겨찾기를 설정해 주세요."
+                    )
+                    return
+                # 저장본이 없으면 본문을 받아야 즐겨찾기를 걸 수 있다.
+                # 화면은 목록에 그대로 두고 뒤에서 받아 저장한다.
+                self._pending_favorite_row = row
+                self._favorite_only_row = dict(row)
+                if select_row_index >= 0:
+                    self.result_table.selectRow(select_row_index)
+                name = str(row.get("name") or "이 항목")
                 self.status_label.setText(
-                    "다른 API 요청이 끝난 뒤 즐겨찾기를 설정해 주세요."
+                    f"{name} 본문을 받는 중입니다 — 저장이 끝나면 즐겨찾기에 겁니다."
                 )
-                return
-            # 저장본이 없으면 먼저 본문을 받아 저장한 뒤 즐겨찾기를 건다.
-            # 몇 초가 걸리는 일이라, 누른 즉시 무엇을 하고 있는지 알린다.
-            self._pending_favorite_row = row
-            if select_row_index >= 0:
-                self.result_table.selectRow(select_row_index)
-            name = str(row.get("name") or "이 항목")
-            self.status_label.setText(
-                f"{name} 본문을 받는 중입니다 — 저장이 끝나면 즐겨찾기에 겁니다."
-            )
-            self._progress_opacity.setOpacity(1.0)
-            self.result_table.viewport().update()
-            if not self._request_resource_detail(row, force_api=False):
-                self._pending_favorite_row = None
-                self._progress_opacity.setOpacity(0.0)
+                self._progress_opacity.setOpacity(1.0)
                 self.result_table.viewport().update()
-            return
+                if not self._request_resource_detail(row, force_api=False):
+                    self._pending_favorite_row = None
+                    self._favorite_only_row = None
+                    self._progress_opacity.setOpacity(0.0)
+                    self.result_table.viewport().update()
+                return
         if self.law_cache.set_favorite(row, wants_favorite):
             self.status_label.setText(
                 "즐겨찾기에 추가했습니다."
@@ -8932,6 +8967,43 @@ class ResourceSearchTab(QWidget):
         finally:
             self._updating_cache_checks = False
         self.result_table.viewport().update()
+
+    def _save_annex_row_snapshot(self, row: dict[str, object]) -> bool:
+        """별표ㆍ서식 목록 한 줄을 화면을 열지 않고 저장한다.
+
+        별표는 본문이 HTML이 아니라 파일(한글ㆍPDF)이라 저장할 화면이
+        없다. 다시 열 때는 목록 줄에서 미리보기를 새로 그리므로
+        (``_show_annex_links``) 줄 정보만 남겨 두면 된다.
+        """
+        storage_row = self._storage_row(row)
+        return self.law_cache.save_snapshot(
+            dict(storage_row),
+            html="",
+            plain_text=str(row.get("name") or ""),
+            extra={"annex_entries": [self._annex_row_entry(row)]},
+        )
+
+    def _save_detail_payload_quietly(
+        self, row: dict[str, object], payload: object
+    ) -> bool:
+        """본문 화면을 열지 않고 API 응답만 저장한다(별만 눌렀을 때)."""
+        if not isinstance(payload, dict):
+            return False
+        try:
+            from llm.tools import _save_fetched_document
+        except Exception:  # noqa: BLE001 - 저장 경로가 없으면 아래에서 알린다.
+            return False
+        try:
+            _save_fetched_document(
+                self.law_cache,
+                dict(row),
+                payload,
+                str(row.get("target") or "law"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.law_cache.last_error = str(exc)
+            return False
+        return True
 
     def _finalize_pending_favorite(self, saved_row: dict[str, object]) -> None:
         pending = self._pending_favorite_row

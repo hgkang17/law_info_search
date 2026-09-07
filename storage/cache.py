@@ -147,6 +147,17 @@ class LawDocumentCache(QObject):
 
     changed = Signal()
     DEFAULT_FAVORITE_PROJECT = "default"
+    # 본문을 다시 저장해도 그대로 남겨야 하는 값. 즐겨찾기ㆍ폴더ㆍ메모ㆍ
+    # 글자색은 저장 화면이 아니라 다른 화면에서 관리한다.
+    PRESERVED_RECORD_KEYS = (
+        "favorite",
+        "favorite_projects",
+        "favorite_folder",
+        "favorite_order",
+        "favorite_articles",
+        "memos",
+        "formatting_spans",
+    )
 
     def __init__(self, directory: Path, parent=None) -> None:
         super().__init__(parent)
@@ -452,9 +463,12 @@ class LawDocumentCache(QObject):
             self.directory.mkdir(parents=True, exist_ok=True)
             path = self.path_for_row(row)
             first_viewed_at = self._timestamp()
+            previous: dict[str, object] = {}
             if path.is_file():
                 try:
-                    previous = json.loads(path.read_text(encoding="utf-8"))
+                    loaded = json.loads(path.read_text(encoding="utf-8"))
+                    if isinstance(loaded, dict):
+                        previous = loaded
                     first_viewed_at = str(
                         previous.get("first_viewed_at") or first_viewed_at
                     )
@@ -471,6 +485,13 @@ class LawDocumentCache(QObject):
                 "html": str(html),
                 "plain_text": str(plain_text),
             }
+            # 즐겨찾기 표시나 메모처럼 다른 화면에서 관리하는 값은 새로
+            # 저장할 때도 그대로 둔다(``save``와 같은 규칙). 이것이 빠져
+            # 있어서 별표ㆍ서식을 즐겨찾기에 걸고 그 본문을 다시 열면
+            # (뒤로 갔다 오면) 별이 풀려 있었다.
+            for preserved_key in self.PRESERVED_RECORD_KEYS:
+                if preserved_key in previous:
+                    record[preserved_key] = previous[preserved_key]
             if extra:
                 record.update(dict(extra))
             temporary_path = path.with_suffix(".json.tmp")
@@ -677,15 +698,7 @@ class LawDocumentCache(QObject):
             }
             # 즐겨찾기 표시나 메모처럼 다른 화면에서 관리하는 값은
             # 새로 저장할 때도 그대로 유지한다.
-            for preserved_key in (
-                "favorite",
-                "favorite_projects",
-                "favorite_folder",
-                "favorite_order",
-                "favorite_articles",
-                "memos",
-                "formatting_spans",
-            ):
+            for preserved_key in self.PRESERVED_RECORD_KEYS:
                 if preserved_key in previous:
                     record[preserved_key] = previous[preserved_key]
             if snapshot:
