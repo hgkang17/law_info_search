@@ -262,6 +262,17 @@ LAW_UNIT_REFERENCE_PATTERN = re.compile(
 )
 
 
+# 조ㆍ항ㆍ호ㆍ목을 하나씩 끊어 읽는다. ``LAW_UNIT_REFERENCE_PATTERN``이
+# 인용 전체를 한 번에 읽는다면 이 패턴은 같은 인용을 조각으로 나눠
+# 조각마다 링크를 걸 때 쓴다.
+LAW_UNIT_SEGMENT_PATTERN = re.compile(
+    r"제(?P<jo>\d+)조(?:의(?P<jo_branch>\d+))?"
+    r"|제(?P<hang>\d+)항(?:의(?P<hang_branch>\d+))?"
+    r"|제(?P<ho>\d+)호(?:의(?P<ho_branch>\d+))?"
+    rf"|(?P<mok>[{KOREAN_ITEM_MARKERS}])목"
+)
+
+
 _ADJACENT_GAP_PATTERN = re.compile(r'^\s*(?:\([^()]*\)|「[^」]*」)?\s*$')
 
 

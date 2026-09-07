@@ -243,7 +243,8 @@ def test_enumerated_ho_reference_links_to_the_same_article() -> None:
         current_law_name="국토의 계획 및 이용에 관한 법률 시행규칙",
     )
     linked = re.findall(r">([^<>]+)</a>", html)
-    assert linked == ["제2조제1호", "제2호"]
+    # 조ㆍ항ㆍ호는 조각마다 제 범위의 링크가 된다.
+    assert linked == ["제2조", "제1호", "제2호"]
     assert "jo=2&ho=2" in html.replace("&amp;", "&")
 
 

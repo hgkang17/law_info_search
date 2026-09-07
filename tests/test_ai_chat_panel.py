@@ -96,19 +96,22 @@ def test_to_html_linkifies_plain_sibling_articles() -> None:
 
 
 def test_to_html_joins_spaced_hang_into_one_article_link() -> None:
-    """채팅에서만 `제27조 제4항`을 한 링크로 붙인다. 본문 정규식은 그대로다."""
+    """채팅에서만 `제27조 제4항`을 한 인용으로 붙인다. 본문 정규식은 그대로다.
+
+    조ㆍ항은 각각 제 범위의 링크가 되지만, 사이 공백이 사라져 두 인용으로
+    갈라지지 않고 이어 붙는다.
+    """
     html = AiChatPanel._to_html(
         "「국토의 계획 및 이용에 관한 법률」\n"
         "기초조사 생략 요건 (국토계획법 제27조 제4항)"
     )
     assert "jo=27" in html
     assert "hang=4" in html
-    assert "제27조제4항" in html
-    assert re.search(r">제27조제4항</a>", html)
+    assert re.search(r">제27조</a><a [^>]*>제4항</a>", html)
     hrefs = re.findall(r'href="([^"]+)"', html)
-    article_links = [href for href in hrefs if "jo=27" in href]
-    assert article_links
-    assert all("hang=4" in href for href in article_links)
+    hang_links = [href for href in hrefs if "hang=4" in href]
+    assert hang_links
+    assert all("jo=27" in href for href in hang_links)
 
 
 def test_squeeze_spaced_units_does_not_join_two_articles() -> None:

@@ -113,7 +113,12 @@ from utils.annex_notation import (
 )
 from utils.annex_parse import parse_annex_bytes
 from utils.law_download import download_law_file
-from utils.constants import DEFAULT_DETAIL_FONT_POINT, DETAIL_FONT_FAMILY
+from utils.constants import (
+    DEFAULT_DETAIL_FONT_POINT,
+    DEFAULT_POPUP_FONT_POINT,
+    DETAIL_FONT_CSS_FAMILY,
+    DETAIL_FONT_FAMILY,
+)
 from utils.hwp_export import default_export_name, save_law_hwpx
 from utils.images import trim_blank_bottom
 from utils.formatting import (
@@ -235,10 +240,8 @@ def annex_name_key(value: str) -> str:
     return re.sub(r"[^0-9A-Za-z가-힣]+", "", text)
 
 
-def annex_name_similarity(left: str, right: str) -> float:
-    """두 이름이 얼마나 겹치는지 0~1로 센다(글자 두 개씩 견주는 방식)."""
-    first = annex_name_key(left)
-    second = annex_name_key(right)
+def name_similarity(first: str, second: str) -> float:
+    """다듬어 둔 두 이름이 얼마나 겹치는지 0~1로 센다(글자 두 개씩 견줌)."""
     if not first or not second:
         return 0.0
     if first == second:
@@ -254,6 +257,24 @@ def annex_name_similarity(left: str, right: str) -> float:
             remaining.remove(pair)
             shared += 1
     return 2.0 * shared / (len(pairs_a) + len(pairs_b))
+
+
+def annex_name_similarity(left: str, right: str) -> float:
+    """두 별표ㆍ서식 이름이 얼마나 겹치는지 0~1로 센다."""
+    return name_similarity(annex_name_key(left), annex_name_key(right))
+
+
+_SEARCH_NAME_NOISE_PATTERN = re.compile(r"[\s·ㆍ・,、_\-()\[\]{}「」『』\"\']+")
+
+
+def search_name_key(value: str) -> str:
+    """검색어ㆍ자료 이름을 견주기 좋게 다듬는다(공백ㆍ기호 제거)."""
+    return _SEARCH_NAME_NOISE_PATTERN.sub("", str(value or "")).strip()
+
+
+def search_name_similarity(query: str, name: str) -> float:
+    """검색어와 자료 이름이 얼마나 같은지 0~1로 센다."""
+    return name_similarity(search_name_key(query), search_name_key(name))
 
 
 # 본문 조문 링크는 글자 폭이 좁아, 커서 한 점이 살짝 벗어나도
@@ -380,6 +401,9 @@ class ResourceSearchTab(QWidget):
         self._pending_three_stage_link_request: dict[str, str] | None = None
         self._three_stage_link_request_in_flight: dict[str, str] | None = None
         self._updating_cache_checks = False
+        self.popup_font_size = self._saved_font_size(
+            "resource_popup_font_size", DEFAULT_POPUP_FONT_POINT
+        )
         self.detail_font_size, self.detail_font_family = (
             load_detail_font_preferences(
                 self.recent_search_manager.settings,
@@ -413,6 +437,7 @@ class ResourceSearchTab(QWidget):
                 popup
             )
         )
+        self._attach_popup_font_control(self.reference_popup)
         self.reference_popup.browser.verticalScrollBar().valueChanged.connect(
             lambda value, popup=self.reference_popup: (
                 self._reference_popup_scrolled(popup, value)
@@ -429,6 +454,7 @@ class ResourceSearchTab(QWidget):
         self.three_stage_popup.setMinimumSize(720, 360)
         self.three_stage_popup.resize(1040, 650)
         self.three_stage_popup.hover_guard = self._cursor_over_three_stage_button
+        self._attach_popup_font_control(self.three_stage_popup)
         self.three_stage_popup.browser.verticalScrollBar().valueChanged.connect(
             lambda value: self._reference_popup_scrolled(
                 self.three_stage_popup, value
@@ -436,6 +462,9 @@ class ResourceSearchTab(QWidget):
         )
         self.detail_view.verticalScrollBar().valueChanged.connect(
             self._schedule_three_stage_button_positions
+        )
+        self.detail_view.verticalScrollBar().valueChanged.connect(
+            self._remember_detail_scroll
         )
         self.detail_view.horizontalScrollBar().valueChanged.connect(
             self._schedule_three_stage_button_positions
@@ -1714,6 +1743,22 @@ class ResourceSearchTab(QWidget):
         # 키우면 그제야 제자리를 찾았다). 배치가 끝난 뒤 한 번 다시 그린다.
         self.detail_view.viewport().update()
 
+    def _remember_detail_scroll(self, value: int) -> None:
+        """본문을 굴릴 때마다 그 자리를 문서 상태에 적어 둔다.
+
+        문서 상태 저장(_save_active_document_state)은 본문 HTML까지 다시
+        뽑는 무거운 일이라 스크롤할 때마다 부를 수 없다. 그래서 예전에는
+        상태에 적힌 스크롤이 문서를 연 그대로(0)인 채 남았고, 본문을 다시
+        그리는 일(조문 즐겨찾기를 걸면서 본문을 새로 받거나, 글꼴을 바꾸거나,
+        탭을 오갈 때)이 생기면 보던 자리를 잃고 맨 위로 튀어 올랐다.
+        스크롤 값만 따로 계속 맞춰 두면 그 일이 없어진다.
+        """
+        if self._restoring_document:
+            return
+        state = self._document_states.get(self._active_document_key)
+        if isinstance(state, dict):
+            state["scroll"] = int(value)
+
     def _save_active_document_state(self) -> None:
         if self._restoring_document:
             return
@@ -2529,6 +2574,9 @@ class ResourceSearchTab(QWidget):
             favorite_button = QPushButton(viewport)
             favorite_button.setObjectName("articleFavoriteButton")
             favorite_button.setFixedSize(star_size, star_size)
+            # 본문 위에 얹은 단추라 초점까지 가져가면, 별을 누른 뒤
+            # 방향키ㆍPageDown이 본문에 먹지 않는다.
+            favorite_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             favorite_button.setCursor(Qt.CursorShape.PointingHandCursor)
             favorite_button.setAccessibleName(
                 f"{article['label']} 조문 즐겨찾기"
@@ -3945,19 +3993,9 @@ class ResourceSearchTab(QWidget):
                 f"{article_title_html}</div>"
             )
         if article_content:
-            authority_tokens: dict[str, tuple[str, str]] = {}
-            for index, (authority, href) in enumerate(
-                sorted(
-                    (authority_links or {}).items(),
-                    key=lambda item: len(item[0]),
-                    reverse=True,
-                )
-            ):
-                if not authority or not href or authority not in article_content:
-                    continue
-                token = f"THREESTAGEAUTHORITYLINK{index}TOKEN"
-                article_content = article_content.replace(authority, token)
-                authority_tokens[token] = (authority, href)
+            article_content, authority_tokens = self._mask_authority_mentions(
+                article_content, authority_links or {}
+            )
             content_html = body_to_html(
                 article_content,
                 self.detail_highlight_terms,
@@ -3965,14 +4003,9 @@ class ResourceSearchTab(QWidget):
                 current_law_id=current_law_id,
                 use_api_links=True,
             )
-            for token, (authority, href) in authority_tokens.items():
-                content_html = content_html.replace(
-                    token,
-                    f'<a href="{escape(href, quote=True)}" '
-                    'style="color:#006dcc; text-decoration:underline;" '
-                    f'title="{escape(authority)} 관련 하위법령 조문을 엽니다.">'
-                    f"{escape(authority)}</a>",
-                )
+            content_html = self._restore_authority_mentions(
+                content_html, authority_tokens
+            )
             parts.append(
                 '<div class="comparison-content">'
                 + content_html
@@ -3982,6 +4015,145 @@ class ResourceSearchTab(QWidget):
             parts.append('<div class="comparison-empty">조문 내용 없음</div>')
             parts.append("</div>")
         return "".join(parts)
+
+    @staticmethod
+    def _mask_authority_mentions(
+        text: str, authority_links: dict[str, str]
+    ) -> tuple[str, dict[str, tuple[str, str]]]:
+        """본문 속 대통령령ㆍ부령 문구를 표식으로 바꿔 둔다.
+
+        본문을 HTML로 옮기고 나면 낱말 자리를 다시 찾기 어렵다. 옮기기
+        전에 표식으로 바꿔 두었다가 옮긴 뒤 링크로 되살린다.
+        """
+        tokens: dict[str, tuple[str, str]] = {}
+        for index, (authority, href) in enumerate(
+            sorted(
+                (authority_links or {}).items(),
+                key=lambda item: len(item[0]),
+                reverse=True,
+            )
+        ):
+            if not authority or not href:
+                continue
+            mention = authority
+            if mention not in text:
+                # ``국토교통부령``으로 위임한 조문이 본문에서는 ``부령``
+                # 으로만 적히기도 한다.
+                mention = (
+                    "부령"
+                    if authority.endswith("부령") and "부령" in text
+                    else ""
+                )
+            if not mention:
+                continue
+            token = f"THREESTAGEAUTHORITYLINK{index}TOKEN"
+            text = text.replace(mention, token)
+            tokens[token] = (mention, href)
+        return text, tokens
+
+    @staticmethod
+    def _restore_authority_mentions(
+        html: str, tokens: dict[str, tuple[str, str]]
+    ) -> str:
+        for token, (mention, href) in tokens.items():
+            html = html.replace(
+                token,
+                f'<a href="{escape(href, quote=True)}" '
+                'style="color:#006dcc; text-decoration:underline;" '
+                f'title="{escape(mention)} 관련 하위법령 조문을 엽니다.">'
+                f"{escape(mention)}</a>",
+            )
+        return html
+
+    @staticmethod
+    def _three_stage_base_law_name(payload: dict) -> str:
+        """3단비교 응답이 밝힌 기준(모법) 법령명."""
+        service = next(
+            (
+                value
+                for value in payload.values()
+                if isinstance(value, dict)
+                and (
+                    "위임조문삼단비교" in value
+                    or "인용조문삼단비교" in value
+                )
+            ),
+            None,
+        )
+        basic = service.get("기본정보") if isinstance(service, dict) else None
+        if not isinstance(basic, dict):
+            return ""
+        return json_text(basic.get("기준법령명")) or json_text(
+            basic.get("법령명")
+        )
+
+    def _popup_authority_links(
+        self, law_name: str, jo: str, hang: str = "", ho: str = ""
+    ) -> dict[str, str]:
+        """팝업으로 연 조문 안의 대통령령ㆍ부령에 걸 하위법령 링크.
+
+        본문 화면은 3단비교 자료로 그 문구에 조문 링크를 건다. 팝업은
+        그 자료를 따로 받지 않아 링크가 빠져 있었는데, 이미 받아 둔
+        3단비교 응답에 같은 법률 조문이 들어 있으면 API를 다시 부르지
+        않고 같은 링크를 만들 수 있다.
+        """
+        if not jo or not law_name:
+            return {}
+        normalized_name = re.sub(r"\s+", "", law_name)
+        for payload in self._three_stage_payload_cache.values():
+            if not isinstance(payload, dict):
+                continue
+            comparison = self._three_stage_comparison_body(payload)
+            base_name = re.sub(
+                r"\s+", "", self._three_stage_base_law_name(payload)
+            )
+            # 다른 법령의 3단비교 자료에서 조 번호만 같은 조문을 집어
+            # 엉뚱한 시행령을 걸지 않도록 법령명까지 맞춰 본다.
+            matched = False
+            for node in json_list(comparison.get("법률조문")):
+                if not isinstance(node, dict):
+                    continue
+                if self._three_stage_article_code(node) != jo:
+                    continue
+                node_name = re.sub(r"\s+", "", json_text(node.get("법령명")))
+                if node_name == normalized_name or (
+                    not node_name and base_name == normalized_name
+                ):
+                    matched = True
+                    break
+            if not matched:
+                continue
+            links = self._three_stage_subordinate_links(
+                payload, document_level="law"
+            ).get(jo) or []
+            if not links:
+                continue
+            scoped = self._links_for_inline_source(links, hang, ho) or links
+            grouped: dict[str, list[dict[str, str]]] = {}
+            for link in scoped:
+                authority_match = re.match(
+                    r"(.+?)\s+제\d+조", str(link.get("text") or "")
+                )
+                if authority_match is None or not link.get("href"):
+                    continue
+                grouped.setdefault(
+                    authority_match.group(1).strip(), []
+                ).append(link)
+            source_label = self._law_reference_label(jo, hang, ho)
+            authority_links: dict[str, str] = {}
+            for authority, authority_group in grouped.items():
+                href = self._inline_subordinate_href(authority_group)
+                if not href:
+                    continue
+                authority_links[authority] = self._with_delegation_source(
+                    href,
+                    law_name=law_name,
+                    source_label=source_label,
+                    authority=authority,
+                )
+            if authority_links:
+                return authority_links
+        return {}
 
     def _link_three_stage_authority_phrases(
         self, content_html: str, rules: list[dict]
@@ -4682,9 +4854,12 @@ class ResourceSearchTab(QWidget):
         return "".join(
             (
                 "<style>",
-                "body { font-family:'Malgun Gothic'; font-weight:400; color:#172033; "
-                "line-height:1.35; margin:0; }",
-                ".comparison-summary { color:#526176; font-size:12px; "
+                # 3단비교도 조문 팝업과 같은 굴림을 쓰고, 크기는 팝업
+                # 기본 글꼴이 정하도록 배수(em)로만 적는다.
+                "body { font-family:" + DETAIL_FONT_CSS_FAMILY + "; "
+                "font-weight:400; color:#172033; "
+                "line-height:" + BODY_LINE_HEIGHT + "; margin:0; }",
+                ".comparison-summary { color:#526176; font-size:0.92em; "
                 "margin:0 0 5px 0; }",
                 ".comparison-table { width:100%; border-collapse:collapse; "
                 # QTextDocument는 table의 border를 바깥선이 아니라 모든
@@ -4692,7 +4867,7 @@ class ResourceSearchTab(QWidget):
                 "table-layout:fixed; border:none; }",
                 ".comparison-table th { background:#173b63; "
                 "color:white; border:none; padding:8px; "
-                "font-size:14px; }",
+                "font-size:1.08em; }",
                 ".comparison-table td { border:none; padding:0; }",
                 ".comparison-table td.comparison-cell { width:33.33%; "
                 "vertical-align:top; padding:0 3px; }",
@@ -4705,14 +4880,16 @@ class ResourceSearchTab(QWidget):
                 "background:#c7d6e4; }",
                 # 호·목마다 행이 하나씩 생기므로 여기 붙는 여백이 그대로
                 # 표 전체 높이가 된다. 칸을 나누는 선만 남기고 최소로 둔다.
+                # 칸마다 조문이 잇달아 붙으면 어디까지가 한 조문인지
+                # 눈에 안 들어와서, 조문 사이만 한 줄 남짓 띄운다.
                 ".comparison-item { border:none; "
-                "padding:0 0 3px 0; margin:0 0 3px 0; }",
+                "padding:0 0 6px 0; margin:0 0 6px 0; }",
                 ".comparison-law-name { color:#1768aa; font-weight:700; "
-                "font-size:12px; margin:0 0 2px 0; }",
+                "font-size:0.92em; margin:0 0 2px 0; }",
                 ".comparison-article-title { color:#173b63; font-weight:700; "
-                "font-size:13px; margin:0 0 3px 0; }",
-                ".comparison-content { font-size:12px; }",
-                ".comparison-empty { color:#7a8798; font-size:12px; "
+                "font-size:1em; margin:0 0 4px 0; }",
+                ".comparison-content { font-size:1em; }",
+                ".comparison-empty { color:#7a8798; font-size:0.92em; "
                 "padding:4px; }",
                 "a { color:#1768aa; font-weight:600; text-decoration:none; }",
                 "</style>",
@@ -6199,6 +6376,24 @@ class ResourceSearchTab(QWidget):
             mok=str(request.get("mok") or ""),
         )
 
+    def _attach_popup_font_control(self, popup: LawReferencePopup) -> None:
+        """팝업 머리줄의 가+ㆍ가- 를 저장된 크기와 잇는다.
+
+        조문 팝업과 3단비교 팝업은 같은 크기를 쓴다. 한 팝업에서 바꾸면
+        열려 있는 다른 팝업도 같이 따라가고, 그 값이 설정에 남는다.
+        """
+        popup.set_content_font_point(self.popup_font_size)
+        popup.fontSizeChanged.connect(self._set_popup_font_size)
+
+    def _set_popup_font_size(self, size: float) -> None:
+        size = normalize_detail_font_size(size)
+        self.popup_font_size = size
+        for popup in (*self._all_reference_popups(), self.three_stage_popup):
+            popup.set_content_font_point(size)
+        self.recent_search_manager.settings.setValue(
+            "resource_popup_font_size", size
+        )
+
     def _refresh_reference_popup_favorites(self) -> None:
         if not hasattr(self, "reference_popup"):
             return
@@ -6274,6 +6469,7 @@ class ResourceSearchTab(QWidget):
             )
         )
         popup.refreshRequested.connect(self._refresh_reference_popup)
+        self._attach_popup_font_control(popup)
         self._extra_reference_popups.append(popup)
         return popup
 
@@ -7413,6 +7609,9 @@ class ResourceSearchTab(QWidget):
             title, metadata, short_name=self._law_document_headline(payload)[0]
         )
         has_body = False
+        # 본문 화면과 같게 팝업 안의 ``대통령령``ㆍ``부령``에도 그 위임을
+        # 받은 하위법령 조문 링크를 건다.
+        authority_links = self._popup_authority_links(title, jo, hang, ho)
         for label, value in sections:
             value = str(value or "")
             if not value:
@@ -7422,16 +7621,22 @@ class ResourceSearchTab(QWidget):
                 '<div class="popup-section-title">'
                 f"{escape(str(label))}</div>"
             )
+            value, authority_tokens = self._mask_authority_mentions(
+                value, authority_links
+            )
+            section_html = body_to_html(
+                value,
+                self.detail_highlight_terms,
+                current_law_name=title,
+                current_law_id=str(source_row.get("id") or ""),
+                use_api_links=True,
+                paragraph_gap_px=self.POPUP_PARAGRAPH_GAP_PX,
+                embedded_images=self._admin_rule_images(payload),
+            )
             html_parts.append(
                 '<div class="content">'
-                + body_to_html(
-                    value,
-                    self.detail_highlight_terms,
-                    current_law_name=title,
-                    current_law_id=str(source_row.get("id") or ""),
-                    use_api_links=True,
-                    paragraph_gap_px=self.POPUP_PARAGRAPH_GAP_PX,
-                    embedded_images=self._admin_rule_images(payload),
+                + self._restore_authority_mentions(
+                    section_html, authority_tokens
                 )
                 + "</div>"
             )
@@ -7819,6 +8024,10 @@ class ResourceSearchTab(QWidget):
     # 법령과 행정규칙 다음 자리. 조문 단위 추천은 두 기본 목록 뒤에 두고,
     # 자치법규와 별표ㆍ서식 등 나머지 자료보다는 앞에 둔다.
     INTEGRATED_AI_ORDER = 2
+    # 검색어와 이름이 이만큼 닮았으면 구분(법령ㆍ행정규칙ㆍ자치법규…)을
+    # 가리지 않고 맨 위로 올린다. "이천시 도시계획 조례"처럼 이름을 그대로
+    # 적어 찾는데 자치법규 차례가 뒤라 한참 아래에 있던 일을 없앤다.
+    INTEGRATED_NAME_MATCH_RATIO = 0.8
 
     @classmethod
     def _integrated_group_order(cls, row: dict[str, object]) -> int:
@@ -7885,18 +8094,34 @@ class ResourceSearchTab(QWidget):
 
         saved_keys = self.law_cache.saved_keys_for_rows(rows)
         if self.category_target == RESOURCE_ALL_TARGET:
-            # 통합검색은 구분끼리 모아 보여 준다. AI가 골라 준 조문을 맨
-            # 앞에 두고, 그다음은 법령 → 행정규칙 → 자치법규 → 별표ㆍ서식
-            # 순이다. 여러 API 결과가 뒤섞여 있으면 무엇을 보고 있는지
-            # 가늠하기 어려웠다.
-            rows.sort(
-                key=lambda row: (
+            # 통합검색은 구분끼리 모아 보여 준다. 다만 검색어를 이름 그대로
+            # 적은 자료(닮은 정도 INTEGRATED_NAME_MATCH_RATIO 이상)는 구분을
+            # 가리지 않고 맨 앞에 세운다. 그 뒤로 AI가 골라 준 조문, 법령 →
+            # 행정규칙 → 자치법규 → 별표ㆍ서식 차례다. 여러 API 결과가 뒤섞여
+            # 있으면 무엇을 보고 있는지 가늠하기 어려웠다.
+            query_text = self.query_input.text().strip()
+            name_scores = {
+                id(row): search_name_similarity(
+                    query_text, str(row.get("name") or "")
+                )
+                for row in rows
+            }
+
+            def integrated_sort_key(row: dict[str, object]) -> tuple:
+                score = name_scores.get(id(row), 0.0)
+                matched = score >= self.INTEGRATED_NAME_MATCH_RATIO
+                return (
+                    0 if matched else 1,
+                    # 이름이 같은 자료끼리는 더 닮은 쪽을 앞에 둔다.
+                    # 나머지는 지금까지처럼 구분 차례를 따른다.
+                    -score if matched else 0.0,
                     self._integrated_group_order(row),
                     0
                     if self.law_cache.key_for_row(row) in saved_keys
                     else 1,
                 )
-            )
+
+            rows.sort(key=integrated_sort_key)
         else:
             rows.sort(
                 key=lambda row: (
@@ -10023,7 +10248,10 @@ class ResourceSearchTab(QWidget):
             for article in json_list(articles)
             if isinstance(article, dict) and json_text(article.get("조내용"))
         )
-        return title, metadata, [("조문", body)]
+        # 자치법규는 한 조를 통째로 한 줄에 담아 준다. 법령 본문과 달리
+        # 항ㆍ호가 줄로 나뉘어 있지 않아 그대로 그리면 조 전체가 한 문단
+        # 덩어리로 보였다. 행정규칙과 같은 규칙으로 항ㆍ호ㆍ목을 끊는다.
+        return title, metadata, [("조문", normalize_admin_rule_text(body))]
 
     @property
     def detail_highlight_terms(self) -> tuple[str, ...]:
@@ -10223,9 +10451,10 @@ class ResourceSearchTab(QWidget):
             subtitle=subtitle,
         )
 
-    # 조문 팝업은 본문보다 글씨가 작다. 본문과 같은 여백을 그대로 쓰면
-    # 줄 사이만 유난히 벌어져 글이 성글어 보였다.
-    POPUP_PARAGRAPH_GAP_PX = 2
+    # 조문 팝업도 법령 본문과 같은 줄 간격ㆍ문단 간격으로 읽는다.
+    # 예전에는 팝업 글씨가 작아 간격만 벌어져 보인다고 2px로 좁혔는데,
+    # 글꼴을 본문과 같은 굴림으로 맞추면서 본문 값으로 되돌렸다.
+    POPUP_PARAGRAPH_GAP_PX = BODY_PARAGRAPH_GAP_PX
 
     # 팝업 기본정보는 두 칸씩 두 줄로 세운다. 법령ID·소관부처가 윗줄,
     # 시행일자·공포일자가 아랫줄이다. 공포번호는 팝업에서 빼서 줄을 줄였다.
@@ -10239,24 +10468,27 @@ class ResourceSearchTab(QWidget):
         """조문 팝업용 작은 제목과 2칸×2줄 기본정보 헤더."""
         html_parts = [
             "<style>",
-            "body { font-family:'Malgun Gothic'; font-weight:400; "
-            "color:#172033; line-height:1.65; margin:0; }",
-            ".popup-law-title { font-family:'Malgun Gothic'; font-size:14px; "
+            # 팝업 글자 크기는 QTextBrowser의 기본 글꼴(굴림 9pt)이 정하고,
+            # 여기서는 배수(em)로만 적는다. 그래야 가+ㆍ가- 로 크기를 바꿀 때
+            # 제목까지 같은 비율로 커지고 줄 간격도 함께 따라온다.
+            "body { font-family:" + DETAIL_FONT_CSS_FAMILY + "; font-weight:400; "
+            "color:#172033; line-height:" + BODY_LINE_HEIGHT + "; margin:0; }",
+            ".popup-law-title { font-size:1.15em; "
             f"font-weight:700; color:#173b63; margin:0 0 {BODY_PARAGRAPH_GAP_PX}px 0; }}",
             ".meta { background:#f3f7fb; border:1px solid #cfdcea; "
             "border-radius:6px; padding:8px 10px; margin-bottom:11px; }",
             ".meta table { width:100%; border-collapse:collapse; "
             "table-layout:fixed; }",
             f".meta td {{ width:{100 / self.POPUP_META_COLUMNS:.2f}%; "
-            "color:#172033; font-size:13px; "
+            "color:#172033; font-size:0.95em; "
             "font-weight:400; padding:4px 6px; white-space:nowrap; }",
             ".meta-label { color:#3d4c60; font-weight:700; "
             "margin-right:5px; }",
-            ".popup-section-title { font-family:'Malgun Gothic'; color:#1768aa; "
-            "font-size:15px; font-weight:700; border-bottom:1px solid #dbeaf7; "
+            ".popup-section-title { color:#1768aa; "
+            "font-size:1.1em; font-weight:700; border-bottom:1px solid #dbeaf7; "
             "padding-bottom:4px; margin:11px 0 7px 0; }",
-            ".content { font-family:'Malgun Gothic'; font-weight:400; "
-            f"font-size:13px; line-height:{BODY_LINE_HEIGHT}; }}",
+            ".content { font-weight:400; "
+            f"line-height:{BODY_LINE_HEIGHT}; }}",
             f".paragraph {{ margin:0 0 {self.POPUP_PARAGRAPH_GAP_PX}px 0; }}",
             ".bullet { margin:0 0 5px 0; border-collapse:collapse; }",
             ".bullet-marker { font-weight:400; padding:0; }",
@@ -10267,7 +10499,7 @@ class ResourceSearchTab(QWidget):
             f"{highlight_html_text(title, self.detail_highlight_terms)}"
             # 약칭은 법령검색 본문 머리글과 같은 표기로 제목 옆에 붙인다.
             + (
-                '<span style="font-size:12px; font-weight:400; '
+                '<span style="font-size:0.9em; font-weight:400; '
                 'color:#5a6b80;">'
                 f"&nbsp;(약칭: {escape(short_name)})</span>"
                 if short_name

@@ -519,8 +519,14 @@ def _article_30_payload(extra_decree: dict | None = None) -> dict:
     }
 
 
+def _without_reference_anchors(html: str) -> str:
+    """조ㆍ항ㆍ호ㆍ목이 조각마다 링크로 갈리므로 앵커만 걷어 낸 글자를 본다."""
+    return re.sub(r"</a>|<a [^>]*>", "", html)
+
+
 def _comparison_column_pairs(html: str) -> list[tuple[str, str]]:
     """헤더를 뺀 각 행의 (시행령 칸, 시행규칙 칸). rowspan 뒤 2칸 행도 포함한다."""
+    html = _without_reference_anchors(html)
     pairs: list[tuple[str, str]] = []
     for row in re.findall(r"<tr>(.*?)</tr>", html, re.DOTALL)[1:]:
         tds = re.findall(
@@ -700,6 +706,7 @@ def test_uncited_decree_paragraph_does_not_jump_to_the_top(tmp_path) -> None:
         jo="003000",
         label="제30조(도시ㆍ군관리계획의 결정)",
     )
+    html = _without_reference_anchors(html)
     law_rows = []
     for row in re.findall(r"<tr>(.*?)</tr>", html, re.DOTALL)[1:]:
         tds = re.findall(
@@ -734,6 +741,7 @@ def test_decree_paragraph_two_aligns_to_law_paragraph_three(tmp_path) -> None:
         jo="003000",
         label="제30조(도시ㆍ군관리계획의 결정)",
     )
+    html = _without_reference_anchors(html)
     law_rows = []
     for row in re.findall(r"<tr>(.*?)</tr>", html, re.DOTALL)[1:]:
         tds = re.findall(

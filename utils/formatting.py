@@ -26,6 +26,7 @@ from .patterns import (
     CIRCLED_HANGUL_ITEM_PATTERN,
     LAW_REFERENCE_PATTERN,
     LAW_UNIT_REFERENCE_PATTERN,
+    LAW_UNIT_SEGMENT_PATTERN,
 )
 from .parsing import (
     ADMIN_RULE_IMAGE_MARKER_PATTERN,
@@ -304,6 +305,67 @@ def sibling_law_name(anchor_law_name: str, unit: str) -> str:
     return base
 
 
+REFERENCE_LINK_STYLE = "color:#006dcc; text-decoration:underline;"
+
+
+def _reference_anchor(url: str, inner_html: str) -> str:
+    return (
+        f'<a href="{escape(url, quote=True)}" '
+        f'style="{REFERENCE_LINK_STYLE}">{inner_html}</a>'
+    )
+
+
+def _unit_segment_links(
+    prefix: str,
+    body: str,
+    terms: tuple[str, ...],
+    base_parameters: list[str],
+) -> str:
+    """조ㆍ항ㆍ호ㆍ목을 조각마다 따로 링크로 만든다.
+
+    법제처 화면처럼 ``제76조제5항제1호의2``에서 ``제76조``는 그 조를,
+    ``제5항``은 그 조의 제5항을, ``제1호의2``는 그 항의 호를 연다.
+    조각은 앞 조각의 범위를 이어받으므로 뒤로 갈수록 좁아진다.
+    ``prefix``(「법령명」ㆍ앞 공백)는 첫 조각 링크에 함께 넣어
+    지금까지의 링크 모양을 유지한다.
+    """
+    segments = list(LAW_UNIT_SEGMENT_PATTERN.finditer(body))
+    if not segments:
+        url = f"lawref://open?{'&'.join(base_parameters)}"
+        return _reference_anchor(url, highlight_html_text(prefix + body, terms))
+    pieces: list[str] = []
+    parameters = list(base_parameters)
+    cursor = 0
+    for index, segment in enumerate(segments):
+        for key in (
+            "jo",
+            "jo_branch",
+            "hang",
+            "hang_branch",
+            "ho",
+            "ho_branch",
+            "mok",
+        ):
+            unit_value = str(segment.group(key) or "")
+            if unit_value:
+                parameters.append(f"{key}={quote(unit_value, safe='')}")
+        gap = body[cursor : segment.start()]
+        if index == 0:
+            # 첫 조각은 「법령명」과 앞 공백까지 안고 간다.
+            text = prefix + gap + segment.group(0)
+        else:
+            # 조각 사이에 낀 글자는 링크 밖에 그대로 둔다.
+            if gap:
+                pieces.append(highlight_html_text(gap, terms))
+            text = segment.group(0)
+        url = f"lawref://open?{'&'.join(parameters)}"
+        pieces.append(_reference_anchor(url, highlight_html_text(text, terms)))
+        cursor = segment.end()
+    if cursor < len(body):
+        pieces.append(highlight_html_text(body[cursor:], terms))
+    return "".join(pieces)
+
+
 def law_reference_html_text(
     value: str,
     terms: tuple[str, ...],
@@ -417,34 +479,28 @@ def law_reference_html_text(
                 and current_law_id
             ):
                 parameters.append(f"id={quote(current_law_id, safe='')}")
-            if unit_match:
-                for key in (
-                    "jo",
-                    "jo_branch",
-                    "hang",
-                    "hang_branch",
-                    "ho",
-                    "ho_branch",
-                    "mok",
-                ):
-                    unit_value = str(unit_match.group(key) or "")
-                    if not unit_value and key == "jo":
-                        unit_value = carried_jo
-                    if not unit_value and key == "jo_branch":
-                        unit_value = carried_jo_branch
-                    if unit_value:
-                        parameters.append(f"{key}={quote(unit_value, safe='')}")
-            url = f"lawref://open?{'&'.join(parameters)}"
-        else:
-            url = f"https://www.law.go.kr/법령/{quote(law_name, safe='')}"
-            if unit_match:
-                article_match = re.match(r"제\d+조(?:의\d+)?", unit_match.group(0))
-                if article_match:
-                    url = f"{url}/{quote(article_match.group(0), safe='')}"
+            # 앞 인용에서 이어받은 조는 조각마다 밑바탕으로 깔린다.
+            if carried_jo:
+                parameters.append(f"jo={quote(carried_jo, safe='')}")
+                if carried_jo_branch:
+                    parameters.append(
+                        f"jo_branch={quote(carried_jo_branch, safe='')}"
+                    )
+            body = article_reference.strip()
+            if body and reference.endswith(body):
+                prefix = reference[: len(reference) - len(body)]
+            else:
+                prefix, body = "", reference
+            parts.append(_unit_segment_links(prefix, body, terms, parameters))
+            last = match.end()
+            continue
+        url = f"https://www.law.go.kr/법령/{quote(law_name, safe='')}"
+        if unit_match:
+            article_match = re.match(r"제\d+조(?:의\d+)?", unit_match.group(0))
+            if article_match:
+                url = f"{url}/{quote(article_match.group(0), safe='')}"
         parts.append(
-            f'<a href="{escape(url, quote=True)}" '
-            'style="color:#006dcc; text-decoration:underline;">'
-            f"{highlight_html_text(reference, terms)}</a>"
+            _reference_anchor(url, highlight_html_text(reference, terms))
         )
         last = match.end()
     parts.append(highlight_html_text(value[last:], terms))

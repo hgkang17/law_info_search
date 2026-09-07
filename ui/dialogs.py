@@ -22,11 +22,14 @@ from PySide6.QtPdf import QPdfDocument
 from PySide6.QtPdfWidgets import QPdfView
 from ui.assets import SPIN_DOWN_ICON_PATH, SPIN_UP_ICON_PATH
 from ui.theme import detail_font
+from utils.constants import DEFAULT_POPUP_FONT_POINT
 from ui.widgets import (
+    DETAIL_FONT_SIZE_STEP,
     PopupDragBar,
     PopupResizeHandle,
     apply_close_icon,
     favorite_icon,
+    normalize_detail_font_size,
 )
 from workers.download_worker import PdfDownloadWorker
 from PySide6.QtCore import QBuffer, QIODevice
@@ -661,6 +664,7 @@ class LawReferencePopup(QFrame):
 
     refreshRequested = Signal(object)
     favoriteRequested = Signal(object)
+    fontSizeChanged = Signal(float)
 
     def __init__(self, link_handler, parent=None) -> None:
         super().__init__(
@@ -672,6 +676,7 @@ class LawReferencePopup(QFrame):
         self.reference_request: dict[str, str] = {}
         self.favorite_checker = None
         self.hover_guard = None
+        self.content_font_point = float(DEFAULT_POPUP_FONT_POINT)
         self._content_generation = 0
         self._restoring_scroll = False
         self.setMinimumSize(320, 220)
@@ -715,6 +720,14 @@ class LawReferencePopup(QFrame):
             "저장된 조문을 사용하지 않고 같은 조문을 API에서 다시 불러옵니다."
         )
         self.refresh_button.setEnabled(False)
+        self.font_smaller_button = QPushButton("가－")
+        self.font_smaller_button.setObjectName("referencePopupFontSmaller")
+        self.font_smaller_button.setFixedSize(30, 30)
+        self.font_smaller_button.setToolTip("팝업 글자를 작게 합니다.")
+        self.font_larger_button = QPushButton("가＋")
+        self.font_larger_button.setObjectName("referencePopupFontLarger")
+        self.font_larger_button.setFixedSize(30, 30)
+        self.font_larger_button.setToolTip("팝업 글자를 크게 합니다.")
         self.favorite_button = QPushButton()
         self.favorite_button.setObjectName("referencePopupFavorite")
         self.favorite_button.setIconSize(QSize(16, 16))
@@ -726,6 +739,8 @@ class LawReferencePopup(QFrame):
         apply_close_icon(self.close_button)
         self.close_button.setFixedSize(30, 30)
         header.addWidget(self.title_label, 1)
+        header.addWidget(self.font_smaller_button)
+        header.addWidget(self.font_larger_button)
         header.addWidget(self.favorite_button)
         header.addWidget(self.refresh_button)
         header.addWidget(self.pin_button)
@@ -733,6 +748,8 @@ class LawReferencePopup(QFrame):
         # 레이아웃에 넣으면서 버튼의 부모가 이동 영역으로 바뀐 뒤에
         # 지정해야 십자 이동 커서를 상속하지 않는다.
         for button in (
+            self.font_smaller_button,
+            self.font_larger_button,
             self.favorite_button,
             self.refresh_button,
             self.pin_button,
@@ -743,7 +760,10 @@ class LawReferencePopup(QFrame):
 
         self.browser = QTextBrowser()
         self.browser.setObjectName("referencePopupBrowser")
-        browser_font = detail_font()
+        # 팝업 본문은 크기를 pt로만 정하고 HTML 쪽은 배수(em)로 적는다.
+        # 그래야 가+ㆍ가- 로 크기를 바꿀 때 제목ㆍ본문이 같은 비율로
+        # 따라 커지고, 줄 간격도 배수라 저절로 벌어진다.
+        browser_font = detail_font(self.content_font_point)
         self.browser.setFont(browser_font)
         self.browser.document().setDefaultFont(browser_font)
         self.browser.setOpenExternalLinks(False)
@@ -767,7 +787,32 @@ class LawReferencePopup(QFrame):
             lambda: self.favoriteRequested.emit(self)
         )
         self.close_button.clicked.connect(self._close_popup)
+        self.font_smaller_button.clicked.connect(
+            lambda: self._step_content_font(-1)
+        )
+        self.font_larger_button.clicked.connect(
+            lambda: self._step_content_font(1)
+        )
         self._create_resize_handles()
+
+    def _step_content_font(self, direction: int) -> None:
+        step = float(DETAIL_FONT_SIZE_STEP) * (1 if direction > 0 else -1)
+        self.set_content_font_point(
+            self.content_font_point + step, notify=True
+        )
+
+    def set_content_font_point(
+        self, point: float, *, notify: bool = False
+    ) -> None:
+        """팝업 본문 글자 크기를 바꾼다. 줄 간격은 배수라 따라온다."""
+        point = normalize_detail_font_size(point)
+        changed = abs(point - self.content_font_point) >= 0.01
+        self.content_font_point = point
+        font = detail_font(point)
+        self.browser.setFont(font)
+        self.browser.document().setDefaultFont(font)
+        if notify and changed:
+            self.fontSizeChanged.emit(point)
 
     def _create_resize_handles(self) -> None:
         handle_specs = (
