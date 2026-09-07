@@ -6109,6 +6109,25 @@ class ResourceSearchTab(QWidget):
         """미리보기에 쓸 원문을 배경에서 받는다. 받아 둔 것이 있으면 곧바로 쓴다."""
         if key in self._annex_preview_workers:
             return
+        # 한 번 받아 둔 것은 그대로 다시 쓴다. 접었다 펼 때마다 다시
+        # 내려받느라 몇 초씩 기다려야 했다.
+        cached = self._annex_previews.get(key)
+        panel = self._annex_preview_panels.get(key)
+        if isinstance(cached, dict) and panel is not None:
+            pages = cached.get("pages")
+            if isinstance(pages, list) and pages:
+                panel.show_images(
+                    [bytes(page) for page in pages if isinstance(page, bytes)],
+                    panel.current_title(),
+                    total=int(cached.get("total") or 0),
+                )
+                QTimer.singleShot(0, self._place_inline_annex_preview)
+                return
+            data = cached.get("data")
+            if isinstance(data, (bytes, bytearray)) and data:
+                panel.show_pdf(bytes(data), panel.current_title())
+                QTimer.singleShot(0, self._place_inline_annex_preview)
+                return
         preview_url = str(entry.get("preview_url") or "")
         if preview_url:
             worker = OrdinanceAnnexPreviewWorker(preview_url, self)
@@ -6123,6 +6142,13 @@ class ResourceSearchTab(QWidget):
                 pages = result.get("pages")
                 if not isinstance(pages, list):
                     return
+                state = self._annex_previews.get(cache_key)
+                if isinstance(state, dict):
+                    state["pages"] = [
+                        bytes(page) for page in pages if isinstance(page, bytes)
+                    ]
+                    state["total"] = int(result.get("total") or 0)
+                    state["error"] = ""
                 panel = self._annex_preview_panels.get(cache_key)
                 if panel is not None:
                     panel.show_images(
@@ -6211,6 +6237,10 @@ class ResourceSearchTab(QWidget):
         rendered = head + "".join(parts) + tail
         self._replace_detail_content(html=rendered)
         self._apply_annex_text_font()
+        # 배치가 끝나기 전에 스크롤을 되돌리면 최대값이 아직 0이라
+        # 맨 위로 튀어 오른다(자치법규 별표를 접을 때 그랬다).
+        # size()를 읽어 Qt가 미뤄 둔 재배치를 지금 끝내게 한다.
+        self.detail_view.document().size()
         if isinstance(state, dict):
             state["source_html"] = rendered
         # setHtml은 문서를 통째로 갈아 끼우므로 조문 첫 줄에 내 두었던
@@ -7789,6 +7819,20 @@ class ResourceSearchTab(QWidget):
             else:
                 favorite_only = self._favorite_only_row
                 self._favorite_only_row = None
+                pending = (
+                    self.pending_row
+                    if isinstance(self.pending_row, dict)
+                    else {}
+                )
+                if favorite_only is not None and (
+                    str(favorite_only.get("target") or "")
+                    != str(pending.get("target") or "")
+                    or str(favorite_only.get("id") or "")
+                    != str(pending.get("id") or "")
+                ):
+                    # 지금 받은 본문은 별을 누른 그 줄이 아니다. 화면을
+                    # 열어야 하는 조회다.
+                    favorite_only = None
                 if favorite_only is not None:
                     # 별만 누른 조회다. 목록 화면 그대로 두고 저장만 한다.
                     if self._save_detail_payload_quietly(favorite_only, payload):
@@ -8779,10 +8823,21 @@ class ResourceSearchTab(QWidget):
                 )
                 self._progress_opacity.setOpacity(1.0)
                 self.result_table.viewport().update()
+                worker_before = self.worker
                 if not self._request_resource_detail(row, force_api=False):
                     self._pending_favorite_row = None
                     self._favorite_only_row = None
                     self._progress_opacity.setOpacity(0.0)
+                    self.result_table.viewport().update()
+                    return
+                if self.worker is worker_before:
+                    # 저장해 둔 본문이 있어 API를 부르지 않고 곧바로 열렸다.
+                    # 기다릴 응답이 없으므로 표식을 남기지 않는다. 남기면
+                    # 다음에 여는 본문의 응답을 이 표식이 가로채, 본문이
+                    # 뜨지 않고 "검색 결과에서 항목을 선택하세요"만 남는다.
+                    self._favorite_only_row = None
+                    self._progress_opacity.setOpacity(0.0)
+                    self._finalize_pending_favorite(dict(row))
                     self.result_table.viewport().update()
                 return
         if self.law_cache.set_favorite(row, wants_favorite):
