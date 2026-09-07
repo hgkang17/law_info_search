@@ -2123,12 +2123,7 @@ class ResourceSearchTab(QWidget):
         """
         scroll_bar = self.detail_view.verticalScrollBar()
         scroll_bar.setValue(min(position, scroll_bar.maximum()))
-        QTimer.singleShot(
-            0,
-            lambda restore_key=key, target=position: (
-                self._reassert_document_scroll(restore_key, target)
-            ),
-        )
+        self._hold_document_scroll(key, position)
 
     def _reassert_document_scroll(self, key: str, position: int) -> None:
         if key != self._active_document_key:
@@ -2136,6 +2131,38 @@ class ResourceSearchTab(QWidget):
         scroll_bar = self.detail_view.verticalScrollBar()
         if scroll_bar.value() != position:
             scroll_bar.setValue(min(position, scroll_bar.maximum()))
+
+    # 큰 문서(수립지침 같은 지침류)는 새 본문을 넣은 뒤 배치가 한 번에
+    # 끝나지 않는다. 그동안 스크롤 최대값이 작아서, 되돌린 자리가 잘려
+    # 맨 위 근처로 밀린다. 배치가 자라는 동안 몇 번 더 맞춘다.
+    _SCROLL_SETTLE_DELAYS = (0, 120, 400)
+
+    def _hold_document_scroll(self, key: str, target: int) -> None:
+        """배치가 끝날 때까지 그 자리를 붙잡는다.
+
+        사용자가 그 사이에 스스로 굴리면 곧바로 손을 뗀다(우리가 마지막에
+        놓아둔 값과 다르면 사용자가 움직인 것이다).
+        """
+        scroll_bar = self.detail_view.verticalScrollBar()
+        held = {"value": scroll_bar.value()}
+
+        def step(index: int) -> None:
+            if key != self._active_document_key:
+                return
+            bar = self.detail_view.verticalScrollBar()
+            if bar.value() != held["value"]:
+                return
+            wanted = min(target, bar.maximum())
+            if bar.value() != wanted:
+                bar.setValue(wanted)
+                held["value"] = bar.value()
+            if index + 1 < len(self._SCROLL_SETTLE_DELAYS):
+                QTimer.singleShot(
+                    self._SCROLL_SETTLE_DELAYS[index + 1],
+                    lambda next_index=index + 1: step(next_index),
+                )
+
+        QTimer.singleShot(self._SCROLL_SETTLE_DELAYS[0], lambda: step(0))
 
     def _restore_cached_document_controls(self, key: str) -> None:
         if key != self._active_document_key:
@@ -6237,10 +6264,6 @@ class ResourceSearchTab(QWidget):
         rendered = head + "".join(parts) + tail
         self._replace_detail_content(html=rendered)
         self._apply_annex_text_font()
-        # 배치가 끝나기 전에 스크롤을 되돌리면 최대값이 아직 0이라
-        # 맨 위로 튀어 오른다(자치법규 별표를 접을 때 그랬다).
-        # size()를 읽어 Qt가 미뤄 둔 재배치를 지금 끝내게 한다.
-        self.detail_view.document().size()
         if isinstance(state, dict):
             state["source_html"] = rendered
         # setHtml은 문서를 통째로 갈아 끼우므로 조문 첫 줄에 내 두었던
@@ -6254,6 +6277,11 @@ class ResourceSearchTab(QWidget):
         # 갈아 끼운 본문에는 글자 서식으로 얹었던 별표 링크가 없다.
         # 다시 얹지 않으면 별표를 한 번 펼치는 순간 본문 링크가 사라진다.
         self._apply_inline_annex_links()
+        # 문서를 건드리는 일(별표 줄 서식ㆍ3단비교 여백ㆍ본문 링크)이 모두
+        # 끝난 뒤에 배치를 확정하고 자리를 되돌린다. 중간에 되돌리면 그 뒤의
+        # 손질이 배치를 다시 무르고, 그때 스크롤 최대값이 0이라 맨 위로
+        # 튀어 올랐다(법령ㆍ행정규칙ㆍ자치법규 모두 같은 자리다).
+        self.detail_view.document().size()
         scroll_bar.setValue(min(position, scroll_bar.maximum()))
         if anchor_top is not None:
             new_top = self._anchor_viewport_top(keep_anchor)
@@ -6267,6 +6295,9 @@ class ResourceSearchTab(QWidget):
                         ),
                     )
                 )
+        # 배치가 뒤늦게 자라면 되돌린 자리가 잘려 있을 수 있다. 배치가
+        # 끝날 때까지 몇 번 더 같은 자리로 맞춘다.
+        self._hold_document_scroll(self._active_document_key, position)
         QTimer.singleShot(0, self._place_inline_annex_preview)
 
     @staticmethod
