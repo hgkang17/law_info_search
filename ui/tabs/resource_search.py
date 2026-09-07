@@ -9144,7 +9144,7 @@ class ResourceSearchTab(QWidget):
         except Exception:  # noqa: BLE001 - 저장 경로가 없으면 아래에서 알린다.
             return False
         try:
-            _save_fetched_document(
+            saved_row = _save_fetched_document(
                 self.law_cache,
                 dict(row),
                 payload,
@@ -9153,6 +9153,15 @@ class ResourceSearchTab(QWidget):
         except Exception as exc:  # noqa: BLE001
             self.law_cache.last_error = str(exc)
             return False
+        # 본문 끝 별표ㆍ별첨 목록은 화면을 그릴 때 만든다. 화면 없이 저장할
+        # 때도 같이 담아 두지 않으면, 그 저장본을 열었을 때 별표가 통째로
+        # 사라진다(도시ㆍ군관리계획수립지침의 별첨이 그랬다).
+        entries = self._law_annex_entries(payload)
+        if entries and str(row.get("target") or "") != "law":
+            self.law_cache.update_snapshot(
+                saved_row if isinstance(saved_row, dict) else dict(row),
+                {"annex_entries": entries},
+            )
         return True
 
     def _finalize_pending_favorite(self, saved_row: dict[str, object]) -> None:
@@ -9801,8 +9810,17 @@ class ResourceSearchTab(QWidget):
     def _cached_annex_entries(
         record: dict[str, object],
     ) -> list[dict[str, str]]:
-        """저장본에 담아 둔 별표ㆍ별첨 목록을 꺼낸다."""
+        """저장본에 담아 둔 별표ㆍ별첨 목록을 꺼낸다.
+
+        목록이 빠진 옛 저장본이라도 원문 응답이 함께 있으면 거기서 다시
+        뽑는다. 그래야 이미 저장해 둔 지침도 API를 다시 부르지 않고 별첨을
+        되찾는다.
+        """
         entries = record.get("annex_entries")
+        if not isinstance(entries, list) or not entries:
+            payload = record.get("detail_payload")
+            if isinstance(payload, dict):
+                return ResourceSearchTab._law_annex_entries(payload)
         if not isinstance(entries, list):
             return []
         return [

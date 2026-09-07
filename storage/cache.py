@@ -150,6 +150,9 @@ class LawDocumentCache(QObject):
     # 본문을 다시 저장해도 그대로 남겨야 하는 값. 즐겨찾기ㆍ폴더ㆍ메모ㆍ
     # 글자색은 저장 화면이 아니라 다른 화면에서 관리한다.
     PRESERVED_RECORD_KEYS = (
+        # 본문 끝 별표ㆍ별첨 목록. 저장 화면에는 목록이 HTML로만 남아 있어
+        # 이 값을 잃으면 저장본을 열 때 별표가 통째로 사라진다.
+        "annex_entries",
         "favorite",
         "favorite_projects",
         "favorite_folder",
