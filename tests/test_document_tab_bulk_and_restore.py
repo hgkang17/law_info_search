@@ -9,8 +9,8 @@ from PySide6.QtWidgets import QApplication, QTextBrowser
 
 from storage.cache import LawDocumentCache
 from storage.recent import RecentSearchManager
-from ui.theme import apply_detail_font_family
 from ui.tabs.resource_search import ResourceSearchTab
+from ui.theme import apply_detail_font_family
 from utils.formatting import DETAIL_DOCUMENT_STYLE
 
 
@@ -90,6 +90,32 @@ def test_saved_annex_favorite_opens_the_annex_view(tmp_path) -> None:
     tab._open_cached_resource_snapshot(annex_row, {"row": annex_row})
 
     assert opened and opened[0]["id"] == "7788"
+
+
+def test_new_annex_favorite_survives_opening_and_returning(tmp_path) -> None:
+    """미저장 별표를 즐겨찾기한 뒤 본문에서 돌아와도 별이 유지된다."""
+    tab = _tab(tmp_path)
+    annex_row = dict(
+        ROW,
+        target="ordinbyl",
+        label="자치법규 별표·서식",
+        id="22142677",
+        name="[별표 24] 건축물의 용도별 기준",
+        raw={
+            "별표종류": "별표",
+            "별표번호": "002300",
+            "별표서식파일링크": (
+                "/LSW/flDownload.do?gubun=ELIS&flSeq=167149183"
+            ),
+        },
+    )
+    # 메인 창이 공용 상태줄을 붙이기 전의 독립 탭에는 `_bar`가 없다.
+    assert not hasattr(tab.status_label, "_bar")
+
+    tab._toggle_favorite_for_row(annex_row)
+    tab._exit_reading_mode()
+
+    assert tab.law_cache.is_favorite(annex_row)
 
 
 def test_reference_popup_font_control_is_shared(tmp_path) -> None:

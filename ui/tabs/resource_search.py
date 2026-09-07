@@ -97,7 +97,10 @@ from workers.search_worker import (
     AnnexReferenceWorker,
     ResourceApiWorker,
 )
-from workers.download_worker import PdfDownloadWorker
+from workers.download_worker import (
+    OrdinanceAnnexPreviewWorker,
+    PdfDownloadWorker,
+)
 from ui.tabs.ai_chat_panel import AiChatPanel
 from llm.inquiries import is_inquiry_target, split_doc_reference
 from molit_cgm_expc_api import (
@@ -183,7 +186,7 @@ from PySide6.QtWidgets import QAbstractItemView, QApplication, QDialog, QFileDia
 from datetime import datetime
 from html import escape, unescape
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 import base64
 import bisect
 import hashlib
@@ -6050,6 +6053,43 @@ class ResourceSearchTab(QWidget):
         """미리보기에 쓸 원문을 배경에서 받는다. 받아 둔 것이 있으면 곧바로 쓴다."""
         if key in self._annex_preview_workers:
             return
+        preview_url = str(entry.get("preview_url") or "")
+        if preview_url:
+            worker = OrdinanceAnnexPreviewWorker(preview_url, self)
+            self._annex_preview_workers[key] = worker
+
+            def ordinance_finished(
+                result: object, cache_key: str = key
+            ) -> None:
+                self._annex_preview_workers.pop(cache_key, None)
+                if not isinstance(result, dict):
+                    return
+                pages = result.get("pages")
+                if not isinstance(pages, list):
+                    return
+                panel = self._annex_preview_panels.get(cache_key)
+                if panel is not None:
+                    panel.show_images(
+                        [bytes(page) for page in pages if isinstance(page, bytes)],
+                        panel.current_title(),
+                        total=int(result.get("total") or 0),
+                    )
+                    QTimer.singleShot(0, self._place_inline_annex_preview)
+
+            def ordinance_failed(message: str, cache_key: str = key) -> None:
+                self._annex_preview_workers.pop(cache_key, None)
+                panel = self._annex_preview_panels.get(cache_key)
+                if panel is not None:
+                    panel.show_error(
+                        f"자치법규 별표를 불러오지 못했습니다: {message}"
+                    )
+                    QTimer.singleShot(0, self._place_inline_annex_preview)
+
+            worker.succeeded.connect(ordinance_finished)
+            worker.failed.connect(ordinance_failed)
+            worker.finished.connect(worker.deleteLater)
+            worker.start()
+            return
         pdf_url = str(entry.get("pdf_url") or "")
         if not pdf_url:
             return
@@ -8902,7 +8942,11 @@ class ResourceSearchTab(QWidget):
         ) != str(saved_row.get("id")):
             return
         self.status_label.setText("본문 저장 완료 — 즐겨찾기에 추가하는 중입니다.")
-        self.status_label._bar.repaint()
+        # 공용 하단 상태줄을 쓰기 전(창에 붙기 전)에는 이 속성이 없다.
+        # 여기서 예외가 나면 바로 아래 즐겨찾기 설정까지 함께 날아간다.
+        status_bar = getattr(self.status_label, "_bar", None)
+        if status_bar is not None:
+            status_bar.repaint()
         self._pending_favorite_row = None
         article = self._pending_article_favorite
         self._pending_article_favorite = None
@@ -9467,7 +9511,7 @@ class ResourceSearchTab(QWidget):
                 ),
                 law_annexes=(
                     self._law_annex_entries(payload)
-                    if target == "admrul"
+                    if target in ("admrul", "ordin")
                     else None
                 ),
             )
@@ -9497,6 +9541,7 @@ class ResourceSearchTab(QWidget):
                     record.get("font_size") or self.detail_font_size
                 ),
                 "memos": list(record.get("memos") or []),
+                "annex_entries": self._cached_annex_entries(record),
                 "scroll": 0,
             }
         )
@@ -9595,12 +9640,16 @@ class ResourceSearchTab(QWidget):
                 str(decoded[1]) if decoded and decoded[1] else ""
             ),
         }
+        label, title = cls._annex_label_and_title(
+            unit, str(row.get("name") or "")
+        )
         return {
-            "label": cls._law_annex_label(unit),
+            "label": label,
             "kind": json_text(raw.get("별표종류")),
-            "title": str(row.get("name") or ""),
+            "title": title,
             "file_url": full_law_url(raw.get("별표서식파일링크")),
             "pdf_url": full_law_url(raw.get("별표서식PDF파일링크")),
+            "preview_url": "",
         }
 
     def _save_keyword_article_snapshot(
@@ -9648,7 +9697,7 @@ class ResourceSearchTab(QWidget):
         html_parts, plain_parts = self._detail_header(str(row["name"]), metadata)
         # 한 건만 여는 화면이라 미리보기를 처음부터 펼친 상태로 그린다.
         preview_key = self._annex_preview_key(entry, 0)
-        if entry["pdf_url"] and preview_key not in self._annex_previews:
+        if self._annex_can_preview(entry) and preview_key not in self._annex_previews:
             self._annex_previews[preview_key] = {
                 "zoom": self.ANNEX_PREVIEW_DEFAULT_ZOOM,
                 "pages": self.ANNEX_PREVIEW_PAGE_LIMIT,
@@ -9662,7 +9711,7 @@ class ResourceSearchTab(QWidget):
         # 별표ㆍ서식은 그림 한 장이 곧 본문이다. 좁은 칸에서는 표가 잘려
         # 읽을 수 없으므로 열자마자 크게 보기로 넘긴다.
         self._set_reading_mode(True)
-        if entry["pdf_url"]:
+        if self._annex_can_preview(entry):
             panel = self._annex_panel_for_key(preview_key)
             panel.show_loading(self._annex_display_title(entry))
             self._place_inline_annex_preview()
@@ -9770,7 +9819,7 @@ class ResourceSearchTab(QWidget):
                 None
                 if article_text
                 else self._law_annex_entries(payload)
-                if target in ("law", "admrul")
+                if target in ("law", "admrul", "ordin")
                 else None
             ),
         )
@@ -9809,6 +9858,11 @@ class ResourceSearchTab(QWidget):
                     state.get("font_size") or self.detail_font_size
                 ),
                 "memos": list(state.get("memos") or []),
+                # 두 유형 모두 payload를 저장하지 않으므로 본문 끝 별표
+                # 목록과 자치법규 변환 미리보기 식별자까지 함께 남긴다.
+                "annex_entries": [
+                    dict(entry) for entry in self._law_annex_entries(payload)
+                ],
             }
             if target == "admrul":
                 # QTextDocument에서 다시 뽑은 평문은 문단 경계를 잃을 수
@@ -9826,12 +9880,6 @@ class ResourceSearchTab(QWidget):
                         "administrative_rule_images": self._admin_rule_images(
                             payload
                         ),
-                        # 본문 끝 별첨은 원문 payload에서만 뽑을 수 있다.
-                        # 저장본에는 payload가 없으므로 여기서 함께 담는다.
-                        "annex_entries": [
-                            dict(entry)
-                            for entry in self._law_annex_entries(payload)
-                        ],
                     }
                 )
             if self.law_cache.save_snapshot(
@@ -10328,8 +10376,63 @@ class ResourceSearchTab(QWidget):
         return f"{kind} {numbered}"
 
     @classmethod
+    def _annex_label_and_title(
+        cls, unit: dict[str, object], raw_title: str
+    ) -> tuple[str, str]:
+        """제목 자체의 ``[별표 24]`` 표기를 우선해 중복ㆍ오표기를 막는다.
+
+        자치법규는 ``별표구분``을 모두 ``서식``으로 주고, 내부 번호와
+        화면 표기가 다른 사례도 있다. 번호 필드만 믿으면 실제
+        ``[별표 24]``를 ``[별지 제23호서식]``으로 잘못 표시하게 된다.
+        """
+        title = json_text(raw_title).strip()
+        match = re.match(
+            r"^\[\s*((?:별표|별첨|별지|서식)[^\]]*)\s*\]\s*(.*)$",
+            title,
+        )
+        if match is None:
+            return cls._law_annex_label(unit), title
+        label = " ".join(match.group(1).split())
+        label = re.sub(r"^(별표|별첨)\s*(\d)", r"\1 \2", label)
+        label = re.sub(r"^별지\s*제\s*(\d)", r"별지 제\1", label)
+        return label, match.group(2).strip()
+
+    @staticmethod
+    def _ordinance_annex_preview_url(
+        unit: dict[str, object], info: dict[str, object], file_url: str
+    ) -> str:
+        """자치법규 HWP를 법제처 변환 이미지로 여는 POST 요청 주소."""
+        file_match = re.search(r"(?:[?&])flSeq=(\d+)", str(file_url))
+        byl_seq = json_text(unit.get("별표키") or unit.get("별표일련번호"))
+        ordin_id = json_text(info.get("자치법규ID"))
+        ordin_seq = json_text(info.get("자치법규일련번호"))
+        if (
+            file_match is None
+            or not byl_seq.isdigit()
+            or not ordin_id.isdigit()
+            or not ordin_seq.isdigit()
+        ):
+            return ""
+        return (
+            "https://www.law.go.kr/LSW/ordinBylContentsInfoR.do?"
+            + urlencode(
+                {
+                    "bylSeq": byl_seq,
+                    "bylNo": json_text(unit.get("별표번호")),
+                    "bylBrNo": json_text(unit.get("별표가지번호")),
+                    "bylClsCd": "300402",
+                    "ordinId": ordin_id,
+                    "gubun": "ELIS",
+                    "ordinSeq": ordin_seq,
+                    "vSct": "",
+                    "bylFlSeq": file_match.group(1),
+                }
+            )
+        )
+
+    @classmethod
     def _law_annex_entries(cls, data: object) -> list[dict[str, str]]:
-        """법령ㆍ행정규칙 본문 응답에 같이 든 별표ㆍ별첨 정보를 꺼낸다.
+        """법령ㆍ행정규칙ㆍ자치법규 본문 응답의 별표 정보를 꺼낸다.
 
         행정규칙 응답도 ``AdmRulService`` 아래에 법령과 똑같은 ``별표단위``를
         담아 준다(``별표구분``만 ``별첨``이다). 그래서 루트만 갈아 끼우고
@@ -10340,8 +10443,14 @@ class ResourceSearchTab(QWidget):
         law = data.get("법령")
         if not isinstance(law, dict):
             law = data.get("AdmRulService")
+        is_ordinance = not isinstance(law, dict)
+        if is_ordinance:
+            law = data.get("LawService")
         if not isinstance(law, dict):
             return []
+        info = law.get("자치법규기본정보", {}) if is_ordinance else {}
+        if not isinstance(info, dict):
+            info = {}
         annex = law.get("별표")
         if not isinstance(annex, dict):
             return []
@@ -10350,20 +10459,29 @@ class ResourceSearchTab(QWidget):
             if not isinstance(raw_unit, dict):
                 continue
             unit = {str(key): value for key, value in raw_unit.items()}
-            title = json_text(
+            raw_title = json_text(
                 unit.get("별표제목문자열") or unit.get("별표제목")
             )
-            file_url = full_law_url(unit.get("별표서식파일링크"))
+            label, title = cls._annex_label_and_title(unit, raw_title)
+            file_url = full_law_url(
+                unit.get("별표서식파일링크") or unit.get("별표첨부파일명")
+            )
             pdf_url = full_law_url(unit.get("별표서식PDF파일링크"))
             if not title and not file_url and not pdf_url:
                 continue
+            preview_url = (
+                cls._ordinance_annex_preview_url(unit, info, file_url)
+                if is_ordinance
+                else ""
+            )
             entries.append(
                 {
-                    "label": cls._law_annex_label(unit),
+                    "label": label,
                     "kind": json_text(unit.get("별표구분")),
                     "title": title,
                     "file_url": file_url,
                     "pdf_url": pdf_url,
+                    "preview_url": preview_url,
                 }
             )
         return entries
@@ -10905,6 +11023,7 @@ class ResourceSearchTab(QWidget):
             shown = self._annex_display_title(entry)
             file_url = str(entry.get("file_url") or "")
             pdf_url = str(entry.get("pdf_url") or "")
+            can_preview = self._annex_can_preview(entry)
             key = self._annex_preview_key(entry, index)
             expanded = key in self._annex_previews
 
@@ -10930,7 +11049,7 @@ class ResourceSearchTab(QWidget):
             icon_html = "&nbsp;".join(icons)
 
             title_html = escape(shown)
-            if pdf_url:
+            if can_preview:
                 # 왼쪽 +/− 와 제목이 같은 annex: 링크다. 글씨를 눌러도
                 # 펼치고 접는다.
                 toggle = f"annex:{index}"
@@ -10965,7 +11084,7 @@ class ResourceSearchTab(QWidget):
                 + (f"&nbsp;&nbsp;{icon_html}" if icon_html else "")
                 + "</div>"
             )
-            if not pdf_url and not file_url:
+            if not can_preview and not file_url:
                 html_parts.append(
                     '<div style="font-size:13px; color:#526176;">'
                     "제공된 링크가 없습니다.</div>"
@@ -10978,7 +11097,7 @@ class ResourceSearchTab(QWidget):
                 plain_parts.append(f"PDF 내려받기: {pdf_url}")
             if file_url:
                 plain_parts.append(f"원본 내려받기: {file_url}")
-            if not file_url and not pdf_url:
+            if not file_url and not can_preview:
                 plain_parts.append("제공된 링크가 없습니다.")
         html_parts.append("</div>")
         html_parts.append(self.ANNEX_SECTION_END)
@@ -11015,7 +11134,16 @@ class ResourceSearchTab(QWidget):
 
     @staticmethod
     def _annex_preview_key(entry: dict[str, str], index: int) -> str:
-        return str(entry.get("pdf_url") or entry.get("file_url") or index)
+        return str(
+            entry.get("pdf_url")
+            or entry.get("preview_url")
+            or entry.get("file_url")
+            or index
+        )
+
+    @staticmethod
+    def _annex_can_preview(entry: dict[str, str]) -> bool:
+        return bool(entry.get("pdf_url") or entry.get("preview_url"))
 
     def _commit_detail(self, html_parts: list[str], plain_parts: list[str]) -> None:
         rendered_html = "".join(html_parts)

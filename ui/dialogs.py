@@ -2,8 +2,22 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QPointF, QRect, QSize, Signal, Qt, QTimer
-from PySide6.QtGui import QCursor
+from html import escape
+
+from PySide6.QtCore import (
+    QBuffer,
+    QEvent,
+    QIODevice,
+    QPointF,
+    QRect,
+    QSize,
+    Qt,
+    QTimer,
+    Signal,
+)
+from PySide6.QtGui import QCursor, QPixmap
+from PySide6.QtPdf import QPdfDocument
+from PySide6.QtPdfWidgets import QPdfView
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -12,17 +26,16 @@ from PySide6.QtWidgets import (
     QLabel,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QSpinBox,
     QTextBrowser,
     QVBoxLayout,
     QWidget,
 )
-from PySide6.QtPdf import QPdfDocument
-from PySide6.QtPdfWidgets import QPdfView
+
 from ui.assets import SPIN_DOWN_ICON_PATH, SPIN_UP_ICON_PATH
 from ui.theme import detail_font
-from utils.constants import DEFAULT_POPUP_FONT_POINT
 from ui.widgets import (
     DETAIL_FONT_SIZE_STEP,
     DetailSearchBar,
@@ -32,9 +45,8 @@ from ui.widgets import (
     favorite_icon,
     normalize_detail_font_size,
 )
+from utils.constants import DEFAULT_POPUP_FONT_POINT
 from workers.download_worker import PdfDownloadWorker
-from PySide6.QtCore import QBuffer, QIODevice
-from html import escape
 
 
 def _position_dialog_beside(dialog: QDialog, anchor_rect: QRect) -> None:
@@ -102,7 +114,7 @@ class PdfPreviewDialog(QDialog):
 
 
 class InlinePdfPreviewPanel(QFrame):
-    """본문 영역 안에서 높이를 제한해 보여 주는 PDF 미리보기."""
+    """본문 영역 안에서 PDF 또는 변환 이미지를 보여 주는 미리보기."""
 
     closeRequested = Signal()
 
@@ -119,6 +131,9 @@ class InlinePdfPreviewPanel(QFrame):
         self.setFixedHeight(340)
         self._buffer: QBuffer | None = None
         self._expanded = False
+        self._mode = "pdf"
+        self._image_pages: list[QPixmap] = []
+        self._image_labels: list[QLabel] = []
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -180,9 +195,20 @@ class InlinePdfPreviewPanel(QFrame):
         self.pdf_view.hide()
         layout.addWidget(self.pdf_view, 1)
 
-        self.zoom_spin.valueChanged.connect(
-            lambda value: self.pdf_view.setZoomFactor(value / 100.0)
-        )
+        self.image_scroll = QScrollArea(self)
+        self.image_scroll.setObjectName("inlineAnnexImageScroll")
+        self.image_scroll.setWidgetResizable(True)
+        self.image_scroll.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        self.image_container = QWidget()
+        self.image_layout = QVBoxLayout(self.image_container)
+        self.image_layout.setContentsMargins(8, 8, 8, 8)
+        self.image_layout.setSpacing(10)
+        self.image_layout.addStretch(1)
+        self.image_scroll.setWidget(self.image_container)
+        self.image_scroll.hide()
+        layout.addWidget(self.image_scroll, 1)
+
+        self.zoom_spin.valueChanged.connect(self._set_zoom)
         self.page_spin.valueChanged.connect(self._jump_to_page)
         self.pdf_view.pageNavigator().currentPageChanged.connect(
             self._current_page_changed
@@ -251,12 +277,15 @@ class InlinePdfPreviewPanel(QFrame):
         self.page_spin.setRange(1, 1)
         self.document.close()
         self.pdf_view.hide()
-        self.status_label.setText("PDF를 불러오는 중입니다…")
+        self.image_scroll.hide()
+        self.status_label.setText("원문 미리보기를 불러오는 중입니다…")
         self.status_label.show()
         # 위치는 본문 쪽 `_place_inline_annex_preview`가 잡은 뒤에만
         # 보이게 한다. 여기서 show()하면 뷰포트 전체를 덮는다.
 
     def show_pdf(self, data: bytes, title: str = "") -> None:
+        self._mode = "pdf"
+        self.image_scroll.hide()
         if title:
             self._title = title
         self._buffer = QBuffer(self)
@@ -271,6 +300,7 @@ class InlinePdfPreviewPanel(QFrame):
 
     def show_error(self, message: str) -> None:
         self.pdf_view.hide()
+        self.image_scroll.hide()
         self.status_label.setText(message)
         self.status_label.show()
 
@@ -291,7 +321,73 @@ class InlinePdfPreviewPanel(QFrame):
                 f"PDF를 여는 데 실패했습니다: {self.document.error()}"
             )
 
+    def show_images(
+        self, pages: list[bytes], title: str = "", *, total: int = 0
+    ) -> None:
+        """법제처 문서뷰어가 변환한 자치법규 별표 쪽을 표시한다."""
+        if title:
+            self._title = title
+        self._mode = "images"
+        self.document.close()
+        self.pdf_view.hide()
+        for label in self._image_labels:
+            self.image_layout.removeWidget(label)
+            label.deleteLater()
+        self._image_labels.clear()
+        self._image_pages.clear()
+        for data in pages:
+            pixmap = QPixmap()
+            if not pixmap.loadFromData(bytes(data)):
+                continue
+            label = QLabel()
+            label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+            label.setObjectName("inlineAnnexImagePage")
+            self.image_layout.insertWidget(self.image_layout.count() - 1, label)
+            self._image_pages.append(pixmap)
+            self._image_labels.append(label)
+        if not self._image_pages:
+            self.show_error("자치법규 별표 이미지를 열지 못했습니다.")
+            return
+        loaded = len(self._image_pages)
+        self.page_spin.blockSignals(True)
+        self.page_spin.setRange(1, loaded)
+        self.page_spin.setValue(1)
+        self.page_spin.blockSignals(False)
+        whole = max(loaded, int(total or 0))
+        self.page_spin.setToolTip(
+            f"보고 있는 쪽 (전체 {whole}쪽)"
+            + (f" · 앞 {loaded}쪽 표시" if whole > loaded else "")
+        )
+        self._refresh_image_sizes()
+        self.status_label.hide()
+        self.image_scroll.show()
+
+    def _set_zoom(self, value: int) -> None:
+        if self._mode == "images":
+            self._refresh_image_sizes()
+        else:
+            self.pdf_view.setZoomFactor(value / 100.0)
+
+    def _refresh_image_sizes(self) -> None:
+        if not self._image_pages:
+            return
+        available = max(80, self.image_scroll.viewport().width() - 20)
+        zoom = self.zoom_spin.value() / 100.0
+        for pixmap, label in zip(self._image_pages, self._image_labels):
+            fit = min(1.0, available / max(1, pixmap.width()))
+            width = max(1, int(pixmap.width() * fit * zoom))
+            label.setPixmap(
+                pixmap.scaledToWidth(width, Qt.TransformationMode.SmoothTransformation)
+            )
+
     def _jump_to_page(self, page: int) -> None:
+        if self._mode == "images":
+            index = max(0, min(len(self._image_labels) - 1, int(page) - 1))
+            if self._image_labels:
+                self.image_scroll.ensureWidgetVisible(
+                    self._image_labels[index], 0, 0
+                )
+            return
         self.pdf_view.pageNavigator().jump(
             max(0, int(page) - 1), QPointF(0, 0), self.pdf_view.zoomFactor()
         )
@@ -314,6 +410,11 @@ class InlinePdfPreviewPanel(QFrame):
                 )
             return True
         return super().eventFilter(watched, event)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if self._mode == "images":
+            self._refresh_image_sizes()
 
     def _toggle_expanded(self) -> None:
         # 부모는 본문 뷰포트다. 예전처럼 parent.height()-24를 쓰면

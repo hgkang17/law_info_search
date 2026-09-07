@@ -8,10 +8,13 @@
 from __future__ import annotations
 
 import hashlib
+import html
+import json
 import os
+import re
 import tempfile
 from pathlib import Path
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import parse_qs, urljoin, urlsplit
 
 import requests
 
@@ -189,3 +192,87 @@ def download_law_file(url: str, *, use_cache: bool = True) -> bytes:
 
 
 download_law_pdf = download_law_file
+
+
+_ORDINANCE_ANNEX_PREVIEW_ENDPOINT = (
+    "https://www.law.go.kr/LSW/ordinBylContentsInfoR.do"
+)
+_VIEWER_IFRAME_PATTERN = re.compile(
+    r'<iframe\b[^>]*\bsrc\s*=\s*["\'](?P<src>[^"\']+)',
+    re.IGNORECASE,
+)
+
+
+def download_ordinance_annex_pages(
+    preview_url: str, *, max_pages: int = 30
+) -> tuple[list[bytes], int]:
+    """법제처 자치법규 별표 뷰어의 변환 이미지를 내려받는다.
+
+    자치법규 별표는 본문 API에서 PDF를 주지 않고 HWP 원본만 준다.
+    법제처 화면도 같은 원본을 Synap 뷰어용 PNG로 변환하므로, 그 공식
+    변환 응답을 받아 기존 앱 안 미리보기에서 사용한다.
+    """
+    parsed = urlsplit(str(preview_url or "").strip())
+    if (
+        not is_allowed_law_file_url(preview_url)
+        or parsed.path != "/LSW/ordinBylContentsInfoR.do"
+    ):
+        raise ValueError("공식 자치법규 별표 미리보기 주소만 열 수 있습니다.")
+    params = {
+        key: values[-1]
+        for key, values in parse_qs(parsed.query, keep_blank_values=True).items()
+        if values
+    }
+    required = ("bylSeq", "ordinId", "ordinSeq", "bylFlSeq")
+    if any(not str(params.get(key) or "").isdigit() for key in required):
+        raise ValueError("자치법규 별표 미리보기 식별자가 올바르지 않습니다.")
+
+    response = requests.post(
+        _ORDINANCE_ANNEX_PREVIEW_ENDPOINT,
+        data=params,
+        timeout=(5, 30),
+        headers=REQUEST_HEADERS,
+    )
+    response.raise_for_status()
+    if len(response.content) > 2 * 1024 * 1024:
+        raise ValueError("자치법규 별표 뷰어 응답이 허용 크기를 초과했습니다.")
+    match = _VIEWER_IFRAME_PATTERN.search(response.text)
+    if match is None:
+        raise ValueError("자치법규 별표 변환 화면을 찾지 못했습니다.")
+    viewer_url = urljoin(
+        _ORDINANCE_ANNEX_PREVIEW_ENDPOINT,
+        html.unescape(match.group("src")),
+    )
+    viewer_parts = urlsplit(viewer_url)
+    if not is_allowed_law_file_url(viewer_url):
+        raise ValueError("자치법규 별표 뷰어 주소가 공식 사이트가 아닙니다.")
+    viewer_query = parse_qs(viewer_parts.query)
+    context_path = str((viewer_query.get("contextPath") or [""])[-1])
+    key = str((viewer_query.get("key") or [params["bylFlSeq"]])[-1])
+    if (
+        not key.isdigit()
+        or not context_path.startswith("/viewer/")
+        or ".." in context_path.split("/")
+    ):
+        raise ValueError("자치법규 별표 변환 경로가 올바르지 않습니다.")
+    viewer_base = urljoin("https://www.law.go.kr", context_path.rstrip("/"))
+    status_url = f"{viewer_base}/status/{key}.js"
+    try:
+        status = json.loads(download_law_file(status_url).decode("utf-8"))
+        total = int(status.get("pageNum") or 0)
+    except (UnicodeDecodeError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        raise ValueError("자치법규 별표 쪽수 정보를 읽지 못했습니다.") from exc
+    if total <= 0:
+        raise ValueError("자치법규 별표에 표시할 쪽이 없습니다.")
+
+    limit = max(1, min(int(max_pages), total))
+    pages: list[bytes] = []
+    for index in range(limit):
+        page_url = (
+            f"{viewer_base}/thumbnail/{index}.png?dpi=M&withXml=false"
+        )
+        data = download_law_file(page_url)
+        if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+            raise ValueError(f"자치법규 별표 {index + 1}쪽 이미지가 올바르지 않습니다.")
+        pages.append(data)
+    return pages, total

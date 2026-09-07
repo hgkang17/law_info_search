@@ -15,6 +15,8 @@ class _Response:
 
     def __init__(self, payload: bytes) -> None:
         self._payload = payload
+        self.content = payload
+        self.text = payload.decode("utf-8", errors="replace")
         self.headers = {"Content-Length": str(len(payload))}
 
     def raise_for_status(self) -> None:
@@ -90,3 +92,39 @@ def test_a_half_written_file_is_never_served(cache_dir, monkeypatch) -> None:
     law_download.download_law_file(URL)
     cached = next(iter(cache_dir.iterdir()))
     assert cached.read_bytes() == b"PDF-BYTES"
+
+
+def test_ordinance_annex_preview_resolves_official_viewer_pages(
+    monkeypatch,
+) -> None:
+    iframe = (
+        b'<iframe src="/LSW/viewer/skin/doc.html?imageConverting=true&amp;'
+        b'key=167149183&amp;contextPath=/viewer/BYL/example/167149183">'
+    )
+    monkeypatch.setattr(
+        law_download.requests,
+        "post",
+        lambda *_args, **_kwargs: _Response(iframe),
+    )
+    calls: list[str] = []
+
+    def fake_download(url: str, **_kwargs) -> bytes:
+        calls.append(url)
+        if "/status/" in url:
+            return b'{"pageNum":2}'
+        return b"\x89PNG\r\n\x1a\nPAGE"
+
+    monkeypatch.setattr(law_download, "download_law_file", fake_download)
+    preview_url = (
+        "https://www.law.go.kr/LSW/ordinBylContentsInfoR.do?"
+        "bylSeq=22142677&ordinId=2152079&ordinSeq=2152413&"
+        "bylFlSeq=167149183"
+    )
+
+    pages, total = law_download.download_ordinance_annex_pages(preview_url)
+
+    assert total == 2
+    assert len(pages) == 2
+    assert calls[0].endswith("/status/167149183.js")
+    assert "/thumbnail/0.png?" in calls[1]
+    assert "/thumbnail/1.png?" in calls[2]

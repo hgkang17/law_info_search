@@ -67,3 +67,60 @@ def test_ordinance_article_is_split_into_paragraph_lines(tmp_path) -> None:
     assert lines[3].startswith("1.")
     assert lines[4].startswith("2.")
     assert lines[5].startswith("3.")
+
+
+def _ordinance_payload_with_annex() -> dict:
+    return {
+        "LawService": {
+            "자치법규기본정보": {
+                "자치법규ID": "2152079",
+                "자치법규일련번호": "2152413",
+                "자치법규명": "증평군 군계획 조례",
+                "지자체기관명": "충청북도 증평군",
+            },
+            "조문": {"조": [{"조내용": "제1조(목적) 목적을 정한다."}]},
+            "별표": {
+                "별표단위": {
+                    # 실제 응답은 내부 번호가 23이어도 제목에는 별표 24로
+                    # 표시되는 사례가 있어 제목의 표기를 우선해야 한다.
+                    "별표제목": "[별표 24] 건축물의 용도별 기준",
+                    "별표첨부파일명": (
+                        "http://www.law.go.kr/flDownload.do?gubun=ELIS&"
+                        "flSeq=167149183"
+                    ),
+                    "별표번호": "0023",
+                    "별표키": "22142677",
+                    "별표구분": "서식",
+                    "별표가지번호": "00",
+                }
+            },
+        }
+    }
+
+
+def test_ordinance_annex_uses_title_label_and_official_preview() -> None:
+    entries = ResourceSearchTab._law_annex_entries(
+        _ordinance_payload_with_annex()
+    )
+
+    assert len(entries) == 1
+    assert entries[0]["label"] == "별표 24"
+    assert entries[0]["title"] == "건축물의 용도별 기준"
+    assert entries[0]["file_url"].startswith("https://www.law.go.kr/")
+    assert "ordinBylContentsInfoR.do?" in entries[0]["preview_url"]
+    assert "bylSeq=22142677" in entries[0]["preview_url"]
+    assert "ordinSeq=2152413" in entries[0]["preview_url"]
+
+
+def test_ordinance_body_keeps_annex_for_cached_reopen(tmp_path) -> None:
+    tab = _tab(tmp_path)
+    tab.pending_row = dict(ROW, id="2152413", name="증평군 군계획 조례")
+    tab._show_detail(_ordinance_payload_with_annex())
+
+    assert tab._annex_section_entries
+    assert "[별표 24] 건축물의 용도별 기준" in tab.current_detail_text
+    assert "annex:0" in tab.detail_view.toHtml()
+
+    record = tab.law_cache.load_snapshot(tab.pending_row)
+    assert record is not None
+    assert record["annex_entries"][0]["label"] == "별표 24"
