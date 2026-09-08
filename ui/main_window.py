@@ -119,6 +119,9 @@ class LawSearchWindow(QMainWindow):
         self._open_document_order: list[str] = []
         self._open_document_tab_signature: tuple[tuple[str, str, str], ...] = ()
         self._open_document_refresh_pending = False
+        # 메인 화면을 떠나며 본문 위젯이 숨으면 Qt 스크롤바가 잠시 0이
+        # 된다. 열린 탭별 실제 위치를 위젯 밖에도 보관한다.
+        self._open_document_scrolls: dict[str, int] = {}
         self._update_check_worker: UpdateCheckWorker | None = None
         self._update_download_worker: UpdateDownloadWorker | None = None
         self._update_progress_dialog: QProgressDialog | None = None
@@ -955,6 +958,51 @@ class LawSearchWindow(QMainWindow):
             )
         return documents
 
+    def _open_token_for_saved_row(self, row: dict[str, object]) -> str:
+        """저장ㆍ즐겨찾기 행과 동일한 이미 열린 본문의 전역 탭 토큰."""
+        target = str(row.get("target") or "")
+        if target in {
+            "law", "law_article", "admrul", "ordin",
+            "licbyl", "admbyl", "ordinbyl",
+        }:
+            key = f"{target}:{row.get('id') or row.get('name')}"
+            token = f"resource:{key}"
+            return token if any(
+                str(item.get("token") or "") == token
+                for item in self._collect_open_documents()
+            ) else ""
+
+        source = (
+            target
+            if target in {"ai_search", "ai_related", "expc", "prec"}
+            else "central"
+            if target in AGENCY_BY_TARGET or row.get("agency")
+            else ""
+        )
+        identity = str(
+            row.get("id")
+            or row.get("source_id")
+            or row.get("name")
+            or row.get("title")
+            or ""
+        )
+        token = f"{source}:{identity}" if source and identity else ""
+        return token if token and any(
+            str(item.get("token") or "") == token
+            for item in self._collect_open_documents()
+        ) else ""
+
+    def _tab_for_open_token(self, token: str):
+        source = token.split(":", 1)[0]
+        return {
+            "resource": self.resource_tab,
+            "ai_search": self.ai_search_tab,
+            "ai_related": self.ai_related_tab,
+            "central": self.central_tab,
+            "expc": self.expc_tab,
+            "prec": self.prec_tab,
+        }.get(source)
+
     def _visible_document_token(
         self, documents: list[dict[str, object]]
     ) -> str:
@@ -1154,6 +1202,10 @@ class LawSearchWindow(QMainWindow):
         document = self._open_document_descriptor_at(index)
         if document is None:
             return
+        token = str(document.get("token") or "")
+        if token:
+            # 닫은 뒤 같은 문서를 새로 열면 최상단에서 시작해야 한다.
+            self._open_document_scrolls.pop(token, None)
         source = str(document.get("source"))
         if source == "resource":
             self.resource_tab._close_document_tab_by_key(str(document["key"]))
@@ -1261,6 +1313,9 @@ class LawSearchWindow(QMainWindow):
                     tab._reading_mode_exit_callback = restorer
                     tab._set_reading_mode(True)
         self._set_active_document_token(token)
+        active_tab = self._tab_for_open_token(token)
+        if active_tab is not None:
+            self._restore_open_document_scroll(token, active_tab)
         self._schedule_open_documents_refresh()
 
     def _current_page_restorer(self):
@@ -1524,6 +1579,7 @@ class LawSearchWindow(QMainWindow):
         있다. 메인 메뉴 이동은 명시적인 화면 전환이므로 모든 크게 보기를
         정상 화면으로 돌리고, 예전 화면으로 되돌리는 콜백도 버린다.
         """
+        self._remember_open_document_scrolls()
         reading_tabs = (
             self.resource_tab,
             self.ai_related_tab,
@@ -1538,6 +1594,44 @@ class LawSearchWindow(QMainWindow):
         for tab in reading_tabs:
             if getattr(tab, "_reading_mode", False):
                 tab._set_reading_mode(False)
+
+    def _remember_open_document_scrolls(self) -> None:
+        """현재 보이는 열린 본문의 위치를 메인 화면 전환 전에 보관."""
+        documents = self._collect_open_documents()
+        visible_token = self._visible_document_token(documents)
+        if not visible_token:
+            return
+        for document in documents:
+            token = str(document.get("token") or "")
+            view = document.get("view")
+            if token == visible_token and view is not None:
+                self._open_document_scrolls[token] = int(
+                    view.verticalScrollBar().value()
+                )
+
+    def _restore_open_document_scroll(self, token: str, tab: object) -> None:
+        """본문의 최종 폭이 정해진 뒤 열린 탭의 절대 위치를 복원."""
+        if token not in self._open_document_scrolls:
+            return
+        view = getattr(tab, "detail_view", None)
+        if view is None:
+            return
+        target = self._open_document_scrolls[token]
+        held: dict[str, int | None] = {"value": None}
+
+        def restore(attempt: int = 0) -> None:
+            if self._active_document_token != token:
+                return
+            bar = view.verticalScrollBar()
+            if held["value"] is not None and bar.value() != held["value"]:
+                return
+            bar.setValue(min(target, bar.maximum()))
+            held["value"] = bar.value()
+            if attempt < 2:
+                delay = (120, 400)[attempt]
+                QTimer.singleShot(delay, lambda: restore(attempt + 1))
+
+        QTimer.singleShot(0, restore)
 
     def _main_navigation_changed(self, row: int) -> None:
         if row < 0:
@@ -1688,6 +1782,13 @@ class LawSearchWindow(QMainWindow):
             row = record.get("row")
             if not isinstance(row, dict):
                 raise ValueError("저장 파일에 항목 정보가 없습니다.")
+            # 같은 항목의 상단 열린본문 탭이 살아 있으면 저장 파일을 다시
+            # 렌더링하지 않는다. 그래야 읽던 위치뿐 아니라 사용자가 고른
+            # 글꼴ㆍ크기와 임시 화면 상태도 그대로 남는다.
+            open_token = self._open_token_for_saved_row(row)
+            if open_token:
+                self._activate_open_document(open_token)
+                return self._tab_for_open_token(open_token)
             if record.get("kind") != "detail_snapshot":
                 self.navigation.setCurrentRow(1)
                 self.resource_tab.ensure_body_page_for_target(

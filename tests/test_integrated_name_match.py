@@ -7,6 +7,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from ui.tabs.resource_search import (
     ResourceSearchTab,
     search_name_key,
+    search_name_query_coverage,
     search_name_similarity,
 )
 
@@ -50,6 +51,13 @@ def test_annex_head_label_and_parenthetical_reference_are_both_ignored() -> None
 
     assert search_name_key(result_name) == "용도별건축물의종류"
     assert search_name_similarity("용도별 건축물의 종류", result_name) >= ratio
+
+
+def test_partial_annex_title_uses_query_coverage() -> None:
+    assert search_name_query_coverage(
+        "용도별 건축물",
+        "용도별 건축물의 종류(제3조의5 관련)",
+    ) == 1.0
 
 
 def test_known_or_nearly_matching_short_name_is_promoted() -> None:

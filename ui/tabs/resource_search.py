@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from difflib import SequenceMatcher
+
 from ui.assets import (
     ADMIN_RULE_PARSE_VERSION,
     ANNEX_COLLAPSE_ICON_PATH,
@@ -312,6 +314,19 @@ def search_name_similarity(
         if short_score >= _SEARCH_APPROXIMATE_SHORT_NAME_RATIO:
             score = max(score, 0.8)
     return score
+
+
+def search_name_query_coverage(query: str, name: str) -> float:
+    """자료명에 포함된 검색어 글자의 비율. 별표명 부분 검색에만 사용."""
+    query_key = search_name_key(query)
+    name_key = search_name_key(name)
+    if not query_key or not name_key:
+        return 0.0
+    if query_key in name_key:
+        return 1.0
+    matcher = SequenceMatcher(None, query_key, name_key)
+    covered = sum(block.size for block in matcher.get_matching_blocks())
+    return covered / len(query_key)
 
 
 # 본문 조문 링크는 글자 폭이 좁아, 커서 한 점이 살짝 벗어나도
@@ -1506,12 +1521,25 @@ class ResourceSearchTab(QWidget):
 
         scroll_key = self._active_document_key
         scroll_bar = self.detail_view.verticalScrollBar()
-        scroll_position = scroll_bar.value()
         scroll_state = self._document_states.get(scroll_key)
+        # 다른 메인 화면에 있는 동안 detail_card는 숨겨져 스크롤바 값이
+        # 일시적으로 0이 될 수 있다. 열린 본문으로 다시 들어갈 때 그 0을
+        # 정상적으로 보관된 위치에 덮지 않는다.
+        restore_hidden_position = (
+            expanded
+            and isinstance(scroll_state, dict)
+            and self.detail_card.isHidden()
+        )
+        scroll_position = (
+            int(scroll_state.get("scroll", 0) or 0)
+            if restore_hidden_position
+            else scroll_bar.value()
+        )
         if isinstance(scroll_state, dict):
             # 본문 카드를 숨기면 스크롤 최대값이 잠시 0이 되며 valueChanged도
             # 0으로 온다. 화면을 떠나기 전에 읽던 자리를 먼저 확정해 둔다.
-            scroll_state["scroll"] = scroll_position
+            if not restore_hidden_position:
+                scroll_state["scroll"] = scroll_position
         self._scroll_memory_suspended += 1
 
         window = self.window()
@@ -8596,10 +8624,22 @@ class ResourceSearchTab(QWidget):
             # 있으면 무엇을 보고 있는지 가늠하기 어려웠다.
             query_text = self.query_input.text().strip()
             name_scores = {
-                id(row): search_name_similarity(
-                    query_text,
-                    str(row.get("name") or ""),
-                    str(row.get("short_name") or ""),
+                id(row): max(
+                    search_name_similarity(
+                        query_text,
+                        str(row.get("name") or ""),
+                        str(row.get("short_name") or ""),
+                    ),
+                    # 별표ㆍ서식명은 ``용도별 건축물``처럼 핵심 앞부분만
+                    # 검색하는 경우가 흔하다. 검색어의 80% 이상이 명칭에
+                    # 들어 있으면 긴 ``…의 종류(관련 조문)`` 꼬리 때문에
+                    # 점수가 깎이지 않게 한다. 법령에는 적용하지 않아
+                    # ``건축법``이 ``건축법 시행령``까지 끌어올리지 않는다.
+                    search_name_query_coverage(
+                        query_text, str(row.get("name") or "")
+                    )
+                    if str(row.get("target") or "") in ANNEX_TARGETS
+                    else 0.0,
                 )
                 for row in rows
             }

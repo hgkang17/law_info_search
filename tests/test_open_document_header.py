@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from PySide6.QtGui import QTextCursor
+from PySide6.QtGui import QFont, QTextCursor
 from PySide6.QtWidgets import QApplication, QLabel
 
 from ui.main_window import LawSearchWindow
@@ -124,6 +124,60 @@ def test_favorite_back_keeps_open_document_scroll_until_tab_is_closed(
 
         resource._close_document_tab_by_key(key)
         assert key not in resource._document_states
+    finally:
+        window.close()
+        qt_app.processEvents()
+
+
+def test_home_then_favorite_reuses_scroll_and_font_of_open_document(
+    qt_app, monkeypatch
+) -> None:
+    """메인 화면을 거쳐 즐겨찾기로 재진입해도 열린 문서를 다시 그리지 않는다."""
+    window = LawSearchWindow()
+    try:
+        window.resize(1200, 800)
+        window.show()
+        resource = window.resource_tab
+        row = {
+            "target": "admrul",
+            "id": "100001",
+            "label": "행정규칙",
+            "name": "도시관리계획수립지침",
+        }
+        resource._open_document_tab(row)
+        resource._set_detail_document(
+            row["name"],
+            [("행정규칙일련번호", row["id"])],
+            [("조문", "\n".join(f"제{n}절 지침 내용" for n in range(1, 401)))],
+            build_toc=False,
+            administrative_rule=True,
+        )
+        resource._set_detail_font_family(QFont("Arial"))
+        resource._set_reading_mode(True)
+        qt_app.processEvents()
+        bar = resource.detail_view.verticalScrollBar()
+        assert bar.maximum() > 700
+        bar.setValue(700)
+        expected_family = resource.detail_view.document().defaultFont().family()
+
+        window._refresh_open_documents()
+        window._activate_home_page()
+        qt_app.processEvents()
+        monkeypatch.setattr(
+            resource,
+            "_open_cached_resource_snapshot",
+            lambda *_args: (_ for _ in ()).throw(
+                AssertionError("열린 문서는 저장본으로 다시 그리면 안 된다")
+            ),
+        )
+        window._route_saved_record(
+            {"kind": "detail_snapshot", "row": dict(row), "html": "다른 본문"},
+            reading_mode=True,
+        )
+        qt_app.processEvents()
+
+        assert bar.value() == 700
+        assert resource.detail_view.document().defaultFont().family() == expected_family
     finally:
         window.close()
         qt_app.processEvents()
