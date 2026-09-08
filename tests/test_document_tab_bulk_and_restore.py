@@ -145,6 +145,10 @@ def test_detail_scroll_is_not_recorded_while_content_is_replaced(
     assert tab._document_states["k"]["scroll"] == 340
 
 
-def test_annex_focus_helper_exists_on_the_tab() -> None:
-    assert callable(getattr(ResourceSearchTab, "_focus_annex_item", None))
+def test_annex_toggle_marks_the_line_without_moving_the_view() -> None:
+    """별표를 펼칠 때 화면을 끌어올리는 보조 함수는 두지 않는다.
+
+    누른 별표 줄은 목차 바로가기와 같은 음영으로만 짚는다.
+    """
+    assert not hasattr(ResourceSearchTab, "_focus_annex_item")
     assert callable(getattr(ResourceSearchTab, "_highlight_anchor_line", None))

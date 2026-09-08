@@ -6003,36 +6003,23 @@ class ResourceSearchTab(QWidget):
         self._active_annex_preview_key = key
         panel = self._annex_panel_for_key(key)
         anchor = f"annex-item-{index}"
-        # 다시 그리는 동안에는 누른 줄을 기준으로 삼아 화면이 튀지 않게 하고,
-        # 그린 뒤에 그 줄을 화면 맨 위로 올린다. 펼친 원문은 그 줄 아래에
-        # 붙으므로, 줄을 위로 올려야 미리보기가 한눈에 들어온다.
+        # 누른 줄을 기준으로 다시 그려 화면이 튀지 않게만 한다. 스크롤은
+        # 건드리지 않는다. 읽던 자리에서 별표를 펼쳤을 뿐인데 그 줄이 화면
+        # 맨 위로 끌려 올라가면 보고 있던 앞뒤 조문을 놓친다. 어느 줄을
+        # 눌렀는지는 목차 바로가기와 같은 음영으로만 짚어 준다.
         self._rerender_annex_section(keep_anchor=anchor)
         panel.show_loading(self._annex_display_title(entry))
-        self._focus_annex_item(anchor)
+        self._highlight_anchor_line(anchor)
         self._place_inline_annex_preview()
         QTimer.singleShot(
             0,
             lambda item_anchor=anchor: (
-                self._focus_annex_item(item_anchor),
+                self._highlight_anchor_line(item_anchor),
                 self._place_inline_annex_preview(),
             ),
         )
         QTimer.singleShot(50, self._place_inline_annex_preview)
         self._start_annex_download(key, entry)
-
-    def _focus_annex_item(self, anchor: str) -> None:
-        """펼친 별표 줄을 화면 맨 위에 세우고 음영으로 짚어 준다."""
-        position = self._anchor_position(anchor)
-        if position is None:
-            return
-        cursor = QTextCursor(self.detail_view.document())
-        cursor.setPosition(position)
-        scroll_bar = self.detail_view.verticalScrollBar()
-        offset = self.detail_view.cursorRect(cursor).top()
-        scroll_bar.setValue(
-            max(0, min(scroll_bar.value() + offset, scroll_bar.maximum()))
-        )
-        self._highlight_anchor_line(anchor)
 
     def _restore_inline_annex_preview(self, state: dict[str, object]) -> None:
         """탭을 다녀왔을 때 펼쳐 둔 별표 미리보기들을 다시 띄운다."""

@@ -119,11 +119,19 @@ def test_collapsing_an_annex_keeps_the_reading_position(
     tab._show_detail(payload_factory())
     app.processEvents()
 
+    scroll_bar = tab.detail_view.verticalScrollBar()
+    scroll_bar.setValue(int(scroll_bar.maximum() * 0.5))
+    app.processEvents()
+    before = scroll_bar.value()
+    assert before > 0
+
     tab._toggle_annex_preview("0")
     for _ in range(4):
         app.processEvents()
-    expanded_at = tab.detail_view.verticalScrollBar().value()
-    assert expanded_at > 0
+    expanded_at = scroll_bar.value()
+    # 펼칠 때도 읽던 자리를 그대로 둔다. 누른 별표 줄을 화면 맨 위로
+    # 끌어올리면 보고 있던 앞뒤 조문이 화면 밖으로 밀려났다.
+    assert abs(expanded_at - before) <= 2
 
     tab._toggle_annex_preview("0")
     for _ in range(4):
