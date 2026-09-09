@@ -969,6 +969,8 @@ class LawReferencePopup(QFrame):
         self.favorite_checker = None
         self.hover_guard = None
         self.content_font_point = float(DEFAULT_POPUP_FONT_POINT)
+        # 본문에서 고른 글꼴을 팝업도 따라간다. 비워 두면 기본 굴림.
+        self.content_font_family = ""
         self._content_generation = 0
         self._restoring_scroll = False
         self.setMinimumSize(320, 220)
@@ -1094,13 +1096,19 @@ class LawReferencePopup(QFrame):
         )
 
     def set_content_font_point(
-        self, point: float, *, notify: bool = False
+        self, point: float, *, family: str = "", notify: bool = False
     ) -> None:
-        """팝업 본문 글자 크기를 바꾼다. 줄 간격은 배수라 따라온다."""
+        """팝업 본문 글꼴과 크기를 바꾼다. 줄 간격은 배수라 따라온다.
+
+        글꼴 이름을 주면 그것도 함께 맞춘다. 본문에서 고른 글꼴을 팝업이
+        따라가지 않으면 링크를 눌러 뜬 조문만 다른 글씨로 보인다.
+        """
         point = normalize_detail_font_size(point)
         changed = abs(point - self.content_font_point) >= 0.01
         self.content_font_point = point
-        font = detail_font(point)
+        if family:
+            self.content_font_family = family
+        font = detail_font(point, self.content_font_family or None)
         self.browser.setFont(font)
         self.browser.document().setDefaultFont(font)
         if notify and changed:

@@ -270,6 +270,9 @@ def test_saved_reference_opens_popup_without_leaving_saved_history() -> None:
     window = SimpleNamespace(
         resource_tab=resource_tab,
         navigation=SimpleNamespace(setCurrentRow=navigation_changes.append),
+        # 저장 기록을 열기 전에 같은 항목의 열린본문 탭이 있는지 먼저
+        # 본다. 인용 팝업 기록에는 그런 탭이 없다.
+        _open_token_for_saved_row=lambda row: "",
     )
     record = {
         "kind": "detail_snapshot",

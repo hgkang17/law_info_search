@@ -125,8 +125,9 @@ from utils.law_download import download_law_file
 from utils.constants import (
     DEFAULT_DETAIL_FONT_POINT,
     DEFAULT_POPUP_FONT_POINT,
-    DETAIL_FONT_CSS_FAMILY,
     DETAIL_FONT_FAMILY,
+    LEGACY_POPUP_FONT_POINT,
+    POPUP_FONT_DEFAULTS_VERSION,
 )
 from utils.hwp_export import default_export_name, save_law_hwpx
 from utils.images import trim_blank_bottom
@@ -507,8 +508,8 @@ class ResourceSearchTab(QWidget):
         self._pending_three_stage_link_request: dict[str, str] | None = None
         self._three_stage_link_request_in_flight: dict[str, str] | None = None
         self._updating_cache_checks = False
-        self.popup_font_size = self._saved_font_size(
-            "resource_popup_font_size", DEFAULT_POPUP_FONT_POINT
+        self.popup_font_size = self._saved_popup_font_size(
+            "resource_popup_font_size"
         )
         self.detail_font_size, self.detail_font_family = (
             load_detail_font_preferences(
@@ -751,6 +752,27 @@ class ResourceSearchTab(QWidget):
             )
         except (TypeError, ValueError):
             value = default
+        return clamp_detail_font_size(value)
+
+    def _saved_popup_font_size(self, key: str) -> float:
+        """팝업 글자 크기. 예전 기본값 9.0만 한 번 본문과 같은 9.5로 옮긴다."""
+        settings = self.recent_search_manager.settings
+        revision_key = f"{key}_defaults_version"
+        try:
+            revision = int(settings.value(revision_key, 0) or 0)
+        except (TypeError, ValueError):
+            revision = 0
+        raw = settings.value(key, None)
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            value = float(DEFAULT_POPUP_FONT_POINT)
+        if revision < POPUP_FONT_DEFAULTS_VERSION:
+            if abs(value - LEGACY_POPUP_FONT_POINT) < 0.01:
+                value = float(DEFAULT_POPUP_FONT_POINT)
+                settings.setValue(key, value)
+            settings.setValue(revision_key, POPUP_FONT_DEFAULTS_VERSION)
+            settings.sync()
         return clamp_detail_font_size(value)
 
     def use_shared_status(self, bar) -> None:
@@ -1778,6 +1800,8 @@ class ResourceSearchTab(QWidget):
             "resource_detail_font_family", family
         )
         self.recent_search_manager.settings.sync()
+        # 조문 팝업ㆍ3단비교 팝업도 같은 글꼴로 맞춘다.
+        self._apply_popup_font_family()
         self._save_active_document_state()
 
     def _empty_document_state(self) -> dict[str, object]:
@@ -4513,6 +4537,12 @@ class ResourceSearchTab(QWidget):
             article_content, authority_tokens = self._mask_authority_mentions(
                 article_content, authority_links or {}
             )
+            # 3단비교 칸 안의 ``별표 1`` 인용도 본문과 같이 눌러서 연다.
+            article_content, annex_tokens = self._mask_annex_mentions(
+                article_content,
+                related_law=law_name,
+                category="licbyl",
+            )
             content_html = body_to_html(
                 article_content,
                 self.detail_highlight_terms,
@@ -4522,6 +4552,9 @@ class ResourceSearchTab(QWidget):
             )
             content_html = self._restore_authority_mentions(
                 content_html, authority_tokens
+            )
+            content_html = self._restore_annex_mentions(
+                content_html, annex_tokens
             )
             parts.append(
                 '<div class="comparison-content">'
@@ -4578,6 +4611,54 @@ class ResourceSearchTab(QWidget):
                 f'<a href="{escape(href, quote=True)}" '
                 'style="color:#006dcc; text-decoration:underline;" '
                 f'title="{escape(mention)} 관련 하위법령 조문을 엽니다.">'
+                f"{escape(mention)}</a>",
+            )
+        return html
+
+    @classmethod
+    def _mask_annex_mentions(
+        cls, text: str, *, related_law: str, category: str
+    ) -> tuple[str, dict[str, tuple[str, str, str]]]:
+        """본문 속 ``별표 1``ㆍ``별지 제3호서식`` 인용을 표식으로 바꿔 둔다.
+
+        본문 화면은 그려 놓은 문서 위에서 자리를 찾아 링크를 걸지만
+        (`_apply_inline_annex_links`), 팝업과 3단비교 표는 HTML 문자열로
+        만들어 그대로 넣는다. 대통령령 링크와 같은 방식으로 옮기기 전에
+        표식으로 바꿔 두었다가 옮긴 뒤 링크로 되살린다.
+        """
+        tokens: dict[str, tuple[str, str, str]] = {}
+        if not related_law:
+            return text, tokens
+
+        def replace(match: "re.Match[str]") -> str:
+            # ``[별표 1] 이름``은 별표 목록 줄이라 제 링크를 따로 갖는다.
+            if match.start() and text[match.start() - 1] == "[":
+                return match.group(0)
+            label = cls._inline_annex_label(match)
+            if not label:
+                return match.group(0)
+            token = f"INLINEANNEXLINK{len(tokens)}TOKEN"
+            href = (
+                "annexref://open?"
+                f"name={quote(label, safe='')}"
+                f"&category={quote(category, safe='')}"
+                f"&related={quote(related_law, safe='')}"
+            )
+            tokens[token] = (match.group(0), href, label)
+            return token
+
+        return cls._INLINE_ANNEX_REFERENCE_PATTERN.sub(replace, text), tokens
+
+    @staticmethod
+    def _restore_annex_mentions(
+        html: str, tokens: dict[str, tuple[str, str, str]]
+    ) -> str:
+        for token, (mention, href, label) in tokens.items():
+            html = html.replace(
+                token,
+                f'<a href="{escape(href, quote=True)}" '
+                'style="color:#006dcc; text-decoration:underline;" '
+                f'title="{escape(label)}을(를) 엽니다.">'
                 f"{escape(mention)}</a>",
             )
         return html
@@ -5416,9 +5497,11 @@ class ResourceSearchTab(QWidget):
         return "".join(
             (
                 "<style>",
-                # 3단비교도 조문 팝업과 같은 굴림을 쓰고, 크기는 팝업
-                # 기본 글꼴이 정하도록 배수(em)로만 적는다.
-                "body { font-family:" + DETAIL_FONT_CSS_FAMILY + "; "
+                # 3단비교도 조문 팝업ㆍ본문과 같은 글꼴을 쓰고, 크기는
+                # 팝업 기본 글꼴이 정하도록 배수(em)로만 적는다.
+                "body { font-family:"
+                + detail_font_css_family(self.detail_font_family)
+                + "; "
                 "font-weight:400; color:#172033; "
                 "line-height:" + BODY_LINE_HEIGHT + "; margin:0; }",
                 ".comparison-summary { color:#526176; font-size:0.92em; "
@@ -7089,18 +7172,30 @@ class ResourceSearchTab(QWidget):
 
         조문 팝업과 3단비교 팝업은 같은 크기를 쓴다. 한 팝업에서 바꾸면
         열려 있는 다른 팝업도 같이 따라가고, 그 값이 설정에 남는다.
+        글꼴은 본문에서 고른 것을 그대로 쓴다.
         """
-        popup.set_content_font_point(self.popup_font_size)
+        popup.set_content_font_point(
+            self.popup_font_size, family=self.detail_font_family
+        )
         popup.fontSizeChanged.connect(self._set_popup_font_size)
 
     def _set_popup_font_size(self, size: float) -> None:
         size = normalize_detail_font_size(size)
         self.popup_font_size = size
         for popup in (*self._all_reference_popups(), self.three_stage_popup):
-            popup.set_content_font_point(size)
+            popup.set_content_font_point(size, family=self.detail_font_family)
         self.recent_search_manager.settings.setValue(
             "resource_popup_font_size", size
         )
+
+    def _apply_popup_font_family(self) -> None:
+        """본문 글꼴을 바꾸면 열려 있는 팝업도 같은 글꼴로 맞춘다."""
+        if not hasattr(self, "reference_popup"):
+            return
+        for popup in (*self._all_reference_popups(), self.three_stage_popup):
+            popup.set_content_font_point(
+                self.popup_font_size, family=self.detail_font_family
+            )
 
     def _refresh_reference_popup_favorites(self) -> None:
         if not hasattr(self, "reference_popup"):
@@ -8406,6 +8501,16 @@ class ResourceSearchTab(QWidget):
             value, authority_tokens = self._mask_authority_mentions(
                 value, authority_links
             )
+            # 본문 화면과 같게 팝업 조문 안의 ``별표 1`` 인용도 누르면
+            # 그 별표를 연다. 예전에는 본문에서만 링크가 걸려, 부령
+            # 링크로 들어간 팝업의 ``별표 1``은 그냥 글씨였다.
+            value, annex_tokens = self._mask_annex_mentions(
+                value,
+                related_law=str(source_row.get("name") or title),
+                category=self._ANNEX_CATEGORY_BY_TARGET.get(
+                    str(source_row.get("target") or "law"), "licbyl"
+                ),
+            )
             section_html = body_to_html(
                 value,
                 self.detail_highlight_terms,
@@ -8415,11 +8520,12 @@ class ResourceSearchTab(QWidget):
                 paragraph_gap_px=self.POPUP_PARAGRAPH_GAP_PX,
                 embedded_images=self._admin_rule_images(payload),
             )
+            section_html = self._restore_authority_mentions(
+                section_html, authority_tokens
+            )
             html_parts.append(
                 '<div class="content">'
-                + self._restore_authority_mentions(
-                    section_html, authority_tokens
-                )
+                + self._restore_annex_mentions(section_html, annex_tokens)
                 + "</div>"
             )
         law_label = str(source_row.get("name") or title)
@@ -11870,10 +11976,13 @@ class ResourceSearchTab(QWidget):
         """조문 팝업용 작은 제목과 2칸×2줄 기본정보 헤더."""
         html_parts = [
             "<style>",
-            # 팝업 글자 크기는 QTextBrowser의 기본 글꼴(굴림 9pt)이 정하고,
-            # 여기서는 배수(em)로만 적는다. 그래야 가+ㆍ가- 로 크기를 바꿀 때
-            # 제목까지 같은 비율로 커지고 줄 간격도 함께 따라온다.
-            "body { font-family:" + DETAIL_FONT_CSS_FAMILY + "; font-weight:400; "
+            # 팝업 글자 크기는 QTextBrowser의 기본 글꼴(본문과 같은 굴림
+            # 9.5pt)이 정하고, 여기서는 배수(em)로만 적는다. 그래야 가+ㆍ가-
+            # 로 크기를 바꿀 때 제목까지 같은 비율로 커지고 줄 간격도 함께
+            # 따라온다. 글꼴은 본문에서 고른 것을 그대로 쓴다.
+            "body { font-family:"
+            + detail_font_css_family(self.detail_font_family)
+            + "; font-weight:400; "
             "color:#172033; line-height:" + BODY_LINE_HEIGHT + "; margin:0; }",
             ".popup-law-title { font-size:1.15em; "
             f"font-weight:700; color:#173b63; margin:0 0 {BODY_PARAGRAPH_GAP_PX}px 0; }}",
@@ -12156,10 +12265,14 @@ class ResourceSearchTab(QWidget):
             if toc_entries is not None:
                 toc_entries.append((4, shown, item_anchor))
             html_parts.append(
+                # 글자 크기는 적지 않는다. 박아 두면 본문 위 조절칸에서
+                # 정한 크기와 무관하게 늘 그 크기로 그려져, 같은 문서
+                # 안에서 조문과 별표 목록의 글씨가 달라 보였다. 문서
+                # 기본 글꼴(setDefaultFont)이 조절칸 값을 들고 있다.
                 '<div class="annex-item" style="margin:0; padding:4px 0 10px 0; '
                 f'line-height:{BODY_LINE_HEIGHT}; '
                 f'font-family:{annex_font_family}; '
-                'font-size:9.5pt; font-weight:400; color:#242529;">'
+                'font-weight:400; color:#242529;">'
                 f"{title_html}"
                 + (f"&nbsp;&nbsp;{icon_html}" if icon_html else "")
                 + "</div>"
