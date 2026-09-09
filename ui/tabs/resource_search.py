@@ -3250,13 +3250,18 @@ class ResourceSearchTab(QWidget):
         return f"lawsub://open?data={encoded}" if encoded else ""
 
     _INLINE_HO_PATTERN = re.compile(r"(?m)^\s*(\d+)(?:의\s*(\d+))?\.\s+")
+    _INLINE_MOK_PATTERN = re.compile(
+        rf"(?m)^\s*([{KOREAN_ITEM_MARKERS}])\.\s+"
+    )
 
     @classmethod
     def _build_inline_source_index(
         cls, article_text: str
-    ) -> tuple[list[int], list[str], list[int], list[str]]:
-        """조문 전체의 항(①…)·호(1. 2. …) 표식 위치를 한 번만 훑어
-        표를 만든다. 대통령령·부령 언급이 나올 때마다 그 앞부분을
+    ) -> tuple[
+        list[int], list[str], list[int], list[str], list[int], list[str]
+    ]:
+        """조문 전체의 항(①…)·호(1. 2. …)·목(가. 나. …) 표식 위치를 한 번만
+        훑어 표를 만든다. 대통령령·부령 언급이 나올 때마다 그 앞부분을
         매번 처음부터 다시 훑으면(원래 방식) 언급이 많은 긴 조문에서
         문서 하나 여는 데 몇 초씩 걸릴 수 있어, 위치 목록을 미리
         만들어 두고 이분 탐색으로 찾도록 바꿨다."""
@@ -3277,7 +3282,19 @@ class ResourceSearchTab(QWidget):
                 continue
             ho_positions.append(match.start())
             ho_codes.append(ho_code)
-        return hang_positions, hang_codes, ho_positions, ho_codes
+        mok_positions: list[int] = []
+        mok_markers: list[str] = []
+        for match in cls._INLINE_MOK_PATTERN.finditer(article_text):
+            mok_positions.append(match.start())
+            mok_markers.append(match.group(1))
+        return (
+            hang_positions,
+            hang_codes,
+            ho_positions,
+            ho_codes,
+            mok_positions,
+            mok_markers,
+        )
 
     @staticmethod
     def _inline_law_source_context(
@@ -3286,47 +3303,80 @@ class ResourceSearchTab(QWidget):
         hang_codes: list[str],
         ho_positions: list[int],
         ho_codes: list[str],
-    ) -> tuple[str, str]:
-        """position 바로 앞에서 가장 가까운 법률 항·호를 찾음."""
+        mok_positions: list[int] | None = None,
+        mok_markers: list[str] | None = None,
+    ) -> tuple[str, str, str]:
+        """position 바로 앞에서 가장 가까운 법률 항·호·목을 찾음."""
         hang_index = bisect.bisect_right(hang_positions, position) - 1
         hang_code = hang_codes[hang_index] if hang_index >= 0 else ""
         hang_start = hang_positions[hang_index] if hang_index >= 0 else 0
         ho_index = bisect.bisect_right(ho_positions, position) - 1
-        ho_code = (
-            ho_codes[ho_index]
-            if ho_index >= 0 and ho_positions[ho_index] >= hang_start
-            else ""
-        )
-        return hang_code, ho_code
+        ho_start = -1
+        ho_code = ""
+        if ho_index >= 0 and ho_positions[ho_index] >= hang_start:
+            ho_code = ho_codes[ho_index]
+            ho_start = ho_positions[ho_index]
+        mok = ""
+        if mok_positions and mok_markers:
+            mok_index = bisect.bisect_right(mok_positions, position) - 1
+            # 목은 자기 호(없으면 자기 항) 뒤에 나온 것만 유효하다.
+            if mok_index >= 0 and mok_positions[mok_index] >= max(
+                ho_start, hang_start
+            ):
+                mok = mok_markers[mok_index]
+        return hang_code, ho_code, mok
 
     @staticmethod
     def _links_for_inline_source(
-        links: list[dict[str, str]], hang_code: str, ho_code: str
+        links: list[dict[str, str]],
+        hang_code: str,
+        ho_code: str,
+        mok: str = "",
     ) -> list[dict[str, str]]:
-        scoped_links = [
-            link
-            for link in links
-            if link.get("source_hang") or link.get("source_ho")
-        ]
-        exact_links = [
-            link
-            for link in scoped_links
-            if (
-                not link.get("source_hang")
-                or link.get("source_hang") == hang_code
-            )
-            and (
-                not link.get("source_ho")
-                or link.get("source_ho") == ho_code
-            )
-        ]
-        if exact_links:
-            return exact_links
-        return [
-            link
-            for link in links
-            if not link.get("source_hang") and not link.get("source_ho")
-        ]
+        """그 자리의 항·호·목을 근거로 든 위임 조문만 고른다.
+
+        가장 좁게 짚은 근거부터 차례로 본다. 시행령이 ``법 제26조제1항
+        제3호가목``이라고 목까지 밝혔으면 그 목 자리에서는 그 조문 하나만
+        연다. 예전에는 ``항만 같으면 통과``ㆍ``호를 안 적었으면 통과``로
+        느슨하게 걸러 국토계획법 제26조제1항제3호가목의 ``대통령령``에
+        시행령 제19조의2ㆍ제20조가 함께 걸려 고르는 상자가 떴다.
+        """
+
+        def scoped(hang: str, ho: str, item: str) -> list[dict[str, str]]:
+            return [
+                link
+                for link in links
+                if str(link.get("source_hang") or "") == hang
+                and str(link.get("source_ho") or "") == ho
+                and str(link.get("source_mok") or "") == item
+            ]
+
+        candidates: list[list[dict[str, str]]] = []
+        if mok:
+            candidates.append(scoped(hang_code, ho_code, mok))
+        if ho_code:
+            candidates.append(scoped(hang_code, ho_code, ""))
+        if hang_code:
+            candidates.append(scoped(hang_code, "", ""))
+        candidates.append(scoped("", "", ""))
+        for matched in candidates:
+            if matched:
+                return matched
+        # 어느 항·호도 이 자리를 짚지 않았으면(시행령이 근거를 조 단위로만
+        # 적은 경우) 그 조에 걸린 하위법령 조문을 모두 후보로 준다. 링크를
+        # 아예 걸지 않으면 국토계획법 제26조제5항의 ``대통령령``처럼 위임
+        # 조문이 있는데도 누를 수 없는 자리가 생긴다. 같은 조문이 근거 항만
+        # 달리해 여러 번 들어 있으므로 여는 곳이 같은 것은 하나로 줄인다.
+        fallback: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for link in links:
+            key = str(link.get("target_code") or link.get("href") or "")
+            if key and key in seen:
+                continue
+            if key:
+                seen.add(key)
+            fallback.append(link)
+        return fallback
 
     @staticmethod
     def _specific_ministerial_rule_link(
@@ -3420,11 +3470,13 @@ class ResourceSearchTab(QWidget):
                     if search_term not in article_text and authority.endswith("부령"):
                         search_term = "부령"
                     for match in re.finditer(re.escape(search_term), article_text):
-                        hang_code, ho_code = self._inline_law_source_context(
-                            match.start(), *source_index
+                        hang_code, ho_code, mok = (
+                            self._inline_law_source_context(
+                                match.start(), *source_index
+                            )
                         )
                         matched_links = self._links_for_inline_source(
-                            links, hang_code, ho_code
+                            links, hang_code, ho_code, mok
                         )
                         specific_link = self._specific_ministerial_rule_link(
                             article, authority, hang_code
@@ -11178,8 +11230,13 @@ class ResourceSearchTab(QWidget):
     ) -> None:
         source_row = record.get("row")
         fallback_payload = record.get("payload")
-        if not isinstance(source_row, dict) or not isinstance(fallback_payload, dict):
-            raise ValueError("저장된 법령 본문을 찾지 못했습니다.")
+        if not isinstance(source_row, dict):
+            raise ValueError("저장된 법령 정보를 찾지 못했습니다.")
+        # 조항호목 즐겨찾기만 담은 최소 기록(``article_favorites``)에는
+        # 전문 원문이 없다. 본문은 이미 조항호목 API로 받아 왔으므로
+        # 전문은 제목ㆍ머리줄을 못 읽었을 때의 보조로만 쓴다.
+        if not isinstance(fallback_payload, dict):
+            fallback_payload = {}
         jo = str(unit.get("jo") or "")
         hang = str(unit.get("hang") or "")
         ho = str(unit.get("ho") or "")
@@ -11193,9 +11250,17 @@ class ResourceSearchTab(QWidget):
             try:
                 title, metadata, _sections = self._parse_law_detail(article_payload)
             except ValueError:
-                title, metadata, _sections = self._parse_law_detail(
-                    fallback_payload
-                )
+                try:
+                    title, metadata, _sections = self._parse_law_detail(
+                        fallback_payload
+                    )
+                except ValueError:
+                    # 전문이 없는 조문 즐겨찾기 기록이다. 저장된 행 정보로
+                    # 제목과 법령ID만 채운다.
+                    title = str(source_row.get("name") or "")
+                    metadata = [
+                        ("법령ID", str(source_row.get("id") or "")),
+                    ]
         finally:
             self.pending_row = original_pending_row
         unit_label = self._law_reference_label(jo, hang, ho, mok)

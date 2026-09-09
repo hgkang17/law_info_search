@@ -988,11 +988,20 @@ def insert_admin_clause_breaks(text: str) -> str:
         # 이어져도 목록으로 본다. 8호 ``광역시설``처럼 목이 가.ㆍ나.
         # 둘뿐인 조문이 실제로 있다. 예고 문구가 없거나 표지가 낱말
         # 중간에서 시작하면(``신청한 자가.``) 종전처럼 셋을 요구한다.
+        #
+        # ``다음 각 목``은 뒤에 목 목록이 온다고 법령 문언이 스스로
+        # 밝히는 정형 표현이라, 예고 문장이 마침표로 끝나지 않아도
+        # 목록으로 본다. 국토계획법 제26조제1항제3호(``... 용도지구의
+        # 지정 및 변경에 관한 사항가. 개발진흥지구 ...``)처럼 호가
+        # 명사로 끝나면 마침표를 요구하는 조건에 걸려 목이 한 문단으로
+        # 붙어 있었다. 목이 나뉘지 않으면 3단비교 표와 위임 링크가
+        # 목 단위를 찾지 못해 맨 윗줄로 밀린다.
         announces_items = False
         if chain and chain[0].start() > 0:
             intro = line[: chain[0].start()]
             announces_items = bool(
-                intro.endswith(".") and re.search(r"각\s*목", intro)
+                re.search(r"다음\s*각\s*목", intro)
+                or (intro.endswith(".") and re.search(r"각\s*목", intro))
             )
         required_evidence = 2 if announces_items else 3
         if leading_evidence + len(chain) >= required_evidence:

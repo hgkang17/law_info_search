@@ -278,6 +278,32 @@ class AliasResolution:
     alternatives: tuple[str, ...] = ()
 
 
+# ``국토계획법 시행령``처럼 약칭 뒤에 하위법령 이름이 붙은 형태. 약칭표는
+# 모법만 담고 있어 이대로는 정식 명칭을 못 찾는데, 하위법령 제명은 모법
+# 제명에 이 말을 붙인 것이므로 모법을 푼 뒤 그대로 되붙이면 된다.
+_SUBORDINATE_SUFFIX_PATTERN = re.compile(
+    r"^(?P<base>.+?)\s*(?P<suffix>시행령|시행규칙)$"
+)
+
+
+def _resolve_subordinate_alias(cleaned: str) -> AliasResolution | None:
+    """약칭 + ``시행령``ㆍ``시행규칙``을 정식 하위법령 제명으로 푼다."""
+    match = _SUBORDINATE_SUFFIX_PATTERN.match(cleaned)
+    if match is None:
+        return None
+    base = match.group("base").strip()
+    if not base:
+        return None
+    entry = _ALIAS_LOOKUP.get(compact_law_key(base))
+    # 모법 제명이 아닌 지침ㆍ고시에 ``시행령``을 붙이지 않는다.
+    if entry is None or not re.search(r"(?:법|법률)$", entry.canonical):
+        return None
+    return AliasResolution(
+        canonical=f"{entry.canonical} {match.group('suffix')}",
+        matched_alias=base,
+    )
+
+
 def resolve_law_alias(query: str) -> AliasResolution:
     """쿼리 전체가 약칭이면 정식 명칭을 돌려준다."""
     cleaned = " ".join(str(query or "").split()).strip()
@@ -285,6 +311,9 @@ def resolve_law_alias(query: str) -> AliasResolution:
         return AliasResolution(canonical="")
     entry = _ALIAS_LOOKUP.get(compact_law_key(cleaned))
     if entry is None:
+        subordinate = _resolve_subordinate_alias(cleaned)
+        if subordinate is not None:
+            return subordinate
         return AliasResolution(canonical=cleaned)
     matched = ""
     for alias in entry.aliases:
