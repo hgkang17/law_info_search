@@ -1788,27 +1788,32 @@ class LawSearchWindow(QMainWindow):
             if open_token:
                 self._activate_open_document(open_token)
                 return self._tab_for_open_token(open_token)
+            article_jo = str(record.get("favorite_article_jo") or "").strip()
+            article_unit = record.get("favorite_article_unit")
+            if article_jo:
+                # 조항호목 즐겨찾기는 조항호목 API로 그 조문만 연다. 저장
+                # 방식(전문 원문인지 화면 저장본인지)과는 상관이 없다.
+                # 예전에는 저장 종류가 ``detail_snapshot``이면 이 갈래를
+                # 건너뛰어 법령 전문이 열렸다.
+                self.navigation.setCurrentRow(1)
+                self.resource_tab.ensure_body_page_for_target(
+                    str(row.get("target") or "law")
+                )
+                tab = prepare(self.resource_tab)
+                tab.open_cached_favorite_article(
+                    record,
+                    dict(article_unit)
+                    if isinstance(article_unit, dict)
+                    else {"jo": article_jo},
+                )
+                return tab
             if record.get("kind") != "detail_snapshot":
                 self.navigation.setCurrentRow(1)
                 self.resource_tab.ensure_body_page_for_target(
                     str(row.get("target") or "law")
                 )
                 tab = prepare(self.resource_tab)
-                article_jo = str(
-                    record.get("favorite_article_jo") or ""
-                ).strip()
-                article_unit = record.get("favorite_article_unit")
-                if article_jo and isinstance(article_unit, dict):
-                    tab.open_cached_favorite_article(record, article_unit)
-                else:
-                    tab.open_cached_law(record)
-                    if article_jo:
-                        QTimer.singleShot(
-                            0,
-                            lambda selected_jo=article_jo: (
-                                tab.scroll_to_favorite_article(selected_jo)
-                            ),
-                        )
+                tab.open_cached_law(record)
                 return tab
 
             target = str(row.get("target") or "")

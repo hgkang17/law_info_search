@@ -398,7 +398,13 @@ def test_returning_from_article_restores_full_law_toc_immediately(tmp_path) -> N
     assert law_state["toc_entries"] == full_toc
 
 
-def test_article_favorite_waits_for_running_api_request(tmp_path) -> None:
+def test_article_favorite_does_not_wait_for_a_running_api_request(tmp_path) -> None:
+    """조문 즐겨찾기는 API를 기다리지 않는다.
+
+    조항호목 즐겨찾기는 조항호목 API로 열고 저장한다. 법령 전문과 상관이
+    없으므로 전문을 받을 일이 없고, 따라서 다른 API 요청이 끝나기를 기다릴
+    이유도 없다. 예전에는 전문을 먼저 받아야 해서 미뤄 두었다.
+    """
     tab = _tab(tmp_path)
 
     class BusyWorker:
@@ -410,13 +416,13 @@ def test_article_favorite_waits_for_running_api_request(tmp_path) -> None:
     tab.add_article_favorite_by_id(
         ROW["id"],
         "000600",
-        f"{ROW['name']} 제6조",
+        "제6조",
         ROW["name"],
     )
 
-    assert tab._pending_article_favorite is not None
-    assert tab._article_favorite_waiting_for_worker is True
-    assert "자동으로 추가" in tab.status_label.text()
+    assert tab._pending_article_favorite is None
+    assert tab.law_cache.is_article_favorite(dict(ROW), "000600")
+    assert "즐겨찾기에 걸었습니다" in tab.status_label.text()
     tab.worker = None
 
 

@@ -25,6 +25,7 @@ from molit_cgm_expc_api import (
     search_agencies,
     search_resource,
 )
+from llm.law_aliases import resolve_law_alias
 from utils.parsing import (
     choose_law_reference_row,
     json_list,
@@ -32,6 +33,7 @@ from utils.parsing import (
     law_payload_has_body,
     resolve_law_reference_row,
     slice_law_detail_to_article,
+    split_article_query,
 )
 import re
 import xml.etree.ElementTree as ET
@@ -321,6 +323,39 @@ class ResourceApiWorker(QThread):
         self.ho = ho
         self.mok = mok
 
+    def _search_article_hit(self) -> dict | None:
+        """검색어가 집어 적은 조문을 조항호목 API로 받아 온다.
+
+        통합검색의 조문은 지능형 API가 고른다. 그래서 ``국토계획법 25조``
+        처럼 조문을 콕 집어도 이름이 비슷한 다른 법(국토기본법 제25조)이
+        올라오고 정작 찾던 조문은 목록에 없었다. 검색어에서 조문 지정을
+        떼어 내 그 법의 그 조문을 직접 받는다. 실제로 있는 조문일 때만
+        돌려주므로 없는 조문으로 헛줄이 생기지 않는다.
+        """
+        request = split_article_query(self.query)
+        if request is None:
+            return None
+        try:
+            # 약칭으로 적어도 찾는다(국토계획법 → 국토의 계획 및 이용에
+            # 관한 법률). 목록 API는 정식 명칭으로 물어야 정확히 걸린다.
+            canonical = (
+                resolve_law_alias(request["law_name"]).canonical
+                or request["law_name"]
+            )
+            law_row = named_law_reference_row(self.oc, canonical)
+            payload = get_law_article(
+                self.oc,
+                str(law_row.get("id") or ""),
+                request["jo"],
+                hang=request["hang"],
+                ho=request["ho"],
+            )
+        except Exception:
+            # 조문을 못 찾으면 그냥 넣지 않는다. 나머지 검색 결과는 그대로
+            # 보여 준다.
+            return None
+        return {"row": dict(law_row), "unit": dict(request), "payload": payload}
+
     def run(self) -> None:
         try:
             if self.operation == "resource_search":
@@ -363,6 +398,9 @@ class ResourceApiWorker(QThread):
                     result = {
                         "integrated_results": results,
                         "keyword_roots": keyword_roots,
+                        # ``국토계획법 25조``처럼 조문을 집어 적은 검색어면
+                        # 그 조문을 조항호목 API로 직접 받아 함께 넘긴다.
+                        "article_hit": self._search_article_hit(),
                         "errors": errors,
                     }
                 elif self.target == ANNEX_ALL_TARGET:

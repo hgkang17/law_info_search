@@ -1099,10 +1099,16 @@ class LawDocumentCache(QObject):
         path = self.path_for_row(row)
         try:
             if not path.is_file():
-                raise ValueError(
-                    "저장된 본문이 없어 조문을 즐겨찾기에 걸 수 없습니다."
-                )
-            record = json.loads(path.read_text(encoding="utf-8"))
+                if not is_favorite:
+                    raise ValueError("해제할 조문 즐겨찾기가 없습니다.")
+                # 조항호목 즐겨찾기는 조항호목 API로 열고 저장한다. 법령
+                # 전문과는 상관이 없는데도 예전에는 부모 저장본이 있어야
+                # 별을 걸 수 있어서, 조문 하나를 즐겨찾기에 거는 데 법령
+                # 전문을 먼저 받아 화면까지 열었다. 부모가 없으면 행 정보만
+                # 담은 기록을 만들어 그 위에 얹는다.
+                record = self._new_article_favorite_record(row)
+            else:
+                record = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(record, dict):
                 raise ValueError("저장 파일 형식이 올바르지 않습니다.")
             entries = self._article_favorites(record, all_projects=True)
@@ -1152,6 +1158,25 @@ class LawDocumentCache(QObject):
             return False
         self.changed.emit()
         return True
+
+    def _new_article_favorite_record(
+        self, row: dict[str, object]
+    ) -> dict[str, object]:
+        """조항호목 즐겨찾기만 담는 최소 기록.
+
+        본문(html)도 원문(payload)도 없다. 그 조문은 열 때 조항호목 API로
+        받으므로 여기에 전문을 함께 둘 이유가 없다.
+        """
+        timestamp = self._timestamp()
+        return {
+            "schema": 1,
+            "kind": "article_favorites",
+            "key": self._cache_key(row),
+            "first_viewed_at": timestamp,
+            "saved_at": timestamp,
+            "name": str(row.get("title") or row.get("name") or "본문"),
+            "row": dict(row),
+        }
 
     def is_article_favorite(
         self,
@@ -1699,6 +1724,13 @@ class LawDocumentCache(QObject):
                     record.get("html"), str
                 ):
                     raise ValueError("저장 파일에 본문 화면이 없습니다.")
+                record["path"] = str(resolved)
+                return record
+            if record.get("kind") == "article_favorites":
+                # 조항호목 즐겨찾기만 담은 기록이다. 그 조문은 열 때
+                # 조항호목 API로 받으므로 전문도 화면 저장본도 없다.
+                if not isinstance(record.get("row"), dict):
+                    raise ValueError("저장 파일에 항목 정보가 없습니다.")
                 record["path"] = str(resolved)
                 return record
             if not isinstance(record.get("row"), dict) or not isinstance(

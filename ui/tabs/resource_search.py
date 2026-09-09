@@ -153,6 +153,7 @@ from utils.parsing import (
     json_text,
     law_article_note,
     law_text,
+    split_inline_law_subitems,
     normalize_amendment_note_dates,
     law_unit_code,
     normalize_admin_rule_text,
@@ -8764,6 +8765,68 @@ class ResourceSearchTab(QWidget):
             return cls.INTEGRATED_AI_ORDER
         return cls.INTEGRATED_GROUP_ORDER.get(str(row.get("target") or ""), 9)
 
+    @classmethod
+    def _law_article_title(cls, payload: object, jo: str) -> str:
+        """조항호목 응답에서 그 조의 제목만 꺼낸다."""
+        if not isinstance(payload, dict):
+            return ""
+        law = payload.get("법령")
+        units = law.get("조문") if isinstance(law, dict) else None
+        units = units.get("조문단위") if isinstance(units, dict) else None
+        for unit in json_list(units):
+            if not isinstance(unit, dict):
+                continue
+            title = json_text(unit.get("조문제목"))
+            if title:
+                return title
+        return ""
+
+    def _article_hit_row(self, hit: object) -> dict[str, object] | None:
+        """검색어가 집어 적은 조문을 통합 목록 한 줄로 만든다.
+
+        AI추천 줄과 같은 모양이라 여는 길ㆍ저장ㆍ즐겨찾기가 그대로 통한다.
+        구분만 ``조문``으로 따로 적고 정렬에서 맨 위에 세운다.
+        """
+        if not isinstance(hit, dict):
+            return None
+        source = hit.get("row")
+        unit = hit.get("unit")
+        if not isinstance(source, dict) or not isinstance(unit, dict):
+            return None
+        jo = str(unit.get("jo") or "")
+        law_id = str(source.get("id") or "")
+        if not jo or not law_id:
+            return None
+        label_text = str(unit.get("label") or self._law_reference_label(jo))
+        title = self._law_article_title(hit.get("payload"), jo)
+        provision = f"{label_text} {title}".strip()
+        name = str(source.get("name") or "")
+        return {
+            "target": "law",
+            "label": "조문",
+            # 조문 단위 줄임을 알리는 기존 표시. 여는 길이 이 값을 본다.
+            "ai_recommended": True,
+            # 검색어가 직접 짚은 조문이라는 표시. 정렬에서 맨 앞에 둔다.
+            "article_direct": True,
+            "id": law_id,
+            "name": name,
+            "display_name": provision,
+            "related": name,
+            "organization": str(source.get("organization") or ""),
+            "date": str(source.get("date") or ""),
+            "number": str(source.get("number") or ""),
+            "effective": str(source.get("effective") or ""),
+            "short_name": str(source.get("short_name") or ""),
+            "keyword_provision": provision,
+            "keyword_jo": jo,
+            "keyword_hang": str(unit.get("hang") or ""),
+            "keyword_ho": str(unit.get("ho") or ""),
+            "keyword_mok": "",
+            "jo_code": "",
+            "resolve_admrul_id": False,
+            "raw": {},
+        }
+
     def _show_search_results(self, payload: object) -> None:
         if not isinstance(payload, dict):
             raise ValueError("목록 응답 형식이 올바르지 않습니다.")
@@ -8795,6 +8858,11 @@ class ResourceSearchTab(QWidget):
                 total_count += keyword_total
             except Exception as exc:
                 errors.append(f"연관검색ㆍ직접검색: {exc}")
+            # 검색어가 조문을 집어 적었으면 그 조문을 목록 맨 앞에 세운다.
+            article_row = self._article_hit_row(payload.get("article_hit"))
+            if article_row is not None:
+                rows.append(article_row)
+                total_count += 1
             if not integrated_results and errors:
                 raise ValueError("\n".join(errors))
         elif self.category_target == ANNEX_ALL_TARGET:
@@ -8860,6 +8928,8 @@ class ResourceSearchTab(QWidget):
                     family_rank is not None and not row.get("ai_recommended")
                 )
                 return (
+                    # 검색어가 조문을 집어 적었으면 그 조문이 맨 앞이다.
+                    0 if row.get("article_direct") else 1,
                     # 이름을 그대로 검색한 행과 그 법의 시행령ㆍ시행규칙은
                     # AI추천 조문보다 무조건 먼저 둔다. 유사도 점수만으로
                     # 묶으면 API에서 같은 법령명의 추천 조문도 높은 점수를
@@ -9329,9 +9399,10 @@ class ResourceSearchTab(QWidget):
     ) -> None:
         """인용된 조항호목 하나를 즐겨찾기에 건다.
 
-        조문 즐겨찾기는 그 법령의 저장본 안에 얹힌다. 그래서 저장본이
-        없으면 본문을 먼저 받아 저장한 뒤에 걸어야 한다 — 그 대기는
-        _finalize_pending_favorite가 이어받는다.
+        조문 즐겨찾기는 조항호목 API로 열고 저장한다. 법령 전문과는 상관이
+        없으므로 전문을 먼저 받지 않는다. 예전에는 부모 저장본이 있어야
+        별을 걸 수 있어서, 조문 하나를 거는 데 법령 전문을 받아 화면까지
+        열었다(조문검색에서 별을 누르면 전문이 뜨던 자리다).
         """
         row = self._law_row(law_id, name)
         if row is None:
@@ -9342,44 +9413,22 @@ class ResourceSearchTab(QWidget):
         ):
             self.status_label.setText("이미 즐겨찾기에 있는 조문입니다.")
             return
-        if self._row_is_saved(row):
-            if self.law_cache.set_article_favorite(
-                row,
-                jo,
-                label,
-                True,
-                hang=hang,
-                ho=ho,
-                mok=mok,
-            ):
-                self.status_label.setText(f"{label}을(를) 즐겨찾기에 걸었습니다.")
-            else:
-                self.status_label.setText(
-                    f"즐겨찾기 설정에 실패했습니다: {self.law_cache.last_error}"
-                )
-            self._refresh_document_tab_favorites()
-            return
-        if self.worker and self.worker.isRunning():
-            self._pending_article_favorite = (row, jo, hang, ho, mok, label)
-            self._pending_favorite_row = row
-            self._article_favorite_waiting_for_worker = True
+        if self.law_cache.set_article_favorite(
+            row,
+            jo,
+            label,
+            True,
+            hang=hang,
+            ho=ho,
+            mok=mok,
+        ):
+            self.status_label.setText(f"{label}을(를) 즐겨찾기에 걸었습니다.")
+        else:
             self.status_label.setText(
-                "진행 중인 API 요청이 끝나면 조문 즐겨찾기를 자동으로 추가합니다."
+                f"즐겨찾기 설정에 실패했습니다: {self.law_cache.last_error}"
             )
-            return
-        self._pending_article_favorite = (row, jo, hang, ho, mok, label)
-        self._pending_favorite_row = row
-        self.status_label.setText(
-            f"{label} 본문을 받는 중입니다 — 저장이 끝나면 즐겨찾기에 겁니다."
-        )
-        self._progress_opacity.setOpacity(1.0)
-        self.result_table.viewport().update()
-        if not self._request_resource_detail(row, force_api=False):
-            self._pending_article_favorite = None
-            self._pending_favorite_row = None
-            self._progress_opacity.setOpacity(0.0)
-            self.result_table.viewport().update()
-            self._refresh_reference_popup_favorites()
+        self._refresh_document_tab_favorites()
+        self._refresh_reference_popup_favorites()
 
     def _resume_pending_article_favorite(self) -> None:
         """다른 API 작업 때문에 미뤄 둔 조문 즐겨찾기를 이어서 처리."""
@@ -10942,8 +10991,14 @@ class ResourceSearchTab(QWidget):
         """조문 API를 우선해 열고, 허용된 즐겨찾기에서만 전문을 대신 쓴다."""
         source_row = record.get("row")
         fallback_payload = record.get("payload")
-        if not isinstance(source_row, dict) or not isinstance(fallback_payload, dict):
-            raise ValueError("저장된 법령 본문을 찾지 못했습니다.")
+        if not isinstance(source_row, dict):
+            raise ValueError("저장된 법령 정보를 찾지 못했습니다.")
+        if not isinstance(fallback_payload, dict):
+            # 조항호목 즐겨찾기는 전문과 상관이 없다. 저장본에 전문 원문이
+            # 없어도 조문 API로 그 조문만 연다. 예전에는 여기서 바로
+            # 오류를 내서, 조문만 담은 저장본은 열리지 않았다.
+            fallback_payload = {}
+            allow_full_fallback = False
         jo = str(unit.get("jo") or "")
         if not jo:
             raise ValueError("즐겨찾기 조문 번호를 찾지 못했습니다.")
@@ -11435,7 +11490,14 @@ class ResourceSearchTab(QWidget):
             node.get("항내용") or node.get("호내용") or node.get("목내용")
         )
         if content:
-            output.append(normalize_amendment_note_dates(content))
+            # 법령 API는 목 하나를 통째로 한 문자열에 담아 준다. 그 안에
+            # ``1) …  2) …``ㆍ``가) …  나) …``가 줄바꿈 없이 붙어 있어,
+            # 본문 변환이 줄머리 표지를 알아보지 못하고 한 문단으로 붙였다.
+            output.append(
+                split_inline_law_subitems(
+                    normalize_amendment_note_dates(content)
+                )
+            )
         for key in ("호", "목"):
             for child in json_list(node.get(key)):
                 self._append_law_children(child, output)

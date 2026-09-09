@@ -31,6 +31,7 @@ from .patterns import (
     _PAREN_ITEM_PART_REFERENCE_PATTERN,
     _CIRCLED_PARTICLE_TAIL_PATTERN,
     _CLOSING_PAREN_ITEM_PATTERN,
+    _CLOSING_PAREN_KOREAN_ITEM_PATTERN,
     _FOOTNOTE_MARK_TAIL_PATTERN,
     _HEADING_RANGE_TAIL_PATTERN,
     _MARKER_ONLY_LINE_PATTERN,
@@ -441,6 +442,104 @@ def split_inline_closing_paren_items(line: str) -> list[str]:
                 pieces.append(piece)
         return pieces
     return [line]
+
+
+def split_inline_korean_closing_paren_items(line: str) -> list[str]:
+    """``가) …  나) …``처럼 한 줄에 붙어 온 한글 세부항목을 나눈다.
+
+    숫자 쪽(``split_inline_closing_paren_items``)과 같은 규칙이다. ``가)``
+    부터 시작해 표지가 차례대로 두 개 이상 이어질 때만 자른다. 문장 속
+    단독 ``나)``나 차례가 건너뛴 표기는 건드리지 않는다.
+    """
+    order = KOREAN_ITEM_MARKERS
+    matches = list(_CLOSING_PAREN_KOREAN_ITEM_PATTERN.finditer(line))
+    for first_index, first in enumerate(matches):
+        if first.group(1) != order[0]:
+            continue
+        positions = [first.start()]
+        expected = 1
+        for match in matches[first_index + 1 :]:
+            if expected >= len(order) or match.group(1) != order[expected]:
+                break
+            positions.append(match.start())
+            expected += 1
+        if len(positions) < 2:
+            continue
+        pieces: list[str] = []
+        prefix = line[: positions[0]].strip()
+        if prefix:
+            pieces.append(prefix)
+        for index, start in enumerate(positions):
+            end = positions[index + 1] if index + 1 < len(positions) else len(line)
+            piece = line[start:end].strip()
+            if piece:
+                pieces.append(piece)
+        return pieces
+    return [line]
+
+
+# ``국토계획법 25조``ㆍ``건축법 제19조제2항``처럼 법령명 뒤에 찾을 조문을
+# 붙여 적은 검색어. 조문 표기가 검색어 끝에 오고 뒤에 다른 말이 붙지 않을
+# 때만 잡는다. ``도로법 제2조의 정의``처럼 말이 이어지면 조문 지정이 아니다.
+_ARTICLE_QUERY_PATTERN = re.compile(
+    r"(?P<law>.+?)\s*제?\s*(?P<jo>\d{1,4})\s*조"
+    r"(?:\s*의\s*(?P<jo_branch>\d{1,3}))?"
+    r"(?:\s*제?\s*(?P<hang>\d{1,3})\s*항)?"
+    r"(?:\s*제?\s*(?P<ho>\d{1,3})\s*호)?"
+)
+
+
+def split_article_query(query: str) -> dict[str, str] | None:
+    """검색어를 ``법령명``과 ``찾는 조문``으로 나눈다.
+
+    통합검색은 법령명으로 목록을 찾고 조문은 지능형 API에 맡긴다. 그런데
+    ``국토계획법 25조``처럼 조문을 콕 집어 적으면, 지능형 API가 이름이
+    비슷한 다른 법(국토기본법 제25조)을 골라 정작 찾던 조문이 목록에
+    없었다. 검색어에서 조문 지정을 떼어 내면 그 조문을 조항호목 API로
+    직접 받아 맨 위에 올릴 수 있다.
+    """
+    text = " ".join(str(query or "").split())
+    match = _ARTICLE_QUERY_PATTERN.fullmatch(text)
+    if match is None:
+        return None
+    law_name = match.group("law").strip(" ·,")
+    # ``제25조``만 적은 검색어는 앞의 ``제``가 법령명 자리로 밀려 들어온다.
+    # 법령 이름은 ``제``로 끝나지 않으므로 떼어 내고, 남는 것이 없으면
+    # 조문 지정으로 보지 않는다.
+    if law_name.endswith("제"):
+        law_name = law_name[:-1].strip()
+    if len(law_name) < 2:
+        return None
+    branch = match.group("jo_branch") or ""
+    label = f"제{int(match.group('jo'))}조" + (f"의{int(branch)}" if branch else "")
+    hang = match.group("hang") or ""
+    ho = match.group("ho") or ""
+    if hang:
+        label += f"제{int(hang)}항"
+    if ho:
+        label += f"제{int(ho)}호"
+    return {
+        "law_name": law_name,
+        "jo": law_unit_code(match.group("jo"), branch),
+        "hang": law_unit_code(hang, "") if hang else "",
+        "ho": law_unit_code(ho, "") if ho else "",
+        "label": label,
+    }
+
+
+def split_inline_law_subitems(text: str) -> str:
+    """법령 목 안에 한 줄로 붙어 온 세부항목을 줄로 나눈다.
+
+    법제처 법령 API는 ``가. … 1) 도로: … 2) 공원 및 녹지: … 가) … 나) …``
+    처럼 목 하나를 통째로 한 문자열에 담아 준다. 줄이 나뉘어 있지 않으면
+    본문 변환(``body_to_html``)이 줄머리 표지를 알아보지 못해 세부항목이
+    한 문단으로 붙어 보인다.
+    """
+    lines: list[str] = []
+    for line in str(text or "").splitlines():
+        for numbered in split_inline_closing_paren_items(line):
+            lines.extend(split_inline_korean_closing_paren_items(numbered))
+    return "\n".join(lines)
 
 
 def split_label_before_first_paren_item(lines: list[str]) -> list[str]:

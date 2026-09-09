@@ -113,6 +113,11 @@ _PAREN_ITEM_ENUMERATION_TAIL_PATTERN = re.compile(
 _FOOTNOTE_MARK_TAIL_PATTERN = re.compile(r"※\s*$")
 
 _CLOSING_PAREN_ITEM_PATTERN = re.compile(r"(?<![\d(])(\d{1,2})\)\s*")
+# ``가) 나) 다)``처럼 목 아래에서 다시 갈라지는 세부항목 표지.
+# 여는 괄호가 앞에 있는 ``(가)``는 인용이므로 제외한다.
+_CLOSING_PAREN_KOREAN_ITEM_PATTERN = re.compile(
+    rf"(?<![(가-힣])([{KOREAN_ITEM_MARKERS}])\)\s*"
+)
 
 _PAREN_ITEM_RANGE_PREFIX_PATTERN = re.compile(r"(?:부터|까지|내지|[~∼～])")
 

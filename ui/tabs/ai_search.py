@@ -1792,15 +1792,20 @@ class AiLawSearchTab(QWidget):
         target = self._article_favorite_target(self.result_rows[row_index])
         if target is None:
             return
-        label = " ".join(
-            part for part in (target["law_name"], target["label"]) if part
+        # 저장하는 이름에는 법령명을 넣지 않는다. 즐겨찾기 목록이 그 조문이
+        # 어느 법의 것인지 앞에 다시 붙이므로(_article_favorite_caption),
+        # 여기서 붙이면 ``국토계획법 · 국토계획법 제25조``처럼 법이 두 번
+        # 나온다. 법령검색 화면의 같은 자리도 조문 표기만 넘긴다.
+        label = str(target["label"] or "").strip() or "조문"
+        spoken = " ".join(
+            part for part in (target["law_name"], label) if part
         )
         # 실제 처리는 법령검색 화면이 맡는다. 그 화면의 상태줄은 지금
         # 보이지 않으므로, 무엇을 하고 있는지 이 화면에도 적는다. 저장본이
         # 없으면 본문을 먼저 받아야 해서 몇 초가 걸린다.
         removing = self._is_favorite_at_row(row_index)
         self.status_label.setText(
-            f"{label} 즐겨찾기를 "
+            f"{spoken} 즐겨찾기를 "
             + ("해제하는 중입니다." if removing else "추가하는 중입니다. 저장본이 없으면 본문을 먼저 받습니다.")
         )
         if not removing:

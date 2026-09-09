@@ -208,9 +208,33 @@ def test_repeated_article_favorite_checks_read_the_file_once(
     assert reads["count"] == first
 
 
-def test_unsaved_law_cannot_hold_an_article_favorite(tmp_path) -> None:
+def test_unsaved_law_can_still_hold_an_article_favorite(tmp_path) -> None:
+    """저장본이 없어도 조문 하나는 즐겨찾기에 걸린다.
+
+    조항호목 즐겨찾기는 조항호목 API로 열고 저장한다. 법령 전문과는
+    상관이 없는데도 예전에는 부모 저장본을 요구해서, 조문 하나를 거는 데
+    법령 전문을 먼저 받아 화면까지 열었다.
+    """
     cache = LawDocumentCache(tmp_path / "saved")
-    assert not cache.set_article_favorite(ROW, "25", "제25조", True)
+
+    assert cache.set_article_favorite(ROW, "25", "제25조", True)
+    assert not cache.last_error
+    assert cache.is_article_favorite(ROW, "25")
+
+    record = cache.load(str(cache.path_for_row(ROW)))
+    assert record is not None
+    # 전문도 화면 저장본도 담지 않는다.
+    assert "payload" not in record
+    assert not record.get("html")
+    assert record["row"]["id"] == ROW["id"]
+
+    assert cache.set_article_favorite(ROW, "25", "제25조", False)
+    assert cache.is_article_favorite(ROW, "25") is False
+
+
+def test_removing_an_article_favorite_without_any_record_fails(tmp_path) -> None:
+    cache = LawDocumentCache(tmp_path / "saved")
+    assert not cache.set_article_favorite(ROW, "25", "제25조", False)
     assert cache.last_error
 
 

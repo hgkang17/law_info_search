@@ -132,3 +132,45 @@ def test_favorite_screen_no_longer_has_a_keyword_column() -> None:
 
     assert "keyword" not in names
     assert "article" in names
+
+
+def test_stored_article_label_does_not_repeat_the_law_name(
+    qt_app, tmp_path
+) -> None:
+    """저장하는 이름에 법령명을 넣지 않는다.
+
+    즐겨찾기 목록이 ``법령명 · 조문표기``로 다시 붙이므로, 여기서 법령명을
+    앞에 넣으면 ``국토계획법 · 국토계획법 제6조``처럼 법이 두 번 나온다.
+    """
+    tab = _tab(tmp_path)
+    try:
+        law_name = "국토의 계획 및 이용에 관한 법률"
+        tab.result_rows = [
+            {
+                "kind": "법령조문",
+                "name": law_name,
+                "provision": "제6조(국토의 용도 구분)",
+                "source_id": "009293",
+                "jo_code": "000600",
+                "hang": "2",
+            }
+        ]
+        calls: list[tuple] = []
+        tab._resource_action = lambda *args, **kwargs: (
+            calls.append((args, kwargs)) or False
+        )
+        tab._save_row_for_favorite = lambda _index: None
+
+        tab._toggle_favorite_at_row(0)
+
+        toggle = next(
+            call for call in calls
+            if call[0] and call[0][0] == "toggle_article_favorite_by_id"
+        )
+        stored_label = toggle[0][3]
+        assert law_name not in stored_label
+        assert stored_label.startswith("제6조")
+        # 상태줄 문구에는 어느 법인지 남는다.
+        assert law_name in tab.status_label.text()
+    finally:
+        tab.close()
