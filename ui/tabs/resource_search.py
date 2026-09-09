@@ -401,6 +401,11 @@ def _browser_href_at(browser, position: QPoint) -> str:
 class ResourceSearchTab(QWidget):
     """법령·행정규칙·자치법규와 각 별표·서식을 통합 검색."""
 
+    # 본문 글꼴 기본값. ``__init__``이 저장된 설정으로 덮어쓰지만, 화면을
+    # 만들지 않고 HTML 조립만 부르는 자리(테스트ㆍ배치 계산)에서도 글꼴
+    # 목록을 물어볼 수 있어야 한다.
+    detail_font_family = DETAIL_FONT_FAMILY
+    detail_font_size = DEFAULT_DETAIL_FONT_POINT
     # 조문 제목 왼쪽 별표. 제N조 블록에만 큰 왼쪽 여백을 두면 ①·1. 항호가
     # 조보다 앞에 있는 것처럼 보이므로, 별 크기와 틈만큼만 자리를 낸다.
     _ARTICLE_FAVORITE_SIZE = 24
@@ -2481,7 +2486,27 @@ class ResourceSearchTab(QWidget):
             self._detail_link_clicked,
             make_detail_font(self.detail_font_size, self.detail_font_family),
         )
+        # 꺼낸 창에도 본문과 같은 조문 별표ㆍ3단비교 단추를 얹는다.
+        # 누르면 본체 화면의 처리를 그대로 부르므로 즐겨찾기와 3단비교
+        # 팝업은 한 곳에서만 관리된다.
+        window.attach_article_controls(
+            [
+                dict(article)
+                for article in state.get("three_stage_articles", []) or []
+                if isinstance(article, dict)
+            ],
+            favorite_clicked=self._toggle_inline_article_favorite,
+            three_stage_clicked=self._open_three_stage_comparison,
+            favorite_state=self._article_is_favorite,
+            favorite_icon_for=lambda favorite: favorite_icon(
+                favorite, "#c88700" if favorite else "#aeb4bc"
+            ),
+            star_size=self._ARTICLE_FAVORITE_SIZE,
+            three_stage_width=THREE_STAGE_BUTTON_WIDTH,
+        )
         self._detached_document_windows.append(window)
+        # 별을 켜고 끄면 꺼낸 창의 별도 함께 바뀐다.
+        self.law_cache.changed.connect(window.refresh_article_favorites)
         window.destroyed.connect(
             lambda _obj=None, target=window: (
                 self._detached_document_windows.remove(target)
@@ -3220,6 +3245,17 @@ class ResourceSearchTab(QWidget):
                 f"min-height:{star_size}px; max-height:{star_size}px;}}"
                 "QPushButton#articleFavoriteButton:hover {color:#e2a400;}"
             )
+
+    def _article_is_favorite(self, article: dict[str, object]) -> bool:
+        """조문 하나가 즐겨찾기인지. 꺼낸 창의 별표도 이 값을 본다."""
+        law_id = str(article.get("law_id") or "")
+        jo = str(article.get("jo") or "")
+        if not law_id or not jo:
+            return False
+        row = self._law_row(law_id, str(article.get("law_name") or ""))
+        if row is None:
+            return False
+        return self.law_cache.is_article_favorite(row, jo)
 
     def _toggle_inline_article_favorite(
         self, article: dict[str, object]
@@ -10744,7 +10780,10 @@ class ResourceSearchTab(QWidget):
                 keyword_unit["mok"],
             )
         if article_text:
-            sections = [("조문내용", article_text)]
+            # 구간 이름은 법령 전문과 같은 ``조문``으로 둔다. 다른 이름을
+            # 쓰면 _set_detail_document가 본문 위에 <h2> 제목을 하나 더
+            # 붙여, 조문 하나만 연 화면에만 큰 파란 글씨가 생긴다.
+            sections = [("조문", article_text)]
             unit_label = self._law_reference_label(
                 keyword_unit["jo"],
                 keyword_unit["hang"],
@@ -11400,7 +11439,8 @@ class ResourceSearchTab(QWidget):
             self._set_detail_document(
                 title,
                 metadata,
-                [("조문내용", article_text)],
+                # 법령 전문과 같은 구간 이름을 쓴다(위 주석 참고).
+                [("조문", article_text)],
                 build_toc=True,
                 short_name=short_name,
                 subtitle=subtitle,

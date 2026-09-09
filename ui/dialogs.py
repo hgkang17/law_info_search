@@ -15,7 +15,7 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QCursor, QPixmap
+from PySide6.QtGui import QCursor, QPixmap, QTextCursor
 from PySide6.QtPdf import QPdfDocument
 from PySide6.QtPdfWidgets import QPdfView
 from PySide6.QtWidgets import (
@@ -946,9 +946,201 @@ class DetachedDocumentWindow(QWidget):
         # 본문 화면과 같은 찾기 창을 이 창에도 붙인다.
         self.search_bar = DetailSearchBar(self.browser, self)
 
+        # 본문 화면처럼 조문 왼쪽에 즐겨찾기 별, 오른쪽에 3단비교 단추를
+        # 얹는다. attach_article_controls를 부르기 전에는 비어 있다.
+        self._article_entries: list[dict[str, object]] = []
+        self._article_anchor_positions: dict[str, int] = {}
+        self._favorite_buttons: list[QPushButton] = []
+        self._three_stage_buttons: list[QPushButton] = []
+        self._favorite_state = None
+        self._favorite_icon_for = None
+        self._star_size = 18
+        self._three_stage_width = 44
+        self._article_layout_pending = False
+        self.browser.verticalScrollBar().valueChanged.connect(
+            lambda _value=0: self._schedule_article_layout()
+        )
+
     def scroll_to(self, position: int) -> None:
         scroll_bar = self.browser.verticalScrollBar()
         scroll_bar.setValue(max(0, min(int(position), scroll_bar.maximum())))
+
+    # ---- 조문 별표ㆍ3단비교 단추 -------------------------------------
+    def attach_article_controls(
+        self,
+        articles: list[dict[str, object]],
+        *,
+        favorite_clicked,
+        three_stage_clicked,
+        favorite_state,
+        favorite_icon_for,
+        star_size: int,
+        three_stage_width: int,
+    ) -> None:
+        """본문 화면과 같은 조문 별표ㆍ3단비교 단추를 이 창에도 얹는다.
+
+        `articles`는 본문 화면이 쓰는 것과 같은 모양이다(anchor·label·jo·
+        law_id·law_name·comparison_available). 누르면 본체 화면의 처리를
+        그대로 부르므로 즐겨찾기와 3단비교 팝업은 한 곳에서만 관리된다.
+        """
+        self._clear_article_controls()
+        self._article_entries = [
+            dict(article)
+            for article in articles
+            if isinstance(article, dict) and article.get("anchor")
+        ]
+        self._favorite_state = favorite_state
+        self._favorite_icon_for = favorite_icon_for
+        self._star_size = int(star_size)
+        self._three_stage_width = int(three_stage_width)
+        if not self._article_entries:
+            return
+
+        # 3단 단추가 본문 글자와 겹치지 않게 오른쪽에 자리를 낸다.
+        root_frame = self.browser.document().rootFrame()
+        frame_format = root_frame.frameFormat()
+        frame_format.setRightMargin(float(self._three_stage_width + 24))
+        root_frame.setFrameFormat(frame_format)
+
+        self._article_anchor_positions = self._find_anchor_positions(
+            {str(article["anchor"]) for article in self._article_entries}
+        )
+        viewport = self.browser.viewport()
+        for article in self._article_entries:
+            star = QPushButton(viewport)
+            star.setObjectName("articleFavoriteButton")
+            star.setFixedSize(self._star_size, self._star_size)
+            star.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            star.setCursor(Qt.CursorShape.PointingHandCursor)
+            star.setIconSize(QSize(16, 16))
+            star.clicked.connect(
+                lambda _checked=False, item=dict(article): favorite_clicked(
+                    item
+                )
+            )
+            star.hide()
+            self._favorite_buttons.append(star)
+
+            button = QPushButton("3단", viewport)
+            button.setObjectName("threeStageArticleButton")
+            button.setFixedSize(self._three_stage_width, 24)
+            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setToolTip(
+                f"{article.get('label') or '이 조문'}의 법률·시행령·"
+                "시행규칙을 3단으로 비교합니다."
+            )
+            button.clicked.connect(
+                lambda _checked=False, item=dict(article): (
+                    three_stage_clicked(item)
+                )
+            )
+            button.hide()
+            self._three_stage_buttons.append(button)
+        self.refresh_article_favorites()
+        self._schedule_article_layout()
+
+    def refresh_article_favorites(self) -> None:
+        """별표 색과 안내를 지금 즐겨찾기 상태에 맞춘다."""
+        if self._favorite_state is None or self._favorite_icon_for is None:
+            return
+        star_size = self._star_size
+        for article, button in zip(
+            self._article_entries, self._favorite_buttons
+        ):
+            favorite = bool(self._favorite_state(article))
+            button.setIcon(self._favorite_icon_for(favorite))
+            label = str(article.get("label") or "이 조문")
+            button.setToolTip(
+                f"{label} 즐겨찾기를 "
+                + ("해제합니다." if favorite else "추가합니다.")
+            )
+            button.setAccessibleName(button.toolTip())
+            button.setStyleSheet(
+                "QPushButton#articleFavoriteButton {"
+                f"color: {'#e2a400' if favorite else '#aeb9c5'};"
+                "border:none; background:transparent; padding:0;"
+                f"font-size:13px; min-width:{star_size}px; "
+                f"max-width:{star_size}px;"
+                f"min-height:{star_size}px; max-height:{star_size}px;}}"
+                "QPushButton#articleFavoriteButton:hover {color:#e2a400;}"
+            )
+
+    def _clear_article_controls(self) -> None:
+        for button in (*self._favorite_buttons, *self._three_stage_buttons):
+            button.setParent(None)
+            button.deleteLater()
+        self._favorite_buttons = []
+        self._three_stage_buttons = []
+        self._article_entries = []
+        self._article_anchor_positions = {}
+
+    def _find_anchor_positions(self, anchors: set[str]) -> dict[str, int]:
+        """문서 안에서 조문 앵커가 놓인 글자 위치를 찾는다."""
+        positions: dict[str, int] = {}
+        remaining = set(anchors)
+        block = self.browser.document().begin()
+        while block.isValid() and remaining:
+            iterator = block.begin()
+            while not iterator.atEnd() and remaining:
+                fragment = iterator.fragment()
+                if fragment.isValid():
+                    for anchor in set(
+                        fragment.charFormat().anchorNames()
+                    ).intersection(remaining):
+                        positions[anchor] = fragment.position()
+                        remaining.discard(anchor)
+                iterator += 1
+            block = block.next()
+        return positions
+
+    def _schedule_article_layout(self) -> None:
+        if self._article_layout_pending or not self._article_entries:
+            return
+        self._article_layout_pending = True
+        QTimer.singleShot(0, self._position_article_controls)
+
+    def _position_article_controls(self) -> None:
+        self._article_layout_pending = False
+        viewport = self.browser.viewport()
+        for article, star, button in zip(
+            self._article_entries,
+            self._favorite_buttons,
+            self._three_stage_buttons,
+        ):
+            position = self._article_anchor_positions.get(
+                str(article.get("anchor") or "")
+            )
+            if position is None:
+                star.hide()
+                button.hide()
+                continue
+            cursor = QTextCursor(self.browser.document())
+            cursor.setPosition(position)
+            rect = self.browser.cursorRect(cursor)
+            visible = 0 <= rect.bottom() and rect.top() <= viewport.height()
+            if not visible:
+                star.hide()
+                button.hide()
+                continue
+            star_y = rect.top() + (rect.height() - star.height()) // 2
+            star.move(max(1, rect.left() - star.width() - 6), star_y)
+            star.show()
+            star.raise_()
+            # 비교 자료가 있다고 확인된 조문에만 3단 단추를 보인다.
+            if article.get("comparison_available") is not True:
+                button.hide()
+                continue
+            button.move(
+                max(1, viewport.width() - button.width() - 6),
+                rect.top() + (rect.height() - button.height()) // 2,
+            )
+            button.show()
+            button.raise_()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 (Qt 이름)
+        super().resizeEvent(event)
+        self._schedule_article_layout()
 
 
 class LawReferencePopup(QFrame):

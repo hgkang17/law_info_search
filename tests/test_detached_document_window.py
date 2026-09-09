@@ -96,3 +96,63 @@ def test_detaching_an_unknown_tab_is_ignored(tmp_path) -> None:
 
     assert tab.document_tabs.count() == 1
     assert tab._detached_document_windows == []
+
+
+def test_detached_window_carries_article_star_and_three_stage(tmp_path) -> None:
+    """꺼낸 창에도 조문 별표와 3단비교 단추가 함께 간다."""
+    app = QApplication.instance() or QApplication([])
+    tab = _tab(tmp_path)
+    payload = _payload()
+    assert tab.law_cache.save(dict(ROW), payload)
+    tab.resize(1000, 700)
+    tab.show()
+    tab.open_cached_law({"row": dict(ROW), "payload": payload})
+    app.processEvents()
+    key = tab._active_document_key
+    # 3단비교 자료가 확인된 조문만 3단 단추를 보인다. 제1조만 켜 둔다.
+    # 꺼내기 직전에 화면 상태를 다시 저장하므로 화면 쪽 목록을 고친다.
+    articles = tab._current_three_stage_articles
+    assert articles, "본문에서 조문 목록을 만들지 못했다"
+    articles[0]["comparison_available"] = True
+
+    tab._detach_document_tab(key, QPoint(200, 200))
+    app.processEvents()
+
+    window = tab._detached_document_windows[0]
+    # 조문 수만큼 별표가 만들어지고, 앵커 자리를 찾았다.
+    assert len(window._favorite_buttons) == len(articles)
+    assert window._article_anchor_positions
+    assert any(star.isVisible() for star in window._favorite_buttons)
+    # 비교 자료가 확인된 조문의 3단 단추만 보인다.
+    shown = [
+        button.isVisible() for button in window._three_stage_buttons
+    ]
+    assert shown[0] is True
+    assert all(state is False for state in shown[1:])
+    window.close()
+
+
+def test_detached_window_star_toggles_the_article_favorite(tmp_path) -> None:
+    """꺼낸 창의 별을 누르면 본체와 같은 즐겨찾기가 걸린다."""
+    app = QApplication.instance() or QApplication([])
+    tab = _tab(tmp_path)
+    payload = _payload()
+    assert tab.law_cache.save(dict(ROW), payload)
+    tab.resize(1000, 700)
+    tab.show()
+    tab.open_cached_law({"row": dict(ROW), "payload": payload})
+    app.processEvents()
+    key = tab._active_document_key
+    article = dict(tab._current_three_stage_articles[0])
+
+    tab._detach_document_tab(key, QPoint(200, 200))
+    app.processEvents()
+    window = tab._detached_document_windows[0]
+    assert window._favorite_state(article) is False
+
+    window._favorite_buttons[0].click()
+    app.processEvents()
+
+    assert tab.law_cache.is_article_favorite(dict(ROW), article["jo"])
+    assert window._favorite_state(article) is True
+    window.close()
