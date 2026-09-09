@@ -1,0 +1,948 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>법령프로그램 API · 저장 · 공유 구조</title>
+  <style>
+    :root {
+      --canvas: #f4f4f3;
+      --paper: #ffffff;
+      --ink: #242529;
+      --muted: #62666f;
+      --border: #dedfdf;
+      --soft-border: #e9e9e7;
+      --current: #2563eb;
+      --current-soft: #edf3ff;
+      --current-ink: #174ea6;
+      --charcoal: #202124;
+      --code: #f7f7f6;
+      --radius: 8px;
+      --content: 1180px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html {
+      scroll-behavior: smooth;
+      background: var(--canvas);
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--canvas);
+      font-family: Pretendard, "Malgun Gothic", "맑은 고딕", sans-serif;
+      font-size: 16px;
+      line-height: 1.68;
+      text-rendering: optimizeLegibility;
+    }
+
+    ::selection {
+      color: var(--current-ink);
+      background: var(--current-soft);
+    }
+
+    a {
+      color: var(--current-ink);
+      text-decoration-thickness: 1px;
+      text-underline-offset: 3px;
+    }
+
+    a:hover { text-decoration-thickness: 2px; }
+
+    a:focus-visible,
+    button:focus-visible {
+      outline: 3px solid var(--current);
+      outline-offset: 3px;
+      border-radius: 6px;
+    }
+
+    code,
+    .target,
+    .path {
+      font-family: Pretendard, "Malgun Gothic", "맑은 고딕", sans-serif;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .topbar {
+      min-height: 52px;
+      border-bottom: 1px solid var(--border);
+      background: #fafafa;
+    }
+
+    .topbar-inner {
+      width: min(calc(100% - 32px), var(--content));
+      min-height: 52px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .product-name {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+    }
+
+    .doc-status {
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .layout {
+      width: min(calc(100% - 32px), var(--content));
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 184px minmax(0, 1fr);
+      gap: 34px;
+      align-items: start;
+    }
+
+    .toc {
+      position: sticky;
+      top: 20px;
+      padding: 34px 0;
+    }
+
+    .toc strong {
+      display: block;
+      margin-bottom: 10px;
+      font-size: 13px;
+    }
+
+    .toc a {
+      display: block;
+      padding: 7px 9px;
+      border-radius: 6px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.35;
+      text-decoration: none;
+    }
+
+    .toc a:hover {
+      color: var(--ink);
+      background: #eaeae8;
+    }
+
+    main {
+      min-width: 0;
+      padding: 54px 0 88px;
+    }
+
+    .hero {
+      padding: 0 0 42px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    h1,
+    h2,
+    h3 {
+      margin-top: 0;
+      color: var(--ink);
+      letter-spacing: -0.025em;
+      line-height: 1.28;
+      text-wrap: balance;
+    }
+
+    h1 {
+      max-width: 760px;
+      margin-bottom: 18px;
+      font-size: clamp(34px, 5vw, 58px);
+      font-weight: 700;
+    }
+
+    h2 {
+      margin-bottom: 16px;
+      font-size: 27px;
+      font-weight: 700;
+    }
+
+    h3 {
+      margin-bottom: 9px;
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    .lead {
+      max-width: 72ch;
+      margin: 0;
+      color: var(--muted);
+      font-size: 18px;
+    }
+
+    .summary-strip {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      margin-top: 30px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--paper);
+      overflow: hidden;
+    }
+
+    .summary-item {
+      min-width: 0;
+      padding: 18px 20px;
+      border-right: 1px solid var(--border);
+    }
+
+    .summary-item:last-child { border-right: 0; }
+
+    .summary-item b {
+      display: block;
+      margin-bottom: 5px;
+      font-size: 14px;
+    }
+
+    .summary-item span {
+      display: block;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    section {
+      padding-top: 58px;
+      scroll-margin-top: 24px;
+    }
+
+    .section-intro {
+      max-width: 74ch;
+      margin: -6px 0 24px;
+      color: var(--muted);
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 48px minmax(0, 1fr) 48px minmax(0, 1fr);
+      align-items: stretch;
+      margin-top: 26px;
+    }
+
+    .flow-node {
+      min-height: 142px;
+      padding: 20px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--paper);
+    }
+
+    .flow-node.current {
+      border-color: var(--current);
+      background: var(--current-soft);
+    }
+
+    .flow-node b {
+      display: block;
+      margin-bottom: 10px;
+      font-size: 16px;
+    }
+
+    .flow-node p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.55;
+    }
+
+    .flow-arrow {
+      position: relative;
+      align-self: center;
+      height: 1px;
+      margin: 0 8px;
+      background: var(--muted);
+    }
+
+    .flow-arrow::after {
+      content: "";
+      position: absolute;
+      top: -4px;
+      right: -1px;
+      width: 8px;
+      height: 8px;
+      border-top: 1px solid var(--muted);
+      border-right: 1px solid var(--muted);
+      transform: rotate(45deg);
+    }
+
+    .endpoint {
+      display: inline-block;
+      margin-top: 9px;
+      padding: 3px 7px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--code);
+      color: var(--ink);
+      font: 12px/1.45 Pretendard, "Malgun Gothic", "맑은 고딕", sans-serif;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--paper);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    th,
+    td {
+      padding: 14px 15px;
+      border-bottom: 1px solid var(--soft-border);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--muted);
+      background: #fafafa;
+      font-size: 13px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    tr:last-child td { border-bottom: 0; }
+    tbody tr:nth-child(even) { background: #fcfcfb; }
+
+    .target {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 6px;
+      background: #eeeeed;
+      color: var(--ink);
+      font-size: 12px;
+      line-height: 1.5;
+      white-space: nowrap;
+    }
+
+    .target.article {
+      background: var(--current-soft);
+      color: var(--current-ink);
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 7px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1.55;
+      white-space: nowrap;
+    }
+
+    .badge.shared { color: var(--current-ink); background: var(--current-soft); }
+    .badge.separate { color: var(--ink); background: #eeeeed; }
+    .badge.exception { color: var(--current-ink); background: var(--current-soft); }
+
+    .note {
+      margin-top: 18px;
+      padding: 16px 18px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--paper);
+    }
+
+    .note strong {
+      display: block;
+      margin-bottom: 5px;
+    }
+
+    .note p { margin: 0; color: var(--muted); }
+    .note.warning { background: var(--canvas); }
+    .note.good { background: var(--current-soft); border-color: var(--current); }
+
+    .split {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .plain-panel {
+      padding: 20px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--paper);
+    }
+
+    .plain-panel p { margin: 0; color: var(--muted); font-size: 14px; }
+
+    .record-tree {
+      margin: 18px 0 0;
+      padding: 18px 20px;
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--code);
+      color: var(--ink);
+      font: 13px/1.7 Pretendard, "Malgun Gothic", "맑은 고딕", sans-serif;
+      white-space: pre;
+    }
+
+    .check-list {
+      margin: 0;
+      padding-left: 21px;
+    }
+
+    .check-list li { margin: 7px 0; }
+
+    .path {
+      overflow-wrap: anywhere;
+      color: var(--ink);
+      font-size: 12px;
+    }
+
+    .cause-grid {
+      display: grid;
+      grid-template-columns: 0.9fr 1.15fr 1.15fr;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      background: var(--paper);
+    }
+
+    .cause-grid > div {
+      padding: 16px;
+      border-right: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .cause-grid > div:nth-child(3n) { border-right: 0; }
+    .cause-grid > div:nth-last-child(-n + 3) { border-bottom: 0; }
+    .cause-grid .head { background: #fafafa; font-size: 13px; font-weight: 700; }
+    .cause-grid .body { color: var(--muted); font-size: 14px; }
+
+    .source-list {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      border-top: 1px solid var(--border);
+    }
+
+    .source-list li {
+      display: grid;
+      grid-template-columns: 240px minmax(0, 1fr);
+      gap: 16px;
+      padding: 13px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 14px;
+    }
+
+    .source-list span { color: var(--muted); }
+
+    footer {
+      margin-top: 66px;
+      padding-top: 20px;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 900px) {
+      .layout { grid-template-columns: 1fr; gap: 0; }
+      .toc { display: none; }
+      main { padding-top: 38px; }
+      .summary-strip { grid-template-columns: 1fr; }
+      .summary-item { border-right: 0; border-bottom: 1px solid var(--border); }
+      .summary-item:last-child { border-bottom: 0; }
+      .flow { grid-template-columns: 1fr; gap: 12px; }
+      .flow-arrow { width: 1px; height: 28px; margin: 0 auto; }
+      .flow-arrow::after { top: auto; right: -4px; bottom: 0; transform: rotate(135deg); }
+      .split { grid-template-columns: 1fr; }
+      .source-list li { grid-template-columns: 1fr; gap: 2px; }
+    }
+
+    @media (max-width: 620px) {
+      body { font-size: 15px; }
+      .topbar-inner,
+      .layout { width: min(calc(100% - 22px), var(--content)); }
+      .doc-status { display: none; }
+      h1 { font-size: 36px; }
+      h2 { font-size: 24px; }
+      section { padding-top: 46px; }
+      th,
+      td { padding: 12px; }
+      .cause-grid { grid-template-columns: 1fr; }
+      .cause-grid > div { border-right: 0; }
+      .cause-grid > div:nth-last-child(-n + 3) { border-bottom: 1px solid var(--border); }
+      .cause-grid > div:last-child { border-bottom: 0; }
+      .cause-grid .head:not(:first-child) { border-top: 8px solid var(--canvas); }
+    }
+
+    @media print {
+      :root { --canvas: #fff; }
+      body { font-size: 11pt; }
+      .topbar,
+      .toc { display: none; }
+      .layout { display: block; width: 100%; }
+      main { padding: 0; }
+      .hero { padding-top: 0; }
+      section { break-inside: avoid; padding-top: 32px; }
+      .table-wrap { overflow: visible; }
+      a { color: inherit; text-decoration: none; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <p class="product-name">국가법령정보 통합검색</p>
+      <span class="doc-status">내부 구조 문서 · 2026-09-09 기준</span>
+    </div>
+  </header>
+
+  <div class="layout">
+    <nav class="toc" aria-label="문서 목차">
+      <strong>이 문서에서</strong>
+      <a href="#overview">전체 흐름</a>
+      <a href="#screens">화면별 API</a>
+      <a href="#article">조항호목 원칙</a>
+      <a href="#shared">공유되는 것</a>
+      <a href="#storage">저장 위치</a>
+      <a href="#favorites">즐겨찾기 분리</a>
+      <a href="#font">글꼴 설정</a>
+      <a href="#causes">이번 오류의 원인</a>
+      <a href="#sources">코드 기준점</a>
+    </nav>
+
+    <main>
+      <header class="hero">
+        <h1>API와 저장 상태가 어디서 만나고 갈라지는지</h1>
+        <p class="lead">
+          화면에 한 줄로 보이는 검색 결과도 목록 조회, 본문 조회, 조문 조회가 서로 다르다.
+          이 문서는 각 화면이 어떤 법제처 API를 쓰는지와 저장·즐겨찾기·글꼴 중 무엇을
+          공유하는지 한 기준으로 정리한다.
+        </p>
+
+        <div class="summary-strip" aria-label="핵심 요약">
+          <div class="summary-item">
+            <b>목록은 한 입구</b>
+            <span><code>lawSearch.do</code>에서 <code>target</code>만 바꿔 검색한다.</span>
+          </div>
+          <div class="summary-item">
+            <b>본문은 목적별 분리</b>
+            <span>전문은 <code>eflaw</code>, 법령 조문은 <code>eflawjosub</code>를 쓴다.</span>
+          </div>
+          <div class="summary-item">
+            <b>즐겨찾기는 같은 파일, 다른 상태</b>
+            <span>법령 전체 별과 조항호목 별은 한 기록에 있지만 독립적으로 판정한다.</span>
+          </div>
+        </div>
+      </header>
+
+      <section id="overview">
+        <h2>전체 흐름</h2>
+        <p class="section-intro">
+          법제처 DRF의 URL은 크게 두 개다. 검색 결과를 찾는 단계와 실제 내용을 여는 단계가
+          분리돼 있고, 두 단계 모두 <code>target</code>이 자료 종류를 결정한다.
+        </p>
+
+        <div class="flow" aria-label="검색에서 저장까지의 흐름">
+          <div class="flow-node">
+            <b>검색 목록</b>
+            <p>법령명·본문·조문 키워드로 결과 행을 찾는다.</p>
+            <span class="endpoint">lawSearch.do</span>
+          </div>
+          <span class="flow-arrow" aria-hidden="true"></span>
+          <div class="flow-node current">
+            <b>내용 조회</b>
+            <p>일반 결과는 전문, AI추천·조문검색 법령 결과는 조문 전용 API를 호출한다.</p>
+            <span class="endpoint">lawService.do</span>
+          </div>
+          <span class="flow-arrow" aria-hidden="true"></span>
+          <div class="flow-node">
+            <b>로컬 상태</b>
+            <p>검색목록, 전문, 조문 원문, 즐겨찾기와 메모를 용도별로 저장한다.</p>
+            <span class="endpoint"># law 캐시</span>
+          </div>
+        </div>
+
+        <div class="note good">
+          <strong>중요한 구분</strong>
+          <p>통합검색은 별도 API가 아니라 일반 목록 API와 <code>aiRltLs</code>, <code>aiSearch</code> 결과를 합쳐 보여 주는 화면이다.</p>
+        </div>
+      </section>
+
+      <section id="screens">
+        <h2>화면별 API</h2>
+        <p class="section-intro">
+          같은 법령명이 보여도 결과 행의 출처에 따라 열 때 사용하는 API가 달라진다.
+          아래 표의 “내용 조회”가 실제 더블클릭 또는 본문 열기 시점의 호출이다.
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">화면·결과</th>
+                <th scope="col">목록 target</th>
+                <th scope="col">내용 조회 target</th>
+                <th scope="col">현재 동작</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>통합검색 · 일반 법령</td>
+                <td><span class="target">law</span></td>
+                <td><span class="target">eflaw</span></td>
+                <td>법령 전문을 연다.</td>
+              </tr>
+              <tr>
+                <td>통합검색 · AI추천 법령 조문</td>
+                <td><span class="target">aiRltLs</span> <span class="target">aiSearch</span></td>
+                <td><span class="target article">eflawjosub</span></td>
+                <td>해당 조문만 연다. 저장 전문 fallback은 사용하지 않는다.</td>
+              </tr>
+              <tr>
+                <td>조문검색 · 법령 조문</td>
+                <td><span class="target">aiSearch</span></td>
+                <td><span class="target article">eflawjosub</span></td>
+                <td>조문 API로 받은 저장본만 재사용한다.</td>
+              </tr>
+              <tr>
+                <td>연관검색 · 법령 조문</td>
+                <td><span class="target">aiRltLs</span></td>
+                <td><span class="target article">eflawjosub</span></td>
+                <td>선택한 법령 조문을 추가 조회한다.</td>
+              </tr>
+              <tr>
+                <td>일반 행정규칙</td>
+                <td><span class="target">admrul</span></td>
+                <td><span class="target">admrul</span></td>
+                <td>행정규칙 전문을 연다.</td>
+              </tr>
+              <tr>
+                <td>AI추천·조문검색 · 행정규칙 조문</td>
+                <td><span class="target">aiRltLs</span> <span class="target">aiSearch</span></td>
+                <td><span class="target">admrul</span></td>
+                <td><span class="badge exception">예외</span> 전문을 받은 뒤 해당 조문을 추출한다.</td>
+              </tr>
+              <tr>
+                <td>자치법규</td>
+                <td><span class="target">ordin</span></td>
+                <td><span class="target">ordin</span></td>
+                <td><code>MST</code> 식별자로 자치법규 전문을 연다.</td>
+              </tr>
+              <tr>
+                <td>별표·서식</td>
+                <td><span class="target">licbyl</span> <span class="target">admbyl</span> <span class="target">ordinbyl</span></td>
+                <td>첨부파일 경로</td>
+                <td>PDF·HWP 등 원문 파일을 내려받거나 미리 본다.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="note warning">
+          <strong>행정규칙 조문은 별도 취급</strong>
+          <p>현재 법령 조문용 <code>eflawjosub</code>를 행정규칙에 사용할 수 없다. 따라서 행정규칙 조문 결과만 <code>admrul</code> 전문에서 해당 조문을 찾는다.</p>
+        </div>
+      </section>
+
+      <section id="article">
+        <h2>조항호목 원칙</h2>
+        <p class="section-intro">
+          법령 조문 결과의 단일 기준은 <code>eflawjosub</code>다. 검색목록에 포함된 짧은 본문이나
+          저장된 법령 전문에서 잘라 만든 내용은 조문검색 결과로 인정하지 않는다.
+        </p>
+
+        <div class="split">
+          <article class="plain-panel">
+            <h3>API 요청</h3>
+            <p>
+              <code>target=eflawjosub</code>, <code>ID=법령ID</code>, <code>JO=조번호</code>로
+              해당 조 전체를 받는다. 항·호·목 즐겨찾기는 이 조문 API 응답 안에서 필요한
+              단위만 추출한다.
+            </p>
+          </article>
+          <article class="plain-panel">
+            <h3>저장본 재사용 조건</h3>
+            <p>
+              조문검색 화면 스냅샷에는 <code>article_api_source=josub</code>를 기록한다.
+              이 표식이 없는 구버전 저장본은 무시하고 API에서 다시 받는다.
+            </p>
+          </article>
+        </div>
+
+        <div class="note good">
+          <strong>현재 보장</strong>
+          <p>통합검색 AI추천 법령 조문은 조문 API가 실패해도 저장 전문을 대신 잘라 보여 주지 않는다.</p>
+        </div>
+      </section>
+
+      <section id="shared">
+        <h2>무엇이 공유되는가</h2>
+        <p class="section-intro">
+          “같은 파일을 쓴다”와 “같은 상태로 취급한다”는 다르다. 저장 객체는 공유하되
+          법령 전체와 조항호목의 판정은 분리하는 것이 현재 원칙이다.
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">항목</th>
+                <th scope="col">공유 여부</th>
+                <th scope="col">공유 범위와 기준</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>API 인증키 <code>OC</code></td>
+                <td><span class="badge shared">공유</span></td>
+                <td>모든 법제처 API 요청이 같은 인증값을 사용한다.</td>
+              </tr>
+              <tr>
+                <td><code>LawDocumentCache</code></td>
+                <td><span class="badge shared">공유</span></td>
+                <td>통합검색, 조문검색, 연관검색, 열람내역, 즐겨찾기, AI 검토가 같은 객체를 사용한다.</td>
+              </tr>
+              <tr>
+                <td>최근 검색어</td>
+                <td><span class="badge shared">공유</span></td>
+                <td>검색 화면들이 같은 <code>RecentSearchManager</code>를 사용한다.</td>
+              </tr>
+              <tr>
+                <td>현재 즐겨찾기 프로젝트</td>
+                <td><span class="badge shared">공유</span></td>
+                <td>어느 화면에서 별을 눌러도 현재 프로젝트 기준으로 판정한다.</td>
+              </tr>
+              <tr>
+                <td>법령 전체 별 / 조문 별</td>
+                <td><span class="badge separate">상태 분리</span></td>
+                <td>같은 법령 JSON을 쓰지만 프로젝트 소속과 별 표시를 별도로 관리한다.</td>
+              </tr>
+              <tr>
+                <td>검색목록 캐시</td>
+                <td><span class="badge separate">키 분리</span></td>
+                <td>같은 폴더를 쓰지만 서비스·검색어·검색범위별 키가 다르다.</td>
+              </tr>
+              <tr>
+                <td>조문 참조·3단비교</td>
+                <td><span class="badge shared">기능 공유</span></td>
+                <td>조문검색 화면이 법령검색 화면의 참조 팝업과 3단비교 기능을 호출한다.</td>
+              </tr>
+              <tr>
+                <td>본문 글꼴</td>
+                <td><span class="badge separate">설정값 분리</span></td>
+                <td>설정 파일과 기본 규칙은 공유하지만 화면별 설정 키는 다르다.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="storage">
+        <h2>저장 위치와 의미</h2>
+        <p class="section-intro">
+          캐시 루트는 사용자 로컬 앱 데이터의 <code>국가법령정보 통합검색/# law 캐시</code>다.
+          폴더 이름이 비슷해도 저장 체크가 참조하는 대상은 결과 종류마다 다르다.
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">하위 폴더</th>
+                <th scope="col">담기는 내용</th>
+                <th scope="col">주의할 점</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><span class="path">검색목록</span></td>
+                <td>API 검색 결과 목록</td>
+                <td>서비스·검색어·검색범위별로 구분한다.</td>
+              </tr>
+              <tr>
+                <td><span class="path">저장내역</span></td>
+                <td>법령 전문, 상세 화면, 메모, 색상 서식, 즐겨찾기 소속</td>
+                <td>API로 복원할 수 없는 메모와 즐겨찾기도 있으므로 단순 임시 폴더가 아니다.</td>
+              </tr>
+              <tr>
+                <td><span class="path">조문</span></td>
+                <td><code>eflawjosub</code> 응답 원문</td>
+                <td>통합검색 AI추천 조문의 저장 체크가 직접 확인하는 대상이다.</td>
+              </tr>
+              <tr>
+                <td><span class="path">별표파일</span></td>
+                <td>PDF·HWP 등 첨부 원본</td>
+                <td>용량 제한을 두고 오래된 파일부터 정리하는 순수 캐시다.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="note">
+          <strong>저장 체크의 뜻</strong>
+          <p>일반 법령 행은 전문 저장 여부를, AI추천 법령 조문 행은 그 조항호목 원문 또는 조문 화면 저장 여부를 뜻한다. 즐겨찾기 여부와는 별개다.</p>
+        </div>
+      </section>
+
+      <section id="favorites">
+        <h2>즐겨찾기: 같은 기록 안에서 독립</h2>
+        <p class="section-intro">
+          조문 즐겨찾기는 법령 소속과 본문을 잃지 않도록 부모 법령의 저장 JSON 안에 둔다.
+          물리적 저장 파일은 공유하지만 전체 법령 별과 조문 별을 같은 값으로 계산하지 않는다.
+        </p>
+
+        <pre class="record-tree" aria-label="즐겨찾기 저장 구조 예시">건축법 저장 기록
+├─ favorite_projects                 ← 건축법 전체 즐겨찾기 프로젝트
+└─ favorite_articles
+   └─ 제1조(목적)
+      ├─ jo / hang / ho / mok        ← 조항호목 위치
+      └─ favorite_projects           ← 제1조만의 즐겨찾기 프로젝트</pre>
+
+        <div class="split" style="margin-top: 16px">
+          <article class="plain-panel">
+            <h3>건축법 전체만 즐겨찾기</h3>
+            <p>법령 카드만 나타난다. 제1조 별은 켜지지 않는다.</p>
+          </article>
+          <article class="plain-panel">
+            <h3>제1조(목적)만 즐겨찾기</h3>
+            <p>조항호목 카드만 나타난다. 건축법 전체 별은 켜지지 않는다.</p>
+          </article>
+        </div>
+
+        <ul class="check-list" style="margin-top: 18px">
+          <li>건축법 전체 별을 해제해도 제1조 별은 유지한다.</li>
+          <li>제1조 별을 해제해도 건축법 전체 별은 유지한다.</li>
+          <li>같은 법령 ID라도 대기 중인 별 표시는 조·항·호·목까지 같을 때만 공유한다.</li>
+        </ul>
+      </section>
+
+      <section id="font">
+        <h2>글꼴 설정의 공유 범위</h2>
+        <p class="section-intro">
+          모든 값은 같은 QSettings 파일에 들어가지만 화면마다 키가 다르다. 기본 글꼴과
+          구버전 마이그레이션 함수만 공통으로 사용한다.
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">화면</th>
+                <th scope="col">글꼴 설정 키</th>
+                <th scope="col">관계</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>일반 법령·통합검색 본문</td>
+                <td><code>resource_detail_font_family</code></td>
+                <td>통합검색 안의 일반 본문과 조문 본문이 함께 사용</td>
+              </tr>
+              <tr>
+                <td>조문검색</td>
+                <td><code>ai_search_detail_font_family</code></td>
+                <td>일반 법령 본문과 값 분리</td>
+              </tr>
+              <tr>
+                <td>연관검색</td>
+                <td><code>ai_related_detail_font_family</code></td>
+                <td>조문검색과 값 분리</td>
+              </tr>
+              <tr>
+                <td>판례·법령해석·질의회신</td>
+                <td><code>{service}_detail_font_family</code></td>
+                <td>서비스별 값 분리</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="note good">
+          <strong>현재 기본값</strong>
+          <p>본문은 굴림 9.5pt다. 과거 휠 동작으로 자동 저장된 Arial은 기본값 버전 5 마이그레이션에서 각 화면이 처음 열릴 때 굴림으로 한 번 복구한다.</p>
+        </div>
+      </section>
+
+      <section id="causes">
+        <h2>이번에 보인 세 문제의 연결 관계</h2>
+        <p class="section-intro">
+          세 현상은 API 자체보다 “공유 저장소의 판정 기준”이 서로 섞인 데서 발생했다.
+        </p>
+
+        <div class="cause-grid" role="table" aria-label="오류 원인과 현재 기준">
+          <div class="head" role="columnheader">현상</div>
+          <div class="head" role="columnheader">기존 원인</div>
+          <div class="head" role="columnheader">현재 기준</div>
+
+          <div class="body" role="cell">건축법 별과 제1조 별이 같이 켜짐</div>
+          <div class="body" role="cell">조문 카드를 운반하는 부모 기록을 법령 전체 즐겨찾기로도 판단</div>
+          <div class="body" role="cell"><code>favorite_projects</code>와 <code>favorite_articles</code>를 독립 판정</div>
+
+          <div class="body" role="cell">제1조 저장 체크가 꺼져 있음</div>
+          <div class="body" role="cell">화면은 <code>저장내역</code>만 보고 실제 원문은 <code>조문</code>에 저장</div>
+          <div class="body" role="cell">조문 행은 조항호목 캐시와 조문 화면 저장본을 확인</div>
+
+          <div class="body" role="cell">조문검색이 전문에서 잘라 옴</div>
+          <div class="body" role="cell">목록 조문내용과 구버전 화면 저장본을 그대로 재사용</div>
+          <div class="body" role="cell"><code>article_api_source=josub</code>가 없으면 API 재조회</div>
+
+          <div class="body" role="cell">기본값은 굴림인데 Arial로 시작</div>
+          <div class="body" role="cell">Arial이 저장된 뒤 마이그레이션 버전이 이미 최신으로 기록됨</div>
+          <div class="body" role="cell">기본값 버전을 5로 올려 자동 저장된 Arial을 한 번 더 복구</div>
+        </div>
+      </section>
+
+      <section id="sources">
+        <h2>코드 기준점</h2>
+        <p class="section-intro">동작을 바꿀 때 먼저 확인해야 하는 파일과 책임이다.</p>
+
+        <ul class="source-list">
+          <li>
+            <a href="../molit_cgm_expc_api.py">molit_cgm_expc_api.py</a>
+            <span>법제처 URL, 목록·전문·조항호목 API 함수</span>
+          </li>
+          <li>
+            <a href="../models/law.py">models/law.py</a>
+            <span>화면 카테고리와 API target 매핑</span>
+          </li>
+          <li>
+            <a href="../workers/search_worker.py">workers/search_worker.py</a>
+            <span>화면 요청을 실제 API 호출로 연결하는 분기</span>
+          </li>
+          <li>
+            <a href="../ui/tabs/resource_search.py">ui/tabs/resource_search.py</a>
+            <span>통합검색, 조문 캐시, 저장 체크, 즐겨찾기 진입점</span>
+          </li>
+          <li>
+            <a href="../ui/tabs/ai_search.py">ui/tabs/ai_search.py</a>
+            <span>조문검색·연관검색 목록과 조문 API 저장본 검증</span>
+          </li>
+          <li>
+            <a href="../storage/cache.py">storage/cache.py</a>
+            <span>전문·화면 저장과 법령/조문 즐겨찾기 프로젝트 소속</span>
+          </li>
+          <li>
+            <a href="../storage/paths.py">storage/paths.py</a>
+            <span>검색목록·저장내역·조문·별표파일 저장 위치</span>
+          </li>
+          <li>
+            <a href="../ui/widgets.py">ui/widgets.py</a>
+            <span>본문 글꼴 기본값 마이그레이션</span>
+          </li>
+        </ul>
+      </section>
+
+      <footer>
+        이 문서는 현재 소스 코드의 동작을 기준으로 작성했다. 법제처 API target이나 저장 구조를
+        변경할 때는 화면별 호출 경로와 저장 체크·즐겨찾기 판정을 함께 갱신해야 한다.
+      </footer>
+    </main>
+  </div>
+</body>
+</html>
