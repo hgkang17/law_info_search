@@ -1154,13 +1154,12 @@ class LawSearchWindow(QMainWindow):
         self.open_document_tab_strip.setVisible(bool(documents))
         self.close_all_documents_button.setVisible(bool(documents))
         if documents:
-            # 탭 줄 높이에 맞춰 나란히 선다. 탭에는 위ㆍ아래 1px margin이
-            # 있어 tabRect 전체 높이를 그대로 쓰면 단추의 칠해진 면만 2px
-            # 더 크다. 그 여백을 뺀 실제 탭 면 높이에 맞춘다.
+            # 탭 줄 높이에 맞춰 나란히 선다. 탭 스타일에는 위ㆍ아래 margin이
+            # 없어서 칠해지는 면이 곧 tabRect다. 예전에는 여백이 있다고 보고
+            # 2px을 뺐는데, 그만큼 단추가 탭보다 짧아져 띠 가운데로 밀리면서
+            # 윗선이 탭보다 한 픽셀 위에 있는 것처럼 보였다.
             tab_height = self.open_document_tabs.tabRect(0).height()
-            self.close_all_documents_button.setFixedHeight(
-                max(24, tab_height - 2)
-            )
+            self.close_all_documents_button.setFixedHeight(max(24, tab_height))
         self.open_documents_empty.setVisible(not documents)
         if documents:
             self.open_document_tab_strip.refresh()
@@ -3505,6 +3504,26 @@ class LawSearchWindow(QMainWindow):
                 max-height: 28px;
                 padding: 0 22px 0 7px;
                 font-size: 8.5pt;
+            }
+            /* 글꼴 칸 왼쪽의 기본값 되돌리기. 옆 칸들과 같은 높이ㆍ테두리로
+               서되, 조작 단추가 아니라 보조 단추라 글자를 옅게 둔다. */
+            QPushButton#detailFontResetButton {
+                min-height: 28px;
+                max-height: 28px;
+                background: #ffffff;
+                color: #5b6b7d;
+                border: 1px solid #cfd8e3;
+                border-radius: 5px;
+                padding: 0;
+                font-size: 8.5pt;
+            }
+            QPushButton#detailFontResetButton:hover {
+                background: #eef4fa;
+                border-color: #8fb4d3;
+                color: #1768aa;
+            }
+            QPushButton#detailFontResetButton:pressed {
+                background: #dcecf9;
             }
             QToolButton#colorPaletteToolButton {
                 min-width: 37px;

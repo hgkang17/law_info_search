@@ -56,9 +56,8 @@ def test_article_favorite_is_kept_inside_the_law_record(tmp_path) -> None:
             "label": "국토계획법 제25조",
         }
     ]
-    # 조문을 걸면 그 법령도 즐겨찾기로 올라간다. 법령이 목록에 없으면
-    # 그 밑에 달린 조문도 찾아갈 길이 없다.
-    assert cache.is_favorite(ROW)
+    # 조문 별과 법령 전체 별은 서로 독립이다.
+    assert not cache.is_favorite(ROW)
 
 
 def test_article_remains_visible_if_parent_law_membership_is_missing(
@@ -69,7 +68,7 @@ def test_article_remains_visible_if_parent_law_membership_is_missing(
     assert cache.set_article_favorite(
         ROW, "000700", "제7조(실천계획의 내용 등)", True
     )
-    # 법령 자체 별만 따로 꺼진 예전ㆍ불일치 저장 상태를 재현한다.
+    # 법령 자체 별이 꺼져 있어도 조문 카드는 따로 보여야 한다.
     assert cache.set_favorite(ROW, False)
     assert cache.is_article_favorite(ROW, "000700")
 
@@ -93,6 +92,12 @@ def test_article_remains_visible_if_parent_law_membership_is_missing(
     tab.show()
     app.processEvents()
     try:
+        law_tree = tab.favorite_trees["law"]
+        assert not any(
+            law_tree.topLevelItem(index).data(0, tab.FAVORITE_KIND_ROLE)
+            == "record"
+            for index in range(law_tree.topLevelItemCount())
+        )
         article_tree = tab.favorite_trees["article"]
         assert article_tree.topLevelItemCount() == 1
         assert "제7조(실천계획의 내용 등)" in article_tree.topLevelItem(0).text(0)
@@ -156,6 +161,7 @@ def test_article_favorite_can_be_removed_without_touching_the_law(
     tmp_path,
 ) -> None:
     cache = _cache(tmp_path)
+    cache.set_favorite(ROW, True)
     cache.set_article_favorite(ROW, "25", "제25조", True)
     cache.set_article_favorite(ROW, "30", "제30조", True)
 
@@ -163,6 +169,18 @@ def test_article_favorite_can_be_removed_without_touching_the_law(
 
     assert [entry["jo"] for entry in cache.article_favorites(ROW)] == ["30"]
     assert cache.is_favorite(ROW)
+
+
+def test_law_favorite_can_be_removed_while_article_remains(tmp_path) -> None:
+    cache = _cache(tmp_path)
+    assert cache.set_favorite(ROW, True)
+    assert cache.set_article_favorite(ROW, "25", "제25조", True)
+
+    assert cache.set_favorite(ROW, False)
+
+    assert not cache.is_favorite(ROW)
+    assert cache.is_article_favorite(ROW, "25")
+    assert len(cache.favorite_entries()) == 1
 
 
 def test_repeated_article_favorite_checks_read_the_file_once(
@@ -515,8 +533,7 @@ def test_dragging_from_the_common_list_copies_instead_of_moving(
 
     cache.set_active_favorite_project("project-b")
     assert cache.is_article_favorite(ROW, "25")
-    # 조문이 보이려면 그 법령도 같은 프로젝트에 있어야 한다.
-    assert cache.is_favorite(ROW)
+    assert not cache.is_favorite(ROW)
 
     cache.set_active_favorite_project("default")
     assert cache.is_article_favorite(ROW, "25"), "원래 프로젝트에서 사라졌다"

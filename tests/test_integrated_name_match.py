@@ -7,6 +7,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from ui.tabs.resource_search import (
     ResourceSearchTab,
     search_name_key,
+    search_name_family_rank,
     search_name_query_coverage,
     search_name_similarity,
 )
@@ -141,3 +142,63 @@ def test_exact_annex_name_gets_a_tier_ahead_of_ai_recommendation() -> None:
     rows = [ai, annex]
     rows.sort(key=key)
     assert rows[0] is annex
+
+
+def test_query_coverage_ignores_a_name_that_merely_cites_the_law() -> None:
+    """짧은 법령명이 긴 별표명 안에 들어 있기만 한 것은 이름 일치가 아니다.
+
+    ``농지법``으로 찾을 때 그 법을 인용하는 행정규칙 별표
+    (``「농지법」 제23조제1항9호 및 …``)까지 최상단 묶음으로 올라왔다.
+    """
+    assert (
+        search_name_query_coverage(
+            "농지법",
+            "「농지법」 제23조제1항9호 및 같은 법 시행령 제24조제3항에 따라 "
+            "임대차가 가능해지는 농지",
+        )
+        == 0.0
+    )
+    # 이름 앞부분만 적어 찾는 원래 쓰임새는 그대로 둔다.
+    assert (
+        search_name_query_coverage(
+            "용도별 건축물", "용도별 건축물의 종류(제3조의5 관련)"
+        )
+        == 1.0
+    )
+
+
+def test_law_family_is_promoted_as_one_set() -> None:
+    """법령명을 찾으면 그 법ㆍ시행령ㆍ시행규칙이 한 묶음으로 맨 위에 선다."""
+    assert search_name_family_rank("농지법", "농지법") == 0
+    assert search_name_family_rank("농지법", "농지법 시행령") == 1
+    assert search_name_family_rank("농지법", "농지법 시행규칙") == 2
+    # 상위법 이름을 품기만 한 다른 자료는 묶음에 들지 않는다.
+    assert (
+        search_name_family_rank(
+            "농지법", "「농지법」 제23조제1항9호 및 같은 법 시행령 제24조제3항"
+        )
+        is None
+    )
+    assert search_name_family_rank("농지법", "농지법 시행령 시행규칙") is None
+
+
+def test_law_family_sorts_before_ai_recommendations() -> None:
+    rows = [
+        {"target": "law", "name": "농지법", "ai_recommended": True},
+        {"target": "law", "name": "농지법 시행규칙"},
+        {"target": "law", "name": "농지법"},
+        {"target": "law", "name": "농지법 시행령"},
+    ]
+
+    def key(row):
+        rank = search_name_family_rank("농지법", row["name"])
+        is_family = rank is not None and not row.get("ai_recommended")
+        return (0 if is_family else 1, rank if is_family else 0)
+
+    rows.sort(key=key)
+    assert [row["name"] for row in rows[:3]] == [
+        "농지법",
+        "농지법 시행령",
+        "농지법 시행규칙",
+    ]
+    assert rows[3].get("ai_recommended")

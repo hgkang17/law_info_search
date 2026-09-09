@@ -118,3 +118,29 @@ def test_settle_wrap_now_restores_widget_width_before_new_content() -> None:
     assert browser.lineWrapMode() == QTextEdit.LineWrapMode.WidgetWidth
     assert browser._resize_anchor_position == -1
     browser.deleteLater()
+
+
+def test_vertical_scroll_bar_keeps_its_place_from_the_start() -> None:
+    """내용이 늘어 스크롤바가 생겨도 본문 폭이 흔들리지 않는다.
+
+    별표를 펼쳐 미리보기가 붙는 순간 세로 스크롤바가 새로 나타나면 그만큼
+    본문 폭이 줄고 줄바꿈이 다시 계산돼 화면이 한 번 출렁였다.
+    """
+    app = QApplication.instance() or QApplication([])
+    browser = DeferredWrapTextBrowser()
+    browser.resize(700, 300)
+    browser.show()
+    browser.setPlainText("짧은 본문")
+    app.processEvents()
+
+    assert (
+        browser.verticalScrollBarPolicy()
+        == Qt.ScrollBarPolicy.ScrollBarAlwaysOn
+    )
+    narrow_width = browser.viewport().width()
+
+    browser.setPlainText("긴 본문 " * 2000)
+    app.processEvents()
+
+    assert browser.viewport().width() == narrow_width
+    browser.close()

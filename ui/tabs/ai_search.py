@@ -31,7 +31,9 @@ from ui.widgets import (
     ResultOverlayLabel,
     SearchHighlightDelegate,
     StableHorizontalTableWidget,
+    apply_body_font_family,
     build_detail_header_controls,
+    select_detail_font_in_combo,
     load_detail_font_preferences,
     build_restore_view_button,
     build_search_result_head,
@@ -65,7 +67,7 @@ from workers.search_worker import (
     ApiWorker,
     RelatedArticleWorker,
 )
-from utils.constants import DETAIL_FONT_FAMILY
+from utils.constants import DEFAULT_DETAIL_FONT_POINT, DETAIL_FONT_FAMILY
 from utils.formatting import (
     body_to_html,
     detail_document_header,
@@ -348,6 +350,8 @@ class AiLawSearchTab(QWidget):
         detail_title.doubleClicked.connect(self._toggle_reading_mode)
         self.detail_font_combo = detail_controls.font_combo
         self.detail_font_spin = detail_controls.font_spin
+        self.detail_font_reset = detail_controls.font_reset
+        self.detail_font_reset.clicked.connect(self._reset_detail_font)
         self.detail_font_combo.currentFontChanged.connect(
             self._set_detail_font_family
         )
@@ -390,6 +394,7 @@ class AiLawSearchTab(QWidget):
         detail_head.addWidget(self.restore_view_button)
         detail_head.addWidget(detail_title)
         detail_head.addSpacing(8)
+        detail_head.addWidget(self.detail_font_reset)
         detail_head.addWidget(self.detail_font_combo)
         detail_head.addWidget(self.detail_font_spin)
         detail_head.addSpacing(8)
@@ -782,6 +787,18 @@ class AiLawSearchTab(QWidget):
             settings.setValue(f"{self.service}_detail_font_size", size)
             settings.sync()
 
+    def _reset_detail_font(self) -> None:
+        """본문 글꼴ㆍ크기를 기본값으로 되돌린다.
+
+        다른 글꼴을 써 보다가 처음 설정으로 돌아오려면 목록에서 굴림을
+        다시 찾아 고르고 크기도 손으로 맞춰야 했다.
+        """
+        select_detail_font_in_combo(self.detail_font_combo, DETAIL_FONT_FAMILY)
+        self.detail_font_spin.setValue(DEFAULT_DETAIL_FONT_POINT)
+        # 굴림이 설치되지 않아 칸이 대체 글꼴로 앉았더라도 본문과 설정은
+        # 기본 글꼴 이름으로 되돌린다.
+        self._set_detail_font_family(QFont(DETAIL_FONT_FAMILY))
+
     def _set_detail_font_family(self, font: QFont) -> None:
         family = str(font.family() or DETAIL_FONT_FAMILY)
         if family == self.detail_font_family:
@@ -790,11 +807,7 @@ class AiLawSearchTab(QWidget):
         selected = make_detail_font(self.detail_font_size, family)
         self.detail_view.setFont(selected)
         self.detail_view.document().setDefaultFont(selected)
-        cursor = QTextCursor(self.detail_view.document())
-        cursor.select(QTextCursor.SelectionType.Document)
-        character_format = QTextCharFormat()
-        character_format.setFontFamilies([family])
-        cursor.mergeCharFormat(character_format)
+        apply_body_font_family(self.detail_view.document(), family)
         settings = self.recent_search_manager.settings
         settings.setValue(f"{self.service}_detail_font_family", family)
         settings.sync()
@@ -1946,6 +1959,7 @@ class AiLawSearchTab(QWidget):
         cached = "" if force_api else self._related_article_cache.get(cache_key, "")
         if cached:
             row["content"] = cached
+            row["article_api_loaded"] = "1"
             self._show_selected_result()
             self.status_label.setText(
                 f"{row.get('name', '')} {row.get('provision', '')} 저장된 조문 표시"
@@ -2070,6 +2084,9 @@ class AiLawSearchTab(QWidget):
         if not content:
             raise ValueError("조회한 조문에 표시할 내용이 없습니다.")
         row["content"] = content
+        # 법령 조문은 검색목록의 조문내용이나 저장 전문에서 자른 값이
+        # 아니라 조항호목 API 응답으로 채웠다는 표식이다.
+        row["article_api_loaded"] = "1"
         row["article_loading"] = ""
         row["article_error"] = ""
         self._related_article_cache[
@@ -2115,10 +2132,30 @@ class AiLawSearchTab(QWidget):
             self._update_three_stage_button(None)
             return
         row = self.result_rows[row_index]
-        self._update_three_stage_button(row)
+        is_admin_kind = str(row.get("kind") or "").startswith("행정규칙")
+        is_law_article = bool(
+            not is_admin_kind
+            and str(row.get("source_id") or "").strip()
+            and str(row.get("jo_code") or "").strip()
+        )
+        article_api_loaded = bool(row.get("article_api_loaded"))
+        self._update_three_stage_button(
+            row if not is_law_article or article_api_loaded else None
+        )
         if not force_live:
             snapshot = self.law_cache.load_snapshot(row)
-            if snapshot is not None:
+            # 구버전 조문검색 저장본은 검색목록의 조문내용이나 법령 전문을
+            # 잘라 만든 것일 수 있다. 조항호목 API로 만들었다는 표식이 있는
+            # 저장본만 재사용한다.
+            snapshot_is_article_api = bool(
+                isinstance(snapshot, dict)
+                and snapshot.get("article_api_source") == "josub"
+            )
+            if snapshot is not None and (
+                not is_law_article or snapshot_is_article_api
+            ):
+                if is_law_article:
+                    row["article_api_loaded"] = "1"
                 self._active_detail_row = dict(row)
                 self._replace_detail_content(
                     html=str(snapshot.get("html") or ""), source_font_size=10
@@ -2139,7 +2176,6 @@ class AiLawSearchTab(QWidget):
                 return
         # 법령 본문 화면과 같은 머리 모양으로 맞춘다. 시행일ㆍ공포번호는
         # 제목 아래 한 줄에 모으고, 기본정보에는 ID와 소관만 남긴다.
-        is_admin_kind = str(row.get("kind") or "").startswith("행정규칙")
         metadata = [
             (
                 "행정규칙ID" if is_admin_kind else "법령ID",
@@ -2166,12 +2202,17 @@ class AiLawSearchTab(QWidget):
             short_name=short_name,
             subtitle=self._article_headline(row),
         )
-        if row["content"]:
+        display_content = (
+            row["content"]
+            if not is_law_article or article_api_loaded
+            else ""
+        )
+        if display_content:
             # 법령검색 탭과 같은 규칙으로 링크를 건다. 행정규칙은 조문 번호
             # 체계가 달라 자기 참조 링크를 만들지 않는다.
             is_admin_rule = str(row.get("kind") or "").startswith("행정규칙")
             content_html = body_to_html(
-                row["content"],
+                display_content,
                 self.highlight_terms,
                 current_law_name="" if is_admin_rule else row["name"],
                 current_law_id=(
@@ -2194,14 +2235,21 @@ class AiLawSearchTab(QWidget):
                     "",
                     "[조문내용]",
                     (
-                        admin_rule_plain_text(row["content"])
+                        admin_rule_plain_text(display_content)
                         if is_admin_rule
-                        else row["content"]
+                        else display_content
                     ),
                 )
             )
         else:
-            if self.is_related:
+            if is_law_article:
+                error = row.get("article_error", "")
+                note = (
+                    f"조항호목 API에서 불러오지 못했습니다: {error}"
+                    if error
+                    else "조항호목 API에서 조문을 불러오는 중입니다."
+                )
+            elif self.is_related:
                 error = row.get("article_error", "")
                 note = (
                     f"해당 조문을 불러오지 못했습니다: {error}"
@@ -2214,24 +2262,29 @@ class AiLawSearchTab(QWidget):
             html_parts.append(f'<div class="content">{escape(note)}</div>')
             plain_parts.extend(("", "[안내]", note))
         rendered_html = "".join(html_parts)
-        self._active_detail_row = dict(row) if row["content"] else None
+        self._active_detail_row = dict(row) if display_content else None
         self._replace_detail_content(html=rendered_html, source_font_size=10)
         self._update_three_stage_button(self._active_detail_row)
         self._set_visible_memos([])
         self.current_detail_text = "\n".join(plain_parts)
         self.copy_button.setEnabled(True)
-        if row["content"]:
+        if display_content:
             self.law_cache.save_snapshot(
                 row,
                 # 자동 검색 음영은 검색어마다 달라지므로 저장하지 않는다.
                 # 다시 열 때 현재 검색어만 정확히 적용한다.
                 html=strip_search_highlight_html(rendered_html),
                 plain_text=self.current_detail_text,
+                extra=(
+                    {"article_api_source": "josub"}
+                    if is_law_article
+                    else None
+                ),
             )
             self._finalize_pending_favorite(row)
         if (
-            self.is_related
-            and not row["content"]
+            (is_law_article or self.is_related)
+            and not display_content
             and not row.get("article_loading")
             and not row.get("article_error")
         ):

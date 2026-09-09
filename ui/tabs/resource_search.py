@@ -49,7 +49,9 @@ from ui.widgets import (
     StableHorizontalTableWidget,
     TabStripScrollArea,
     batch_table_updates,
+    apply_body_font_family,
     build_detail_header_controls,
+    select_detail_font_in_combo,
     load_detail_font_preferences,
     build_restore_view_button,
     build_search_result_head,
@@ -275,6 +277,9 @@ _SEARCH_NAME_PARENTHETICAL_PATTERN = re.compile(r"\([^()]*\)")
 _SEARCH_NAME_HEAD_LABEL_PATTERN = re.compile(r"^\s*\[[^\]]*\]\s*")
 _SEARCH_NAME_NOISE_PATTERN = re.compile(r"[\s·ㆍ・,、_\-()\[\]{}「」『』\"\']+")
 _SEARCH_APPROXIMATE_SHORT_NAME_RATIO = 0.7
+# 검색어가 자료명에서 차지해야 하는 최소 비중. 이만큼은 되어야 "이름을
+# 앞부분만 적어 찾은 것"으로 본다(아래 search_name_query_coverage 참조).
+_SEARCH_NAME_COVERAGE_MIN_SHARE = 0.5
 
 
 def search_name_key(value: str) -> str:
@@ -316,11 +321,46 @@ def search_name_similarity(
     return score
 
 
-def search_name_query_coverage(query: str, name: str) -> float:
-    """자료명에 포함된 검색어 글자의 비율. 별표명 부분 검색에만 사용."""
+# 검색어가 법령명일 때 한 묶음으로 함께 올릴 하위법령. 차례가 곧 순위다.
+_LAW_FAMILY_SUFFIXES = ("시행령", "시행규칙")
+
+
+def search_name_family_rank(query: str, name: str) -> int | None:
+    """이름을 그대로 찾았거나 그 법의 시행령ㆍ시행규칙이면 그 순위.
+
+    ``농지법``을 찾으면 ``농지법``ㆍ``농지법 시행령``ㆍ``농지법 시행규칙``
+    세 줄이 한 묶음으로 맨 위에 서야 한다. 이름 유사도만으로는 시행령ㆍ
+    시행규칙이 기준(0.8)에 못 미쳐 한참 아래로 밀렸다. 이름이 정확히
+    ``검색어 + 시행령/시행규칙``일 때만 걸리므로, 상위법 이름을 품기만 한
+    다른 자료(``「농지법」 제23조제1항9호 …`` 별표)는 올라오지 않는다.
+    """
     query_key = search_name_key(query)
     name_key = search_name_key(name)
     if not query_key or not name_key:
+        return None
+    if name_key == query_key:
+        return 0
+    for index, suffix in enumerate(_LAW_FAMILY_SUFFIXES, start=1):
+        if name_key == query_key + suffix:
+            return index
+    return None
+
+
+def search_name_query_coverage(query: str, name: str) -> float:
+    """자료명에 포함된 검색어 글자의 비율. 별표명 부분 검색에만 사용.
+
+    이름 앞부분만 적어 찾는 경우를 위한 것이다(``용도별 건축물`` →
+    ``용도별 건축물의 종류(제3조의5 관련)``). 검색어가 이름 어딘가에 들어
+    있기만 하면 1.0을 주면, ``농지법``처럼 짧은 법령명으로 찾을 때 그 법을
+    인용하는 긴 별표명(``「농지법」 제23조제1항9호 및 같은 법 시행령 …``)
+    까지 최상단 묶음으로 올라온다. 검색어가 이름의 절반은 차지해야 그
+    이름을 찾은 것으로 본다.
+    """
+    query_key = search_name_key(query)
+    name_key = search_name_key(name)
+    if not query_key or not name_key:
+        return 0.0
+    if len(query_key) < len(name_key) * _SEARCH_NAME_COVERAGE_MIN_SHARE:
         return 0.0
     if query_key in name_key:
         return 1.0
@@ -442,10 +482,10 @@ class ResourceSearchTab(QWidget):
         self._pending_cached_article_open: tuple[
             dict[str, object], dict[str, object]
         ] | None = None
-        # 즐겨찾기 조항호목 API 응답을 기다리는 (저장 전문, 단위).
-        # 실패하면 이 저장 전문에서 같은 단위를 잘라 여는 fallback이 된다.
+        # 즐겨찾기 조항호목 API 응답을 기다리는 (저장 전문, 단위,
+        # 전문 fallback 허용 여부). 검색 결과의 조문은 fallback을 막는다.
         self._pending_favorite_article_api: tuple[
-            dict[str, object], dict[str, object]
+            dict[str, object], dict[str, object], bool
         ] | None = None
         self._article_favorite_waiting_for_worker = False
         self._reference_popup_states: dict[str, dict[str, object]] = {}
@@ -479,12 +519,14 @@ class ResourceSearchTab(QWidget):
         self._sort_column = -1
         self._sort_ascending = True
         self._build_ui()
+        self._create_title_favorite_button()
         self._resource_category_states: dict[str, dict[str, object]] = {}
         self._active_resource_category = self.category_target
         install_text_color_shortcuts(self)
         self.law_cache.changed.connect(self._refresh_cache_checkmarks)
         # 즐겨찾기 탭에서 별을 풀어도 열려 있는 본문 탭의 별표가 따라간다.
         self.law_cache.changed.connect(self._refresh_document_tab_favorites)
+        self.law_cache.changed.connect(self._refresh_title_favorite)
         self.law_cache.changed.connect(self._refresh_reference_popup_favorites)
         self.law_cache.changed.connect(self._refresh_inline_article_favorites)
         self.reference_popup = LawReferencePopup(
@@ -981,6 +1023,8 @@ class ResourceSearchTab(QWidget):
         self.memo_button = palette_toolbar.memo_button
         self.detail_font_combo = detail_controls.font_combo
         self.detail_font_spin = detail_controls.font_spin
+        self.detail_font_reset = detail_controls.font_reset
+        self.detail_font_reset.clicked.connect(self._reset_detail_font)
         self.detail_font_combo.currentFontChanged.connect(
             self._set_detail_font_family
         )
@@ -1030,6 +1074,7 @@ class ResourceSearchTab(QWidget):
         detail_head.addWidget(self.toc_toggle_button)
         detail_head.addWidget(detail_title)
         detail_head.addSpacing(8)
+        detail_head.addWidget(self.detail_font_reset)
         detail_head.addWidget(self.detail_font_combo)
         detail_head.addWidget(self.detail_font_spin)
         detail_head.addSpacing(8)
@@ -1707,6 +1752,18 @@ class ResourceSearchTab(QWidget):
             settings.setValue("resource_detail_font_size", size)
             settings.sync()
 
+    def _reset_detail_font(self) -> None:
+        """본문 글꼴ㆍ크기를 기본값으로 되돌린다.
+
+        다른 글꼴을 써 보다가 처음 설정으로 돌아오려면 목록에서 굴림을
+        다시 찾아 고르고 크기도 손으로 맞춰야 했다.
+        """
+        select_detail_font_in_combo(self.detail_font_combo, DETAIL_FONT_FAMILY)
+        self.detail_font_spin.setValue(DEFAULT_DETAIL_FONT_POINT)
+        # 굴림이 설치되지 않아 칸이 대체 글꼴로 앉았더라도 본문과 설정은
+        # 기본 글꼴 이름으로 되돌린다.
+        self._set_detail_font_family(QFont(DETAIL_FONT_FAMILY))
+
     def _set_detail_font_family(self, font: QFont) -> None:
         family = str(font.family() or DETAIL_FONT_FAMILY)
         if family == self.detail_font_family:
@@ -1715,11 +1772,7 @@ class ResourceSearchTab(QWidget):
         selected = make_detail_font(self.detail_font_size, family)
         self.detail_view.setFont(selected)
         self.detail_view.document().setDefaultFont(selected)
-        cursor = QTextCursor(self.detail_view.document())
-        cursor.select(QTextCursor.SelectionType.Document)
-        character_format = QTextCharFormat()
-        character_format.setFontFamilies([family])
-        cursor.mergeCharFormat(character_format)
+        apply_body_font_family(self.detail_view.document(), family)
         self.recent_search_manager.settings.setValue(
             "resource_detail_font_family", family
         )
@@ -2190,6 +2243,8 @@ class ResourceSearchTab(QWidget):
                 self.detail_view.document().size()
             self.detail_view.setUpdatesEnabled(True)
             self.detail_view.viewport().update()
+            # 탭을 오갈 때도 제목 옆 별이 지금 문서의 상태를 따라간다.
+            self._refresh_title_favorite()
 
     def _apply_document_scroll(self, key: str, position: int) -> None:
         """되살린 본문을 보던 자리에 세운다.
@@ -2336,6 +2391,8 @@ class ResourceSearchTab(QWidget):
         self.document_tab_strip.ensure_visible(
             self.document_tabs.tabRect(index)
         )
+        # 활성 문서가 정해진 뒤라야 제목 옆 별이 어떤 행을 볼지 안다.
+        self._refresh_title_favorite()
 
     def _install_document_tab_favorite(self, index: int, key: str) -> None:
         """본문 탭 왼쪽에는 별표를 달고, ×는 탭 위에서만 겹쳐 그린다."""
@@ -2542,6 +2599,112 @@ class ResourceSearchTab(QWidget):
                 )
             return
         self._toggle_favorite_for_row(row)
+
+    def _create_title_favorite_button(self) -> None:
+        """별표ㆍ서식 본문 제목 왼쪽에 놓는 즐겨찾기 별을 만든다.
+
+        별표ㆍ서식은 열자마자 크게 보기로 넘어가 본문 탭 띠가 숨는다.
+        그래서 즐겨찾기로 들어와 본문을 보다가 별을 풀려면 크게 보기를
+        먼저 끝내야 했다. 본문 안에서 바로 풀 수 있게 제목 옆에 같은 별을
+        하나 더 둔다. 크기는 조문 별과 같아 제목 글자를 따라 커지지 않는다.
+        """
+        star = QPushButton(self.detail_view.viewport())
+        star.setObjectName("documentTitleFavorite")
+        star.setFixedSize(
+            self._ARTICLE_FAVORITE_SIZE, self._ARTICLE_FAVORITE_SIZE
+        )
+        # 본문 위에 얹은 단추라 초점까지 가져가면 방향키가 본문에 안 먹는다.
+        star.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        star.setCursor(Qt.CursorShape.PointingHandCursor)
+        star.clicked.connect(self._toggle_title_favorite)
+        star.hide()
+        self._title_favorite_button = star
+
+    def _title_favorite_row(self) -> dict[str, object] | None:
+        """제목 옆 별을 보일 본문의 행. 별표ㆍ서식일 때만 돌려준다."""
+        row = self._document_tab_row(self._active_document_key)
+        if not isinstance(row, dict):
+            return None
+        if str(row.get("target") or "") not in ANNEX_TARGETS:
+            return None
+        return row
+
+    def _refresh_title_favorite(self) -> None:
+        """제목 옆 별의 표시 여부와 색을 저장된 즐겨찾기 상태에 맞춘다."""
+        star = getattr(self, "_title_favorite_button", None)
+        if star is None:
+            return
+        row = self._title_favorite_row()
+        if row is None:
+            star.hide()
+            return
+        favorite = self.law_cache.is_favorite(row)
+        size = self._ARTICLE_FAVORITE_SIZE
+        star.setIcon(
+            favorite_icon(favorite, "#c88700" if favorite else "#aeb4bc")
+        )
+        star.setIconSize(QSize(16, 16))
+        star.setToolTip(
+            "즐겨찾기에서 뺍니다." if favorite else "즐겨찾기에 넣습니다."
+        )
+        star.setAccessibleName(f"{row.get('name') or '별표·서식'} 즐겨찾기")
+        star.setStyleSheet(
+            "QPushButton#documentTitleFavorite {"
+            f"color: {'#e2a400' if favorite else '#aeb9c5'};"
+            "border:none; background:transparent; padding:0;"
+            f"font-size:13px; min-width:{size}px; max-width:{size}px;"
+            f"min-height:{size}px; max-height:{size}px;}}"
+            "QPushButton#documentTitleFavorite:hover {color:#e2a400;}"
+        )
+        self._position_title_favorite()
+
+    def _toggle_title_favorite(self) -> None:
+        row = self._title_favorite_row()
+        if row is None:
+            return
+        self._toggle_favorite_for_row(row)
+        self._refresh_title_favorite()
+
+    def _position_title_favorite(self) -> None:
+        """제목 줄 왼쪽에 별을 놓는다. 제목이 화면 밖이면 숨긴다."""
+        star = getattr(self, "_title_favorite_button", None)
+        if star is None:
+            return
+        viewport = self.detail_view.viewport()
+        if (
+            self._title_favorite_row() is None
+            or not self.detail_view.isVisible()
+            or not viewport.isVisible()
+        ):
+            star.hide()
+            return
+        position = self._first_visible_block_position()
+        if position is None:
+            star.hide()
+            return
+        cursor = QTextCursor(self.detail_view.document())
+        cursor.setPosition(position)
+        rect = self.detail_view.cursorRect(cursor)
+        # 제목은 가운데 정렬이라 왼쪽에 자리가 넉넉하다. 조문 별과 같은
+        # 틈만 두고 글자 바로 앞에 붙인다.
+        star.move(
+            max(1, rect.left() - star.width() - self._ARTICLE_FAVORITE_GAP),
+            rect.top() + (rect.height() - star.height()) // 2,
+        )
+        if rect.bottom() < 0 or rect.top() > viewport.height():
+            star.hide()
+            return
+        star.show()
+        star.raise_()
+
+    def _first_visible_block_position(self) -> int | None:
+        """본문에서 글자가 처음 나오는 블록의 위치(= 제목 줄)."""
+        block = self.detail_view.document().begin()
+        while block.isValid():
+            if block.text().strip():
+                return block.position()
+            block = block.next()
+        return None
 
     @staticmethod
     def _two_line_tab_title(value: str, max_line_length: int = 12) -> str:
@@ -3321,6 +3484,9 @@ class ResourceSearchTab(QWidget):
     def _position_three_stage_buttons(self) -> None:
         self._three_stage_position_pending = False
         viewport = self.detail_view.viewport()
+        # 제목 옆 별은 조문 별과 같은 신호(스크롤ㆍ내용 변경)로 자리를
+        # 다시 잡는다. 자기 표시 여부는 스스로 판단한다.
+        self._position_title_favorite()
         if not self.detail_view.isVisible() or not viewport.isVisible():
             for button in (
                 *self._three_stage_buttons,
@@ -4475,7 +4641,7 @@ class ResourceSearchTab(QWidget):
         if not href:
             return content_html
         phrases = sorted(
-            set(re.findall(r"[가-힣]{2,20}부령|총리령|부령", content_html)),
+            set(self._RULE_DELEGATION_PATTERN.findall(content_html)),
             key=len,
             reverse=True,
         )
@@ -4493,6 +4659,11 @@ class ResourceSearchTab(QWidget):
                 f"{escape(authority)}</a>",
             )
         return content_html
+
+    # 시행령 조문이 부령에 다시 위임하는 문구. 이 문구가 있는 시행령
+    # 칸에는 그 부령 조문을 나란히 붙이고, 문구가 없으면 시행규칙이 짚은
+    # 법률 항ㆍ호를 따라 보낸다.
+    _RULE_DELEGATION_PATTERN = re.compile(r"[가-힣]{2,20}부령|총리령|부령")
 
     # 하위법령에서 3단비교를 열었을 때 법률 열의 근거 항·호로 이동시키는 닻
     THREE_STAGE_SOURCE_ANCHOR = "thd-source"
@@ -5009,12 +5180,25 @@ class ResourceSearchTab(QWidget):
         ) -> tuple[list[tuple[str, str]], list[dict]]:
             pairs: list[tuple[str, str]] = []
             leftover = remaining
+            # 법률을 직접 짚어 법률 행으로 보낸 시행규칙 조문. 같은 조문의
+            # 뒤 항은 근거를 다시 적지 않고 ``제1항에 따른``처럼 자기 앞 항을
+            # 가리키므로, 앞 항을 따라가지 않으면 조문 하나가 두 행으로
+            # 찢어진다.
+            law_scoped_nodes: set[int] = set()
             for fragment in fragments:
                 decree_blocks = fragment["blocks"]
                 rule_bins: list[list[dict]] = [[] for _ in decree_blocks]
                 still: list[dict] = []
                 decree_code = self._three_stage_article_code(fragment["node"])
                 head = str(fragment.get("head") or "")
+                # 이 시행령 칸이 부령에 다시 위임하면 시행규칙을 그 칸 옆에
+                # 세운다. 위임 문구가 없으면 시행규칙이 짚은 법률 항으로
+                # 보낸다(건축법 제19조 ↔ 시행규칙 제12조의2).
+                decree_delegates = bool(
+                    self._RULE_DELEGATION_PATTERN.search(
+                        " ".join(block["html"] for block in decree_blocks)
+                    )
+                )
                 for rule in leftover:
                     content = self._fragment_plain_text(rule)
                     cited = self._decree_codes_referenced_by_rule(content)
@@ -5031,6 +5215,24 @@ class ResourceSearchTab(QWidget):
                     ]
                     hang, ho, mok = primary_source_unit(units)
                     if not hang and not ho and not mok:
+                        # 시행령을 짚지 않은 조각이라도 법률의 항ㆍ호를 직접
+                        # 짚었으면 그 법률 행에 붙어야 한다. 예전에는 시행령
+                        # 첫 블록에 몰아넣어, ``법 제19조제2항에 따라``로
+                        # 시작하는 건축법 시행규칙 제12조의2가 법 제1항 행에
+                        # 붙고 제2항 칸은 비어 있었다.
+                        node_key = id(rule.get("node"))
+                        if not decree_delegates and (
+                            primary_source_unit(
+                                self._law_source_units_referenced_by_decree(
+                                    content, base_code
+                                )
+                            )
+                            != ("", "", "")
+                            or node_key in law_scoped_nodes
+                        ):
+                            law_scoped_nodes.add(node_key)
+                            still.append(rule)
+                            continue
                         if head:
                             rule_bins[0].append(rule)
                         else:
@@ -5077,6 +5279,10 @@ class ResourceSearchTab(QWidget):
             ),
             0,
         )
+        # 한 시행규칙 조문이 어느 법률 행에 붙었는지. 뒤따르는 항은 근거를
+        # 다시 적지 않고 ``제1항에 따른``처럼 자기 앞 항을 가리키므로,
+        # 앞 항이 선 자리를 그대로 따라가야 조문이 갈라지지 않는다.
+        rule_rows_by_node: dict[int, int] = {}
         for rule in remaining_rules:
             hang, ho, mok = primary_source_unit(
                 self._law_source_units_referenced_by_decree(
@@ -5086,7 +5292,12 @@ class ResourceSearchTab(QWidget):
             matched = block_index_for_unit_or_none(
                 blocks, hang, ho, mok
             )
-            row_index = leftover_row if matched is None else matched
+            node_key = id(rule.get("node"))
+            if matched is None:
+                row_index = rule_rows_by_node.get(node_key, leftover_row)
+            else:
+                row_index = matched
+            rule_rows_by_node[node_key] = row_index
             rule_html = self._stacked_rule_fragments([rule])
             if row_pairs[row_index]:
                 first_decree, first_rule = row_pairs[row_index][0]
@@ -7991,7 +8202,15 @@ class ResourceSearchTab(QWidget):
             self._pending_favorite_article_api = None
             if pending is None:
                 return
-            record, unit = pending
+            record, unit, allow_full_fallback = pending
+            if not allow_full_fallback:
+                QMessageBox.critical(
+                    self,
+                    "조문 열기 실패",
+                    "조항호목 API 조회에 실패했습니다. 저장된 법령 전문에서 "
+                    f"잘라 열지는 않습니다.\n\n{error}",
+                )
+                return
             fallback = record.get("payload")
             if not isinstance(fallback, dict):
                 QMessageBox.critical(
@@ -8634,17 +8853,20 @@ class ResourceSearchTab(QWidget):
             def integrated_sort_key(row: dict[str, object]) -> tuple:
                 score = name_scores.get(id(row), 0.0)
                 matched = score >= self.INTEGRATED_NAME_MATCH_RATIO
-                exact_name = (
-                    bool(search_name_key(query_text))
-                    and search_name_key(query_text)
-                    == search_name_key(str(row.get("name") or ""))
+                family_rank = search_name_family_rank(
+                    query_text, str(row.get("name") or "")
+                )
+                is_family = (
+                    family_rank is not None and not row.get("ai_recommended")
                 )
                 return (
-                    # 별표ㆍ서식명을 그대로 검색한 행은 AI추천 조문보다
-                    # 무조건 먼저 둔다. 유사도 점수만으로 묶으면 API에서
-                    # 같은 법령명의 추천 조문도 높은 점수를 받아 앞줄을
-                    # 차지할 수 있다.
-                    0 if exact_name and not row.get("ai_recommended") else 1,
+                    # 이름을 그대로 검색한 행과 그 법의 시행령ㆍ시행규칙은
+                    # AI추천 조문보다 무조건 먼저 둔다. 유사도 점수만으로
+                    # 묶으면 API에서 같은 법령명의 추천 조문도 높은 점수를
+                    # 받아 앞줄을 차지할 수 있다.
+                    0 if is_family else 1,
+                    # 법 → 시행령 → 시행규칙 차례로 세 줄이 붙어 선다.
+                    family_rank if is_family else 0,
                     0 if matched else 1,
                     # 농지법을 찾았을 때 농지법 AI추천 조문도 이름 점수가
                     # 100%다. 이름 일치 묶음 안에서는 자료 본체가 조문보다
@@ -8809,30 +9031,16 @@ class ResourceSearchTab(QWidget):
             return self.law_cache.has(row)
         if self.law_cache.has_snapshot(row):
             return True
-        # 조문 줄은 그 조항호목만 담은 화면으로도 저장되지만, 별을 눌러
-        # 조문 즐겨찾기에 건 것도 그 법령 저장본 안에 남는다. 즐겨찾기에
-        # 걸어 두고도 저장 칸이 비어 보이던 것을 맞춘다.
-        return self._article_favorite_saved(row)
-
-    def _article_favorite_saved(self, storage_row: dict[str, object]) -> bool:
-        """조문 줄이 그 법령 저장본의 조항호목 즐겨찾기에 들어 있는지."""
-        if str(storage_row.get("target") or "") != "law_article":
-            return False
-        source = storage_row.get("source_row")
-        unit = storage_row.get("favorite_unit")
-        if not isinstance(source, dict) or not isinstance(unit, dict):
-            return False
-        law_row = self._law_row(
-            str(source.get("id") or ""), str(source.get("name") or "")
-        )
-        if law_row is None:
-            return False
-        return self.law_cache.is_article_favorite(
-            law_row,
-            str(unit.get("jo") or ""),
-            hang=str(unit.get("hang") or ""),
-            ho=str(unit.get("ho") or ""),
-            mok=str(unit.get("mok") or ""),
+        # 통합검색의 법령 조문은 조항호목 API 원문을 별도 캐시에 둔다.
+        # 전문 저장 파일이나 즐겨찾기 여부가 아니라 이 조문 원문이 실제로
+        # 있느냐가 저장 체크의 뜻이다.
+        source = row.get("source_row")
+        unit = row.get("favorite_unit")
+        return bool(
+            target == "law_article"
+            and isinstance(source, dict)
+            and isinstance(unit, dict)
+            and self._load_favorite_article_cache(source, unit) is not None
         )
 
     def _filter_result_rows(self, text: str) -> None:
@@ -8918,6 +9126,29 @@ class ResourceSearchTab(QWidget):
         if not (0 <= row_index < len(self.result_rows)):
             return False
         row = self.result_rows[row_index]
+        article_pending = self._pending_article_favorite
+        article = self._keyword_article_target(row)
+        if article_pending is not None:
+            if article is None:
+                return False
+            pending_row, jo, hang, ho, mok, _label = article_pending
+            return (
+                str(article[0].get("id") or ""),
+                article[1],
+                article[2],
+                article[3],
+                article[4],
+            ) == (
+                str(pending_row.get("id") or ""),
+                jo,
+                hang,
+                ho,
+                mok,
+            )
+        # 법령 전체를 저장ㆍ즐겨찾기 처리 중일 때 같은 법령ID를 가진
+        # AI추천 조문까지 파란 별로 칠하지 않는다.
+        if article is not None:
+            return False
         return (
             str(row.get("target") or ""),
             str(row.get("id") or ""),
@@ -9239,8 +9470,11 @@ class ResourceSearchTab(QWidget):
         # 저장 열은 체크 기능만 담당한다. 행 선택 배경이 빈 셀에 남아
         # 체크박스 오른쪽이 별도 버튼처럼 보이지 않도록 선택 대상에서 뺀다.
         flags = Qt.ItemFlag.ItemIsEnabled
+        storage_row = self._storage_row(row)
         cached = (
-            self.law_cache.key_for_row(self._storage_row(row)) in saved_keys
+            self._row_is_saved(row)
+            if str(storage_row.get("target") or "") == "law_article"
+            else self.law_cache.key_for_row(storage_row) in saved_keys
             if saved_keys is not None
             else self._row_is_saved(row)
         )
@@ -9378,28 +9612,17 @@ class ResourceSearchTab(QWidget):
             return
         if not wants_saved:
             storage_row = self._storage_row(row)
-            if not self.law_cache.has_snapshot(
-                storage_row
-            ) and self._article_favorite_saved(storage_row):
-                # 화면 저장본 없이 조문 즐겨찾기로만 남은 줄이다.
-                # 지울 파일이 없으므로 즐겨찾기를 푼다.
-                article = self._keyword_article_target(row)
-                if article is not None:
-                    law_row, jo, hang, ho, mok, label = article
-                    if self.law_cache.set_article_favorite(
-                        law_row, jo, label, False, hang=hang, ho=ho, mok=mok
-                    ):
-                        self.status_label.setText(
-                            f"{label} 즐겨찾기를 해제했습니다."
-                        )
-                    else:
-                        self.status_label.setText(
-                            "즐겨찾기 해제에 실패했습니다: "
-                            f"{self.law_cache.last_error}"
-                        )
-                self._refresh_cache_checkmarks()
-                return
-            if self.law_cache.delete(storage_row):
+            removed = False
+            if self.law_cache.has_snapshot(storage_row):
+                removed = self.law_cache.delete(storage_row)
+            if str(storage_row.get("target") or "") == "law_article":
+                source = storage_row.get("source_row")
+                unit = storage_row.get("favorite_unit")
+                if isinstance(source, dict) and isinstance(unit, dict):
+                    removed = self._delete_favorite_article_cache(
+                        source, unit
+                    ) or removed
+            if removed:
                 self.status_label.setText("저장된 본문을 삭제했습니다.")
             else:
                 self.status_label.setText(
@@ -9720,8 +9943,11 @@ class ResourceSearchTab(QWidget):
                 or self.oc_provider().strip()
                 or fallback_payload
             ):
-                self.open_cached_favorite_article(article_record, keyword_unit)
-                return True
+                return self.open_cached_favorite_article(
+                    article_record,
+                    keyword_unit,
+                    allow_full_fallback=False,
+                )
             prompt_oc_api_key(self)
             return False
         if str(row.get("target") or "") == "law" and not force_api:
@@ -10091,14 +10317,90 @@ class ResourceSearchTab(QWidget):
         label, title = cls._annex_label_and_title(
             unit, str(row.get("name") or "")
         )
+        file_url = full_law_url(raw.get("별표서식파일링크"))
         return {
             "label": label,
             "kind": json_text(raw.get("별표종류")),
             "title": title,
-            "file_url": full_law_url(raw.get("별표서식파일링크")),
+            "file_url": file_url,
             "pdf_url": full_law_url(raw.get("별표서식PDF파일링크")),
-            "preview_url": "",
+            "preview_url": cls._ordinance_annex_row_preview_url(
+                row, unit, file_url
+            ),
         }
+
+    @classmethod
+    def _ordinance_annex_row_preview_url(
+        cls, row: dict[str, object], unit: dict[str, object], file_url: str
+    ) -> str:
+        """별표ㆍ서식 목록 한 줄로 변환 뷰어 미리보기 주소를 만든다.
+
+        자치법규 별표와 행정규칙 별표 일부는 PDF를 주지 않고 HWP 원본만
+        준다. 그래서 목록에서 바로 연 그 별표는 미리보기가 통째로 비어
+        있었다. 법제처 화면이 쓰는 것과 같은 변환 뷰어 주소를 목록 줄만으로
+        만든다. 자치법규는 목록 API에 없는 ``자치법규ID``를 내려받는
+        쪽(``download_ordinance_annex_pages``)이 채운다.
+        """
+        target = str(row.get("target") or "")
+        if target == "admbyl":
+            return cls._admin_rule_annex_row_preview_url(row, unit)
+        if target != "ordinbyl":
+            return ""
+        raw = row["raw"] if isinstance(row.get("raw"), dict) else {}
+        file_match = re.search(r"(?:[?&])flSeq=(\d+)", str(file_url))
+        byl_seq = json_text(raw.get("별표일련번호")) or str(row.get("id") or "")
+        ordin_seq = json_text(raw.get("관련자치법규일련번호"))
+        if file_match is None or not byl_seq.isdigit() or not ordin_seq.isdigit():
+            return ""
+        return (
+            "https://www.law.go.kr/LSW/ordinBylContentsInfoR.do?"
+            + urlencode(
+                {
+                    "bylSeq": byl_seq,
+                    "bylNo": json_text(unit.get("별표번호")),
+                    "bylBrNo": json_text(unit.get("별표가지번호")),
+                    "bylClsCd": "300402",
+                    "gubun": "ELIS",
+                    "ordinSeq": ordin_seq,
+                    "vSct": "",
+                    "bylFlSeq": file_match.group(1),
+                }
+            )
+        )
+
+    # 별표 목록 상자가 쓰는 자료 구분 코드. 행정규칙 별표는 200203이다.
+    _ADMIN_RULE_ANNEX_CLASS_CODE = "200203"
+
+    @staticmethod
+    def _admin_rule_annex_row_preview_url(
+        row: dict[str, object], unit: dict[str, object]
+    ) -> str:
+        """행정규칙 별표ㆍ서식 목록 한 줄로 변환 뷰어 주소를 만든다.
+
+        행정규칙 별표 가운데 고시 별지처럼 PDF가 없는 것이 있다. 그때는
+        목록 API가 한글 파일 주소만 주므로 미리보기가 비어 있었다. 변환
+        화면은 별표 일련번호만 있으면 열린다(실측). 나머지 값은 법제처
+        화면이 보내는 것과 같게 채워 둔다.
+        """
+        raw = row["raw"] if isinstance(row.get("raw"), dict) else {}
+        byl_seq = json_text(raw.get("별표일련번호")) or str(row.get("id") or "")
+        if not byl_seq.isdigit():
+            return ""
+        return (
+            "https://www.law.go.kr/LSW/admRulBylContentsInfoR.do?"
+            + urlencode(
+                {
+                    "bylSeq": byl_seq,
+                    "bylNo": json_text(unit.get("별표번호")),
+                    "bylBrNo": json_text(unit.get("별표가지번호")),
+                    "bylClsCd": (
+                        ResourceSearchTab._ADMIN_RULE_ANNEX_CLASS_CODE
+                    ),
+                    "admRulId": json_text(raw.get("관련법령ID")),
+                    "vSct": "",
+                }
+            )
+        )
 
     def _save_keyword_article_snapshot(
         self, tab_row: dict[str, object]
@@ -10153,17 +10455,24 @@ class ResourceSearchTab(QWidget):
                 "error": "",
             }
             self._active_annex_preview_key = preview_key
+        panel = None
+        if self._annex_can_preview(entry):
+            # 본문 HTML을 만들기 전에 패널을 펼쳐 둔다. 자리 표시 높이는
+            # 그때 패널이 펼쳐졌는지 보고 정하는데(_annex_preview_slot_height),
+            # 나중에 펼치면 문서에는 접힘 높이(340)만 남고 패널만 680으로
+            # 커졌다. 그러면 문서가 뷰포트보다 짧아 스크롤이 잠기고, 화면
+            # 밖으로 넘어간 미리보기 아랫부분을 볼 수 없었다.
+            panel = self._annex_panel_for_key(preview_key)
+            # 별표ㆍ서식 검색에서 연 본문은 미리보기 자체도 항상 큰 높이로
+            # 시작한다. 이전에 같은 패널을 접었거나 줄여 둔 상태도 덮는다.
+            panel.set_expanded(True)
         self._append_law_annex_section(html_parts, plain_parts, [entry])
         self._commit_detail(html_parts, plain_parts)
         self._set_three_stage_articles([])
         # 별표ㆍ서식은 그림 한 장이 곧 본문이다. 좁은 칸에서는 표가 잘려
         # 읽을 수 없으므로 열자마자 크게 보기로 넘긴다.
         self._set_reading_mode(True)
-        if self._annex_can_preview(entry):
-            panel = self._annex_panel_for_key(preview_key)
-            # 별표ㆍ서식 검색에서 연 본문은 미리보기 자체도 항상 큰 높이로
-            # 시작한다. 이전에 같은 패널을 접었거나 줄여 둔 상태도 덮는다.
-            panel.set_expanded(True)
+        if panel is not None:
             panel.show_loading(self._annex_display_title(entry))
             self._place_inline_annex_preview()
             QTimer.singleShot(0, self._place_inline_annex_preview)
@@ -10627,8 +10936,10 @@ class ResourceSearchTab(QWidget):
         self,
         record: dict[str, object],
         unit: dict[str, object],
-    ) -> None:
-        """조문 API를 우선해 즐겨찾기 조항호목을 열고 실패하면 전문을 쓴다."""
+        *,
+        allow_full_fallback: bool = True,
+    ) -> bool:
+        """조문 API를 우선해 열고, 허용된 즐겨찾기에서만 전문을 대신 쓴다."""
         source_row = record.get("row")
         fallback_payload = record.get("payload")
         if not isinstance(source_row, dict) or not isinstance(fallback_payload, dict):
@@ -10642,17 +10953,28 @@ class ResourceSearchTab(QWidget):
             self._show_favorite_article_payload(
                 record, unit, cached_payload, "조항호목 캐시"
             )
-            return
+            return True
 
         oc = self.oc_provider().strip()
         if not oc or (self.worker and self.worker.isRunning()):
             reason = "API 인증키 없음" if not oc else "다른 API 조회 진행 중"
+            if not allow_full_fallback:
+                self.status_label.setText(
+                    f"조항호목 API를 호출할 수 없습니다: {reason}"
+                )
+                if not oc:
+                    prompt_oc_api_key(self)
+                return False
             self._show_favorite_article_payload(
                 record, unit, fallback_payload, f"저장 전문 fallback · {reason}"
             )
-            return
+            return True
 
-        self._pending_favorite_article_api = (dict(record), dict(unit))
+        self._pending_favorite_article_api = (
+            dict(record),
+            dict(unit),
+            allow_full_fallback,
+        )
         self._start_worker(
             ResourceApiWorker(
                 "favorite_article_detail",
@@ -10668,12 +10990,13 @@ class ResourceSearchTab(QWidget):
             ),
             f"{unit.get('label') or self._law_reference_label(jo)} 조문 API 조회 중...",
         )
+        return True
 
     def _show_favorite_article_api_result(self, result: object) -> None:
         pending = self._pending_favorite_article_api
         if pending is None:
             return
-        record, unit = pending
+        record, unit, allow_full_fallback = pending
         payload = result.get("payload") if isinstance(result, dict) else None
         if not isinstance(payload, dict):
             raise ValueError("즐겨찾기 조문 API 응답 형식이 올바르지 않습니다.")
@@ -10685,6 +11008,9 @@ class ResourceSearchTab(QWidget):
                 record, unit, payload, "조문 API"
             )
         except ValueError:
+            if not allow_full_fallback:
+                self._pending_favorite_article_api = None
+                raise
             fallback = record.get("payload")
             if not isinstance(fallback, dict):
                 raise
@@ -10702,6 +11028,7 @@ class ResourceSearchTab(QWidget):
             self.status_label.setText(
                 self.status_label.text() + " · 조항호목 캐시 저장 완료"
             )
+            self._refresh_cache_checkmarks()
 
     def _favorite_article_cache_path(
         self, row: dict[str, object], unit: dict[str, object]
@@ -10738,6 +11065,20 @@ class ResourceSearchTab(QWidget):
         ):
             return None
         return dict(cached["payload"])
+
+    def _delete_favorite_article_cache(
+        self, row: dict[str, object], unit: dict[str, object]
+    ) -> bool:
+        """저장 체크 해제 시 해당 조항호목 API 캐시만 지운다."""
+        path = self._favorite_article_cache_path(row, unit)
+        try:
+            if not path.is_file():
+                return False
+            path.unlink()
+            return True
+        except OSError as exc:
+            self.law_cache.last_error = str(exc)
+            return False
 
     def _save_favorite_article_cache(
         self,

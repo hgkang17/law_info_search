@@ -194,76 +194,124 @@ def download_law_file(url: str, *, use_cache: bool = True) -> bytes:
 download_law_pdf = download_law_file
 
 
-_ORDINANCE_ANNEX_PREVIEW_ENDPOINT = (
-    "https://www.law.go.kr/LSW/ordinBylContentsInfoR.do"
+_LAW_SITE_ROOT = "https://www.law.go.kr"
+# 변환 뷰어를 여는 공식 요청 경로. 자치법규ㆍ행정규칙 별표가 서로 다르다.
+_ORDINANCE_ANNEX_VIEWER_PATH = "/LSW/ordinBylContentsInfoR.do"
+_ADMIN_RULE_ANNEX_VIEWER_PATH = "/LSW/admRulBylContentsInfoR.do"
+_ANNEX_VIEWER_PATHS = (
+    _ORDINANCE_ANNEX_VIEWER_PATH,
+    _ADMIN_RULE_ANNEX_VIEWER_PATH,
 )
+_ORDINANCE_ANNEX_PREVIEW_ENDPOINT = _LAW_SITE_ROOT + _ORDINANCE_ANNEX_VIEWER_PATH
 _VIEWER_IFRAME_PATTERN = re.compile(
     r'<iframe\b[^>]*\bsrc\s*=\s*["\'](?P<src>[^"\']+)',
     re.IGNORECASE,
 )
+# 별표 화면이 자치법규ID를 숨겨 두는 자리. 별표ㆍ서식 목록 API는 이 값을
+# 주지 않아서, 목록에서 바로 연 자치법규 별표는 변환 뷰어 요청을 만들지
+# 못했다.
+_ORDINANCE_ANNEX_INFO_ENDPOINT = "https://www.law.go.kr/LSW/ordinBylInfoR.do"
+_ORDINANCE_LAW_ID_PATTERN = re.compile(
+    r"""id\s*=\s*["']bylOrdinId["'][^>]*\bvalue\s*=\s*["'](?P<id>\d+)""",
+    re.IGNORECASE,
+)
+
+
+def resolve_ordinance_annex_law_id(byl_seq: str, ordin_seq: str) -> str:
+    """별표 일련번호ㆍ자치법규 일련번호로 자치법규ID를 알아낸다.
+
+    법제처 별표 화면이 여는 것과 같은 요청이다. 변환 뷰어는 자치법규ID
+    자리가 빈 값이면 화면을 만들어 주지 않으므로, 목록에서 연 별표도 이
+    값을 채워서 보낸다.
+    """
+    response = requests.post(
+        _ORDINANCE_ANNEX_INFO_ENDPOINT,
+        data={
+            "bylSeq": str(byl_seq),
+            "ordinSeq": str(ordin_seq),
+            "vSct": "",
+        },
+        timeout=(5, 20),
+        headers=REQUEST_HEADERS,
+    )
+    response.raise_for_status()
+    match = _ORDINANCE_LAW_ID_PATTERN.search(response.text)
+    return match.group("id") if match else ""
 
 
 def download_ordinance_annex_pages(
     preview_url: str, *, max_pages: int = 30
 ) -> tuple[list[bytes], int]:
-    """법제처 자치법규 별표 뷰어의 변환 이미지를 내려받는다.
+    """법제처 별표 뷰어의 변환 이미지를 내려받는다.
 
-    자치법규 별표는 본문 API에서 PDF를 주지 않고 HWP 원본만 준다.
-    법제처 화면도 같은 원본을 Synap 뷰어용 PNG로 변환하므로, 그 공식
-    변환 응답을 받아 기존 앱 안 미리보기에서 사용한다.
+    자치법규 별표와 행정규칙 별표 가운데 일부는 본문ㆍ목록 API에서 PDF를
+    주지 않고 HWP 원본만 준다. 법제처 화면도 같은 원본을 Synap 뷰어용
+    PNG로 변환하므로, 그 공식 변환 응답을 받아 앱 안 미리보기에 쓴다.
+    자료마다 변환 요청 주소와 식별자가 달라 여기서 함께 다룬다.
     """
     parsed = urlsplit(str(preview_url or "").strip())
     if (
         not is_allowed_law_file_url(preview_url)
-        or parsed.path != "/LSW/ordinBylContentsInfoR.do"
+        or parsed.path not in _ANNEX_VIEWER_PATHS
     ):
-        raise ValueError("공식 자치법규 별표 미리보기 주소만 열 수 있습니다.")
+        raise ValueError("공식 별표ㆍ서식 미리보기 주소만 열 수 있습니다.")
+    endpoint = urljoin(_LAW_SITE_ROOT, parsed.path)
     params = {
         key: values[-1]
         for key, values in parse_qs(parsed.query, keep_blank_values=True).items()
         if values
     }
-    required = ("bylSeq", "ordinId", "ordinSeq", "bylFlSeq")
+    if parsed.path == _ORDINANCE_ANNEX_VIEWER_PATH:
+        required = ("bylSeq", "ordinSeq", "bylFlSeq")
+    else:
+        # 행정규칙 별표는 별표 일련번호만으로 변환 화면을 준다(실측).
+        required = ("bylSeq",)
     if any(not str(params.get(key) or "").isdigit() for key in required):
-        raise ValueError("자치법규 별표 미리보기 식별자가 올바르지 않습니다.")
+        raise ValueError("별표ㆍ서식 미리보기 식별자가 올바르지 않습니다.")
+    if parsed.path == _ORDINANCE_ANNEX_VIEWER_PATH:
+        if not str(params.get("ordinId") or "").isdigit():
+            params["ordinId"] = resolve_ordinance_annex_law_id(
+                params["bylSeq"], params["ordinSeq"]
+            )
+        if not str(params.get("ordinId") or "").isdigit():
+            raise ValueError("자치법규 별표의 자치법규ID를 찾지 못했습니다.")
 
     response = requests.post(
-        _ORDINANCE_ANNEX_PREVIEW_ENDPOINT,
+        endpoint,
         data=params,
         timeout=(5, 30),
         headers=REQUEST_HEADERS,
     )
     response.raise_for_status()
     if len(response.content) > 2 * 1024 * 1024:
-        raise ValueError("자치법규 별표 뷰어 응답이 허용 크기를 초과했습니다.")
+        raise ValueError("별표ㆍ서식 뷰어 응답이 허용 크기를 초과했습니다.")
     match = _VIEWER_IFRAME_PATTERN.search(response.text)
     if match is None:
-        raise ValueError("자치법규 별표 변환 화면을 찾지 못했습니다.")
-    viewer_url = urljoin(
-        _ORDINANCE_ANNEX_PREVIEW_ENDPOINT,
-        html.unescape(match.group("src")),
-    )
+        raise ValueError("별표ㆍ서식 변환 화면을 찾지 못했습니다.")
+    viewer_url = urljoin(endpoint, html.unescape(match.group("src")))
     viewer_parts = urlsplit(viewer_url)
     if not is_allowed_law_file_url(viewer_url):
-        raise ValueError("자치법규 별표 뷰어 주소가 공식 사이트가 아닙니다.")
+        raise ValueError("별표ㆍ서식 뷰어 주소가 공식 사이트가 아닙니다.")
     viewer_query = parse_qs(viewer_parts.query)
     context_path = str((viewer_query.get("contextPath") or [""])[-1])
-    key = str((viewer_query.get("key") or [params["bylFlSeq"]])[-1])
+    key = str(
+        (viewer_query.get("key") or [params.get("bylFlSeq") or ""])[-1]
+    )
     if (
         not key.isdigit()
         or not context_path.startswith("/viewer/")
         or ".." in context_path.split("/")
     ):
-        raise ValueError("자치법규 별표 변환 경로가 올바르지 않습니다.")
+        raise ValueError("별표ㆍ서식 변환 경로가 올바르지 않습니다.")
     viewer_base = urljoin("https://www.law.go.kr", context_path.rstrip("/"))
     status_url = f"{viewer_base}/status/{key}.js"
     try:
         status = json.loads(download_law_file(status_url).decode("utf-8"))
         total = int(status.get("pageNum") or 0)
     except (UnicodeDecodeError, ValueError, TypeError, json.JSONDecodeError) as exc:
-        raise ValueError("자치법규 별표 쪽수 정보를 읽지 못했습니다.") from exc
+        raise ValueError("별표ㆍ서식 쪽수 정보를 읽지 못했습니다.") from exc
     if total <= 0:
-        raise ValueError("자치법규 별표에 표시할 쪽이 없습니다.")
+        raise ValueError("별표ㆍ서식에 표시할 쪽이 없습니다.")
 
     limit = max(1, min(int(max_pages), total))
     pages: list[bytes] = []

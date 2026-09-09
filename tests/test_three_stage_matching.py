@@ -428,3 +428,74 @@ def test_article_28_rule_aligns_to_neo_and_links_molit_authority() -> None:
     assert "너.&nbsp;" in rule_row
     assert "3.&nbsp;" not in rule_row
     assert ">국토교통부령</a>으로 정하는 시설" in rule_row
+
+
+def test_rule_citing_the_law_directly_aligns_to_that_paragraph() -> None:
+    """시행령을 거치지 않고 법률 항을 짚은 시행규칙은 그 항 옆에 선다.
+
+    건축법 제19조에서 시행규칙 제12조의2 제1항은 ``법 제19조제2항에 따라``로
+    시작하는데, 시행령 제14조 제1항(삭제)에 딸린 것처럼 제1항 행에 붙어
+    제2항 칸이 비어 있었다. 뒤따르는 제2항은 근거를 다시 적지 않으므로
+    앞 항이 선 자리를 그대로 따라가야 한다.
+    """
+    QApplication.instance() or QApplication([])
+    tab = ResourceSearchTab.__new__(ResourceSearchTab)
+    payload = {
+        "thdCmpService": {
+            "기본정보": {"법령명": "건축법"},
+            "위임조문삼단비교": {
+                "법률조문": {
+                    "법령명": "건축법",
+                    "조번호": "0019",
+                    "조가지번호": "00",
+                    "조제목": "제19조(용도변경)",
+                    "조내용": (
+                        "① 건축물의 용도변경은 변경하려는 용도의 건축기준에 "
+                        "맞게 하여야 한다.\n"
+                        "② 사용승인을 받은 건축물의 용도를 변경하려는 자는 "
+                        "허가를 받거나 신고를 하여야 한다."
+                    ),
+                    "시행령조문": {
+                        "법령명": "건축법 시행령",
+                        "조번호": "0014",
+                        "조가지번호": "00",
+                        "조제목": "제14조(용도변경)",
+                        "조내용": "① 삭제",
+                    },
+                    "시행규칙조문": {
+                        "법령명": "건축법 시행규칙",
+                        "조번호": "0012",
+                        "조가지번호": "02",
+                        "조제목": "제12조의2(용도변경)",
+                        "조내용": (
+                            "① 법 제19조제2항에 따라 용도변경의 허가를 받으려는 "
+                            "자는 신청서를 제출하여야 한다.\n"
+                            "② 허가권자는 제1항에 따른 신청을 받은 경우 평면도를 "
+                            "확인하여야 한다."
+                        ),
+                    },
+                }
+            },
+        }
+    }
+
+    html = tab._build_three_stage_comparison_html(
+        payload,
+        law_id="001823",
+        law_name="건축법",
+        jo="001900",
+        label="제19조(용도변경)",
+    )
+
+    rows = re.findall(r"<tr\b.*?</tr>", html, re.DOTALL)
+
+    def plain(value: str) -> str:
+        return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", value))
+
+    first_row = next(row for row in rows if "건축물의 용도변경은" in plain(row))
+    second_row = next(row for row in rows if "사용승인을 받은" in plain(row))
+
+    assert "제12조의2" not in plain(first_row)
+    # 두 항이 갈라지지 않고 같은 행에 함께 선다.
+    assert "제12조의2" in plain(second_row)
+    assert "허가권자는 제1항에 따른 신청을" in plain(second_row)

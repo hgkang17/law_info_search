@@ -30,7 +30,9 @@ from ui.widgets import (
     ResultOverlayLabel,
     StableHorizontalTableWidget,
     batch_table_updates,
+    apply_body_font_family,
     build_detail_header_controls,
+    select_detail_font_in_combo,
     load_detail_font_preferences,
     build_restore_view_button,
     build_search_result_head,
@@ -61,6 +63,7 @@ from workers.search_worker import (
     ApiWorker,
 )
 from utils.constants import (
+    DEFAULT_DETAIL_FONT_POINT,
     DETAIL_FONT_FAMILY,
     FONT_FAMILY,
 )
@@ -371,6 +374,8 @@ class LawSearchTab(QWidget):
         detail_title.doubleClicked.connect(self._toggle_reading_mode)
         self.detail_font_combo = detail_controls.font_combo
         self.detail_font_spin = detail_controls.font_spin
+        self.detail_font_reset = detail_controls.font_reset
+        self.detail_font_reset.clicked.connect(self._reset_detail_font)
         self.detail_font_combo.currentFontChanged.connect(
             self._set_detail_font_family
         )
@@ -413,6 +418,7 @@ class LawSearchTab(QWidget):
         detail_head.addWidget(self.restore_view_button)
         detail_head.addWidget(detail_title)
         detail_head.addSpacing(8)
+        detail_head.addWidget(self.detail_font_reset)
         detail_head.addWidget(self.detail_font_combo)
         detail_head.addWidget(self.detail_font_spin)
         detail_head.addSpacing(8)
@@ -765,6 +771,18 @@ class LawSearchTab(QWidget):
             settings.setValue(f"{self.service}_detail_font_size", size)
             settings.sync()
 
+    def _reset_detail_font(self) -> None:
+        """본문 글꼴ㆍ크기를 기본값으로 되돌린다.
+
+        다른 글꼴을 써 보다가 처음 설정으로 돌아오려면 목록에서 굴림을
+        다시 찾아 고르고 크기도 손으로 맞춰야 했다.
+        """
+        select_detail_font_in_combo(self.detail_font_combo, DETAIL_FONT_FAMILY)
+        self.detail_font_spin.setValue(DEFAULT_DETAIL_FONT_POINT)
+        # 굴림이 설치되지 않아 칸이 대체 글꼴로 앉았더라도 본문과 설정은
+        # 기본 글꼴 이름으로 되돌린다.
+        self._set_detail_font_family(QFont(DETAIL_FONT_FAMILY))
+
     def _set_detail_font_family(self, font: QFont) -> None:
         family = str(font.family() or DETAIL_FONT_FAMILY)
         if family == self.detail_font_family:
@@ -773,11 +791,7 @@ class LawSearchTab(QWidget):
         selected = make_detail_font(self.detail_font_size, family)
         self.detail_view.setFont(selected)
         self.detail_view.document().setDefaultFont(selected)
-        cursor = QTextCursor(self.detail_view.document())
-        cursor.select(QTextCursor.SelectionType.Document)
-        character_format = QTextCharFormat()
-        character_format.setFontFamilies([family])
-        cursor.mergeCharFormat(character_format)
+        apply_body_font_family(self.detail_view.document(), family)
         settings = self.recent_search_manager.settings
         settings.setValue(f"{self.service}_detail_font_family", family)
         settings.sync()

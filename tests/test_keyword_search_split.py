@@ -188,6 +188,35 @@ def test_double_click_opens_keyword_detail_in_reading_mode(
         qt_app.processEvents()
 
 
+def test_law_keyword_result_uses_article_api_even_with_old_snapshot(
+    qt_app, tmp_path, monkeypatch
+) -> None:
+    tab = _tab(tmp_path)
+    row = _row()
+    assert tab.law_cache.save_snapshot(
+        row,
+        html="<p>법령 전문에서 잘라 둔 옛 본문</p>",
+        plain_text="법령 전문에서 잘라 둔 옛 본문",
+    )
+    started = []
+    monkeypatch.setattr(
+        tab, "_start_worker", lambda worker, _message: started.append(worker)
+    )
+    try:
+        _select_first_row(tab, row)
+        tab._show_detail_split()
+        tab._show_selected_result()
+
+        assert len(started) == 1
+        assert started[0].operation == "related_article"
+        assert started[0].row["source_id"] == row["source_id"]
+        assert "법령 전문에서 잘라 둔 옛 본문" not in tab.detail_view.toPlainText()
+        assert "조항호목 API" in tab.detail_view.toPlainText()
+    finally:
+        tab.close()
+        qt_app.processEvents()
+
+
 def test_keyword_detail_has_ai_button_without_corner_close(
     qt_app, tmp_path
 ) -> None:

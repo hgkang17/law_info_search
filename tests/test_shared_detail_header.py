@@ -51,6 +51,10 @@ def test_shared_detail_header_preserves_ui_contract() -> None:
     assert controls.font_spin.suffix() == "pt"
     assert controls.font_spin.value() == pytest.approx(DEFAULT_DETAIL_FONT_POINT)
     assert controls.font_spin.width() == DETAIL_FONT_CONTROL_WIDTH
+    assert controls.font_reset.text() == "기본값"
+    assert controls.font_reset.objectName() == "detailFontResetButton"
+    assert controls.font_reset.height() == controls.font_combo.height()
+    assert DETAIL_FONT_FAMILY in controls.font_reset.toolTip()
 
 
 def test_shared_detail_header_keeps_signal_wiring_available_to_each_tab() -> None:
@@ -183,3 +187,61 @@ def test_saved_body_fonts_are_normalized_to_the_detail_font() -> None:
 
     assert f"font-family:{DETAIL_FONT_CSS_FAMILY}" in normalized
     assert "Pretendard" not in normalized
+
+
+@pytest.mark.parametrize("saved_revision", [3, 4])
+def test_wheel_accident_arial_is_restored_once(
+    tmp_path, saved_revision: int
+) -> None:
+    """휠에 밀려 저장된 Arial은 다음 실행에서 한 번 되돌린다.
+
+    글꼴 칸이 지나가는 휠에도 값을 바꾸던 때, 본문을 굴리려다 커서가 칸에
+    걸리면 목록 앞쪽의 Arial로 넘어가 그대로 저장됐다. 휠은 막았지만 이미
+    저장된 값은 사용자가 손대기 전까지 그대로 남는다.
+    """
+    settings = QSettings(
+        str(tmp_path / "arial.ini"), QSettings.Format.IniFormat
+    )
+    settings.setValue("resource_detail_font_family", "Arial")
+    settings.setValue("resource_detail_font_size", 9.5)
+    settings.setValue(
+        "resource_detail_font_family_defaults_version", saved_revision
+    )
+
+    size, family = load_detail_font_preferences(
+        settings,
+        size_key="resource_detail_font_size",
+        family_key="resource_detail_font_family",
+    )
+
+    assert family == DETAIL_FONT_FAMILY
+    assert size == pytest.approx(DEFAULT_DETAIL_FONT_POINT)
+    assert settings.value("resource_detail_font_family") == DETAIL_FONT_FAMILY
+
+    # 되돌린 뒤 사용자가 다시 Arial을 고르면 그 선택은 지킨다.
+    settings.setValue("resource_detail_font_family", "Arial")
+    _size, family = load_detail_font_preferences(
+        settings,
+        size_key="resource_detail_font_size",
+        family_key="resource_detail_font_family",
+    )
+    assert family == "Arial"
+
+
+def test_bumping_the_defaults_version_keeps_a_chosen_9pt_size(tmp_path) -> None:
+    """9.0→9.5 옮김은 버전 3에서 한 일이다. 뒤 버전에서 다시 돌지 않는다."""
+    settings = QSettings(
+        str(tmp_path / "size-kept.ini"), QSettings.Format.IniFormat
+    )
+    settings.setValue("resource_detail_font_family", "Arial")
+    settings.setValue("resource_detail_font_size", 9.0)
+    settings.setValue("resource_detail_font_family_defaults_version", 3)
+
+    size, family = load_detail_font_preferences(
+        settings,
+        size_key="resource_detail_font_size",
+        family_key="resource_detail_font_family",
+    )
+
+    assert family == DETAIL_FONT_FAMILY
+    assert size == pytest.approx(9.0)

@@ -97,6 +97,7 @@ from utils.constants import (
     DETAIL_FONT_FAMILIES,
     DETAIL_FONT_FAMILY,
     DETAIL_HEADER_CONTROL_HEIGHT,
+    UI_FONT_FAMILIES,
 )
 from utils.formatting import hwp_friendly_clipboard_html
 from utils.parsing import whitespace_flexible_pattern
@@ -774,6 +775,8 @@ DETAIL_FONT_SIZE_MAX = 18.0
 DETAIL_FONT_SIZE_STEP = 0.5
 DETAIL_FONT_CONTROL_WIDTH = 80
 DETAIL_FONT_FAMILY_WIDTH = 184
+# 글꼴 선택칸 왼쪽의 "기본값" 단추 너비. 글자 세 자에 좌우 여백만 준다.
+DETAIL_FONT_RESET_WIDTH = 52
 # 조문 첫 줄 오른쪽에 얹는 3단비교 버튼 너비. 본문 문서의 오른쪽 여백을
 # 이 값에 맞춰 잡으므로 한곳에서 관리한다.
 THREE_STAGE_BUTTON_WIDTH = 40
@@ -801,6 +804,11 @@ _LEGACY_DEFAULT_DETAIL_FAMILIES = {
     # 이름이 남아 있으면 지금 기본 글꼴로 되돌린다.
     "dotum",
     "돋움",
+    # 고른 적이 없는데 저장돼 있던 이름. 본문 머리줄의 글꼴 칸이 지나가는
+    # 휠에도 값을 바꿔서, 본문을 굴리려다 커서가 칸에 걸리면 목록 앞쪽의
+    # Arial로 넘어가고 그대로 저장됐다(휠은 이제 막았다). 이미 저장된 값도
+    # 한 번은 되돌려 준다.
+    "arial",
 }
 
 
@@ -826,7 +834,9 @@ def load_detail_font_preferences(
             raw_family = DETAIL_FONT_FAMILY
             settings.setValue(family_key, raw_family)
         # 예전 기본 9.0만 9.5로 옮긴다. 사용자가 고른 다른 크기는 그대로 둔다.
-        if abs(font_size - 9.0) < 0.01:
+        # 이 옮김은 버전 3에서 한 일이다. 뒤에 버전을 올릴 때 다시 돌면
+        # 사용자가 일부러 고른 9.0까지 9.5로 덮는다.
+        if revision < 3 and abs(font_size - 9.0) < 0.01:
             font_size = DEFAULT_DETAIL_FONT_POINT
             settings.setValue(size_key, font_size)
         settings.setValue(revision_key, DETAIL_FONT_DEFAULTS_VERSION)
@@ -840,7 +850,21 @@ class LeadingFontComboBox(QFontComboBox):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
+        # 눌러서 고른 뒤에만 휠이 먹는다. 아래 본문 참조.
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.currentFontChanged.connect(self._queue_leading_text)
+
+    def wheelEvent(self, event) -> None:
+        """고르지 않은 칸 위에서는 휠을 흘려보낸다.
+
+        이 칸은 본문 바로 위 머리줄에 있다. 본문을 굴리려다 커서가 여기에
+        걸리면 글꼴이 통째로 바뀌고 그 값이 설정에 저장돼, 다음에 프로그램을
+        켜도 엉뚱한 글꼴로 열렸다(Arial로 바뀌어 있던 일이 그것이다).
+        """
+        if not self.hasFocus():
+            event.ignore()
+            return
+        super().wheelEvent(event)
 
     def setCurrentFont(self, font: QFont) -> None:
         super().setCurrentFont(font)
@@ -869,6 +893,57 @@ class DetailHeaderControls:
     title: DoubleClickLabel
     font_combo: QFontComboBox
     font_spin: QDoubleSpinBox
+    font_reset: QPushButton
+
+
+def apply_body_font_family(document: QTextDocument, family: str) -> None:
+    """열려 있는 본문을 고른 글꼴로 맞추되 문서 제목은 그대로 둔다.
+
+    문서 제목(h1)은 본문과 달리 화면 UI 글꼴(맑은 고딕)을 일부러 쓴다.
+    ``DETAIL_DOCUMENT_STYLE``이 그렇게 그리고, 저장본을 되살리는
+    ``apply_detail_font_family``도 제목 덩어리를 빼 두고 나머지만 바꾼다.
+    그런데 글꼴 칸에서 글꼴을 고르는 길만 문서 전체에 글꼴을 덮어써서,
+    글꼴을 한 번이라도 고르면(기본값으로 되돌려도) 제목까지 본문 글꼴로
+    바뀌어 있었다. 여기서도 제목은 UI 글꼴로 되돌린다.
+    """
+    cursor = QTextCursor(document)
+    cursor.select(QTextCursor.SelectionType.Document)
+    body_format = QTextCharFormat()
+    body_format.setFontFamilies([family])
+    cursor.mergeCharFormat(body_format)
+
+    title_format = QTextCharFormat()
+    title_format.setFontFamilies(list(UI_FONT_FAMILIES))
+    block = document.begin()
+    while block.isValid():
+        if block.blockFormat().headingLevel() == 1:
+            title_cursor = QTextCursor(document)
+            title_cursor.setPosition(block.position())
+            title_cursor.setPosition(
+                block.position() + block.length() - 1,
+                QTextCursor.MoveMode.KeepAnchor,
+            )
+            title_cursor.mergeCharFormat(title_format)
+        block = block.next()
+
+
+def select_detail_font_in_combo(combo: QFontComboBox, font_family: str) -> None:
+    """글꼴 칸에 이름을 앉힌다. 없는 글꼴이면 대체 후보를 차례로 쓴다.
+
+    QFontComboBox는 목록에 없는 이름을 받으면 알파벳순으로 가까운 글꼴을
+    대신 고른다. 그래서 굴림ㆍ돋움이 잡히지 않는 상황에서 "D-DIN Exp"
+    같은 엉뚱한 이름이 칸에 떴다. 없으면 적어도 본문이 실제로 쓰는 이름을
+    글자로 보여 준다.
+    """
+    combo.setCurrentFont(QFont(font_family))
+    if combo.currentFont().family() == font_family:
+        return
+    installed = set(QFontDatabase.families())
+    for candidate in DETAIL_FONT_FAMILIES:
+        if candidate in installed:
+            combo.setCurrentFont(QFont(candidate))
+            return
+    combo.setEditText(font_family)
 
 
 def build_detail_header_controls(
@@ -879,24 +954,23 @@ def build_detail_header_controls(
     title.setObjectName("detailSectionTitle")
     title.setToolTip("더블클릭하면 본문 크게 보기로 전환합니다.")
 
+    # 다른 글꼴을 써 보다가 한 번에 되돌아오는 자리. 글꼴 칸 왼쪽에 둔다.
+    font_reset = QPushButton("기본값")
+    font_reset.setObjectName("detailFontResetButton")
+    font_reset.setToolTip(
+        "본문 글꼴과 크기를 기본값"
+        f"({DETAIL_FONT_FAMILY} {DEFAULT_DETAIL_FONT_POINT:g}pt)으로 되돌립니다."
+    )
+    font_reset.setCursor(Qt.CursorShape.PointingHandCursor)
+    font_reset.setFixedWidth(DETAIL_FONT_RESET_WIDTH)
+    font_reset.setFixedHeight(DETAIL_HEADER_CONTROL_HEIGHT)
+
     font_combo = LeadingFontComboBox()
     font_combo.setObjectName("detailFontCombo")
     font_combo.setToolTip("본문에 사용할 글꼴을 선택합니다.")
     font_combo.setFixedWidth(DETAIL_FONT_FAMILY_WIDTH)
     font_combo.setFixedHeight(DETAIL_HEADER_CONTROL_HEIGHT)
-    font_combo.setCurrentFont(QFont(font_family))
-    # QFontComboBox는 목록에 없는 이름을 받으면 알파벳순으로 가까운 글꼴을
-    # 대신 고른다. 그래서 굴림ㆍ돋움이 잡히지 않는 상황에서 "D-DIN Exp"
-    # 같은 엉뚱한 이름이 칸에 떴다. 대체 후보를 차례로 시도하고, 그래도
-    # 없으면 적어도 본문이 실제로 쓰는 이름을 글자로 보여 준다.
-    if font_combo.currentFont().family() != font_family:
-        installed = set(QFontDatabase.families())
-        for candidate in DETAIL_FONT_FAMILIES:
-            if candidate in installed:
-                font_combo.setCurrentFont(QFont(candidate))
-                break
-        else:
-            font_combo.setEditText(font_family)
+    select_detail_font_in_combo(font_combo, font_family)
 
     font_spin = CompactDoubleSpinBox()
     font_spin.setObjectName("fontSizeSpin")
@@ -911,7 +985,7 @@ def build_detail_header_controls(
     font_spin.setFixedWidth(DETAIL_FONT_CONTROL_WIDTH)
     font_spin.setFixedHeight(DETAIL_HEADER_CONTROL_HEIGHT)
 
-    return DetailHeaderControls(title, font_combo, font_spin)
+    return DetailHeaderControls(title, font_combo, font_spin, font_reset)
 
 
 class CompactDoubleSpinBox(QDoubleSpinBox):
@@ -936,6 +1010,20 @@ class CompactDoubleSpinBox(QDoubleSpinBox):
             f" min-height: {inner}px;"
             f" max-height: {inner}px; }}"
         )
+        # 눌러서 고른 뒤에만 휠이 먹는다. 아래 wheelEvent 참조.
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+    def wheelEvent(self, event) -> None:
+        """고르지 않은 칸 위에서는 휠을 흘려보낸다.
+
+        본문 바로 위 머리줄이라, 본문을 굴리려다 커서가 여기에 걸리면 글자
+        크기가 바뀌고 그 값이 설정에 저장됐다. 위아래 화살표와 직접 입력은
+        그대로 쓴다.
+        """
+        if not self.hasFocus():
+            event.ignore()
+            return
+        super().wheelEvent(event)
 
     def sizeHint(self):  # noqa: N802 (Qt 규약)
         hint = super().sizeHint()
@@ -1959,6 +2047,11 @@ class DeferredWrapTextBrowser(QTextBrowser):
         # Qt 기본 문서 여백 4px은 글자가 테두리에 붙어 보인다. 본문을 쓰는
         # 세 화면이 모두 이 클래스를 쓰므로 여기서 한 번만 넓혀 둔다.
         self.document().setDocumentMargin(DETAIL_DOCUMENT_MARGIN)
+        # 세로 스크롤바 자리는 늘 비워 둔다. 별표를 펼쳐 미리보기가 생기는
+        # 순간에 스크롤바가 나타나면 그만큼 본문 폭이 줄고 줄바꿈이 다시
+        # 계산돼 화면이 한 번 출렁였다. 짧은 본문에서도 자리를 잡아 두면
+        # 내용이 늘어나도 폭이 그대로다.
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
 
     def keyPressEvent(self, event) -> None:
         """읽기만 하는 본문이라 Homeㆍ End를 문서 처음ㆍ끝으로 쓴다.

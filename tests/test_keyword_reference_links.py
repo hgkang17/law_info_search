@@ -113,6 +113,8 @@ def test_keyword_detail_renders_internal_reference_links(tmp_path) -> None:
             "article_number": "56",
             "article_branch": "",
             "jo_code": "005600",
+            # 이 테스트는 API 응답을 받은 뒤의 링크 렌더링만 검증한다.
+            "article_api_loaded": "1",
             "article_loading": "",
             "article_error": "",
             "publication_date": "",

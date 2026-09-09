@@ -233,6 +233,18 @@ class LawDocumentCache(QObject):
     NAMING_MARKER = "_이름규칙.json"
     NAMING_VERSION = 2
 
+    @classmethod
+    def _is_internal_file(cls, path: Path) -> bool:
+        """저장 폴더에 함께 두는 관리용 파일인지.
+
+        예전에는 이름이 밑줄로 시작하면 모두 관리용으로 봤다. 그런데
+        자치법규 별표명은 ``[별표]``ㆍ``[별지서식]``으로 시작해서 파일
+        이름으로 다듬으면 ``_별표_…``가 된다. 그래서 자치법규 별표는
+        저장해 두고도 저장 체크ㆍ저장내역ㆍ즐겨찾기 목록에서 통째로
+        빠져 보였다. 관리용 파일은 이름으로 정확히 가린다.
+        """
+        return path.name in (cls.NAMING_MARKER, cls.LIST_INDEX_NAME)
+
     def migrate_to_named_files(self) -> int:
         """번호만 있던 예전 파일을 제목이 앞에 오는 이름으로 옮긴다.
 
@@ -256,7 +268,7 @@ class LawDocumentCache(QObject):
             self.last_error = str(exc)
             return 0
         for path in paths:
-            if path.name.startswith("_"):
+            if self._is_internal_file(path):
                 continue
             try:
                 record = json.loads(path.read_text(encoding="utf-8"))
@@ -370,7 +382,7 @@ class LawDocumentCache(QObject):
             existing_keys = {
                 path.stem
                 for path in self.directory.glob("*.json")
-                if not path.name.startswith("_")
+                if not self._is_internal_file(path)
             }
         except OSError as exc:
             self.last_error = str(exc)
@@ -910,9 +922,13 @@ class LawDocumentCache(QObject):
         # 버리면 본문 별은 켜져 있는데 조항호목 카드에는 아무것도 안 뜬다.
         if membership is None and not articles:
             return None
+        has_document_membership = membership is not None
         membership = membership or {}
         projected = dict(record)
-        projected["favorite"] = True
+        # 문서 별과 조문 별은 서로 독립이다. 조문만 즐겨찾기에 있어 이
+        # 레코드를 목록 운반용으로 돌려주는 경우까지 문서 별을 켜면,
+        # 검색결과의 법령 전체가 즐겨찾기인 것처럼 보이고 해제도 안 된다.
+        projected["favorite"] = has_document_membership
         projected["favorite_folder"] = str(membership.get("folder") or "")
         projected["favorite_order"] = int(
             membership.get("order", 1_000_000_000)
@@ -1071,11 +1087,7 @@ class LawDocumentCache(QObject):
         ho: str = "",
         mok: str = "",
     ) -> bool:
-        """조·항·호·목 하나를 즐겨찾기에 걸거나 뺀다.
-
-        조문을 걸면 그 법령 자체도 즐겨찾기로 올려 둔다. 목록에 법령이
-        안 보이면 그 밑에 달린 조문도 찾아갈 길이 없다.
-        """
+        """조·항·호·목 하나를 문서 전체와 독립적으로 즐겨찾기에 둔다."""
         self.last_error = ""
         jo = str(jo or "").strip()
         hang = str(hang or "").strip()
@@ -1124,14 +1136,6 @@ class LawDocumentCache(QObject):
             selected["favorite_projects"] = memberships
             if not memberships:
                 entries.remove(selected)
-            law_memberships = self._favorite_memberships(record)
-            if is_favorite and not any(
-                item["id"] == self.active_favorite_project
-                for item in law_memberships
-            ):
-                law_memberships.append({"id": self.active_favorite_project})
-            record["favorite_projects"] = law_memberships
-            record["favorite"] = bool(law_memberships)
             if entries:
                 record["favorite_articles"] = entries
             else:
@@ -1259,7 +1263,10 @@ class LawDocumentCache(QObject):
             record = json.loads(path.read_text(encoding="utf-8"))
             return bool(
                 isinstance(record, dict)
-                and self._projected_favorite_record(record) is not None
+                and any(
+                    item["id"] == self.active_favorite_project
+                    for item in self._favorite_memberships(record)
+                )
             )
         except (OSError, TypeError, ValueError, json.JSONDecodeError):
             return False
@@ -1486,7 +1493,7 @@ class LawDocumentCache(QObject):
             paths = [
                 path
                 for path in self.directory.glob("*.json")
-                if not path.name.startswith("_")
+                if not self._is_internal_file(path)
             ]
         except OSError as exc:
             self.last_error = str(exc)
@@ -1617,15 +1624,6 @@ class LawDocumentCache(QObject):
                 memberships.append({"id": project_id})
                 target["favorite_projects"] = memberships
                 record["favorite_articles"] = entries
-                # 조문이 보이려면 그 법령도 같은 프로젝트에 있어야 한다.
-                document_memberships = self._favorite_memberships(record)
-                if not any(
-                    str(item.get("id") or "") == project_id
-                    for item in document_memberships
-                ):
-                    document_memberships.append({"id": project_id})
-                    record["favorite_projects"] = document_memberships
-                    record["favorite"] = True
             else:
                 memberships = self._favorite_memberships(record)
                 if any(
@@ -1673,7 +1671,7 @@ class LawDocumentCache(QObject):
             paths = [
                 path
                 for path in self.directory.glob("*.json")
-                if not path.name.startswith("_")
+                if not self._is_internal_file(path)
             ]
         except OSError as exc:
             self.last_error = str(exc)

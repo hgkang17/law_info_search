@@ -4,6 +4,7 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import pytest
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QTextDocument
 from PySide6.QtTest import QTest
@@ -166,6 +167,94 @@ def test_ai_recommended_result_requests_article_api_directly(tmp_path) -> None:
     assert started[0].operation == "favorite_article_detail"
     assert started[0].jo == "000700"
     assert started[0].hang == "000200"
+
+
+def test_ai_recommended_result_ignores_saved_full_law(tmp_path) -> None:
+    tab = _tab(tmp_path)
+    row = {
+        **ROW,
+        "ai_recommended": True,
+        "keyword_jo": "000100",
+        "keyword_hang": "",
+        "keyword_ho": "",
+        "keyword_mok": "",
+        "keyword_provision": "제1조(목적)",
+    }
+    full_payload = _decree_payload(
+        ROW["name"],
+        ROW["id"],
+        [{"조문번호": "1", "조문내용": "제1조 전문에서 잘라낼 옛 본문"}],
+    )
+    assert tab.law_cache.save(ROW, full_payload)
+    started = []
+    tab._start_worker = lambda worker, _message: started.append(worker)
+
+    assert tab._request_resource_detail(row)
+
+    assert len(started) == 1
+    assert started[0].operation == "favorite_article_detail"
+    assert "전문에서 잘라낼 옛 본문" not in tab.current_detail_text
+
+
+def test_integrated_article_cache_checks_only_its_own_saved_unit(tmp_path) -> None:
+    tab = _tab(tmp_path)
+    row = {
+        **ROW,
+        "ai_recommended": True,
+        "keyword_jo": "000100",
+        "keyword_hang": "",
+        "keyword_ho": "",
+        "keyword_mok": "",
+        "keyword_provision": "제1조(목적)",
+    }
+    unit = tab._keyword_article_unit(row)
+    assert unit is not None
+    payload = _decree_payload(
+        ROW["name"], ROW["id"],
+        [{"조문번호": "1", "조문내용": "제1조 조항호목 API 본문"}],
+    )
+    assert tab._save_favorite_article_cache(row, unit, payload)
+
+    item = tab._cache_item_for_row(row, saved_keys=frozenset())
+
+    assert item.checkState() == Qt.CheckState.Checked
+
+
+def test_integrated_article_never_falls_back_to_saved_full_law(tmp_path) -> None:
+    tab = _tab(tmp_path)
+    fallback = _decree_payload(
+        ROW["name"], ROW["id"],
+        [{"조문번호": "1", "조문내용": "제1조 저장 전문 본문"}],
+    )
+    unit = {"jo": "000100", "hang": "", "ho": "", "mok": ""}
+    tab._pending_favorite_article_api = (
+        {"row": dict(ROW), "payload": fallback},
+        unit,
+        False,
+    )
+
+    with pytest.raises(ValueError):
+        tab._show_favorite_article_api_result({"payload": {"법령": {}}})
+
+    assert "저장 전문 본문" not in tab.current_detail_text
+
+
+def test_full_law_pending_star_does_not_fill_ai_article_star(tmp_path) -> None:
+    tab = _tab(tmp_path)
+    article = {
+        **ROW,
+        "ai_recommended": True,
+        "keyword_jo": "000100",
+        "keyword_hang": "",
+        "keyword_ho": "",
+        "keyword_mok": "",
+        "keyword_provision": "제1조(목적)",
+    }
+    tab.result_rows = [dict(ROW), article]
+    tab._pending_favorite_row = dict(ROW)
+
+    assert tab._is_favorite_pending_at_row(0)
+    assert not tab._is_favorite_pending_at_row(1)
 
 
 def test_favorite_article_api_failure_falls_back_to_saved_full_text(

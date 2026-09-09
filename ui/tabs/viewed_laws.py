@@ -1403,35 +1403,38 @@ class ViewedLawsTab(QWidget):
                 folder_id = str(record.get("favorite_folder") or "")
                 category = self._favorite_category(record)
                 tree = self.favorite_trees[category]
-                category_counts[category] += 1
                 name = self._record_name(record)
-                item = QTreeWidgetItem((name,))
-                item.setData(0, Qt.ItemDataRole.UserRole, record.get("path"))
-                item.setData(0, self.FAVORITE_KIND_ROLE, "record")
-                item.setData(0, self.FAVORITE_CATEGORY_ROLE, category)
-                item.setData(
-                    0,
-                    self.FAVORITE_PROJECT_IDS_ROLE,
-                    list(record.get("favorite_project_ids") or []),
-                )
-                item.setChildIndicatorPolicy(
-                    QTreeWidgetItem.ChildIndicatorPolicy.DontShowIndicator
-                )
-                item.setFlags(
-                    Qt.ItemFlag.ItemIsEnabled
-                    | Qt.ItemFlag.ItemIsSelectable
-                    | Qt.ItemFlag.ItemIsDragEnabled
-                )
-                item.setToolTip(
-                    0,
-                    f"{name}\n구분: {self._record_type(record)}\n"
-                    f"저장일시: {self._display_timestamp(record.get('saved_at'))}",
-                )
-                parent = folder_items[category].get(folder_id)
-                if parent is None:
-                    tree.addTopLevelItem(item)
-                else:
-                    parent.addChild(item)
+                # 조문 즐겨찾기를 운반하려고 들어온 부모 레코드라도 문서
+                # 자체 소속이 없으면 법령 전체 카드까지 만들지 않는다.
+                if record.get("favorite"):
+                    category_counts[category] += 1
+                    item = QTreeWidgetItem((name,))
+                    item.setData(0, Qt.ItemDataRole.UserRole, record.get("path"))
+                    item.setData(0, self.FAVORITE_KIND_ROLE, "record")
+                    item.setData(0, self.FAVORITE_CATEGORY_ROLE, category)
+                    item.setData(
+                        0,
+                        self.FAVORITE_PROJECT_IDS_ROLE,
+                        list(record.get("favorite_project_ids") or []),
+                    )
+                    item.setChildIndicatorPolicy(
+                        QTreeWidgetItem.ChildIndicatorPolicy.DontShowIndicator
+                    )
+                    item.setFlags(
+                        Qt.ItemFlag.ItemIsEnabled
+                        | Qt.ItemFlag.ItemIsSelectable
+                        | Qt.ItemFlag.ItemIsDragEnabled
+                    )
+                    item.setToolTip(
+                        0,
+                        f"{name}\n구분: {self._record_type(record)}\n"
+                        f"저장일시: {self._display_timestamp(record.get('saved_at'))}",
+                    )
+                    parent = folder_items[category].get(folder_id)
+                    if parent is None:
+                        tree.addTopLevelItem(item)
+                    else:
+                        parent.addChild(item)
                 article_tree = self.favorite_trees["article"]
                 law_name = self._record_name(record)
                 article_entries = record.get("favorite_articles") or []
@@ -1563,7 +1566,9 @@ class ViewedLawsTab(QWidget):
                 tree = self.union_trees.get(category)
                 if tree is None:
                     continue
-                if query and query not in name.casefold():
+                if not record.get("favorite_project_ids"):
+                    pass
+                elif query and query not in name.casefold():
                     pass
                 else:
                     item = QTreeWidgetItem((name,))
@@ -1710,36 +1715,68 @@ class ViewedLawsTab(QWidget):
         tree = self.favorite_trees.get(category)
         if tree is None:
             return
-        item = tree.itemAt(position)
-        if item is None:
+        menu = self._build_favorite_folder_menu(category, tree.itemAt(position))
+        if menu is None:
             return
-        kind = item.data(0, self.FAVORITE_KIND_ROLE)
-        if kind not in ("folder", "record"):
-            return
+        menu.exec(tree.viewport().mapToGlobal(position))
+
+    def _build_favorite_folder_menu(
+        self, category: str, item: object
+    ) -> QMenu | None:
+        """즐겨찾기 목록의 우클릭 메뉴를 만든다(띄우지는 않는다).
+
+        메뉴를 여는 일과 담는 일을 나눠 두면 담긴 항목을 시험할 수 있다.
+        ``item``이 없으면 목록의 빈 자리를 누른 것이다.
+        """
+        tree = self.favorite_trees.get(category)
+        if tree is None:
+            return None
+        kind = item.data(0, self.FAVORITE_KIND_ROLE) if item is not None else ""
+        if item is not None and kind not in ("folder", "record"):
+            return None
         self._activate_favorite_category(category)
-        tree.setCurrentItem(item)
         menu = QMenu(tree)
+        if item is None:
+            # 빈 자리에서 불러도 폴더를 만들 수 있게 한다. 예전에는 칸
+            # 제목 옆 작은 + 단추를 찾아야만 폴더를 더할 수 있었다.
+            tree.setCurrentItem(None)
+            add_action = menu.addAction("새 폴더")
+            add_action.triggered.connect(
+                lambda _checked=False, selected_category=category: (
+                    self._create_favorite_folder(selected_category)
+                )
+            )
+            return menu
+        tree.setCurrentItem(item)
         if kind == "folder":
             if self.search_input.text().strip():
-                return
+                return None
+            # 폴더 위에서 만들면 그 아래에 들어간다(_create_favorite_folder).
+            add_action = menu.addAction("새 하위 폴더")
+            add_action.triggered.connect(
+                lambda _checked=False, selected_category=category: (
+                    self._create_favorite_folder(selected_category)
+                )
+            )
+            menu.addSeparator()
             rename_action = menu.addAction("이름 변경")
             delete_action = menu.addAction("삭제")
             rename_action.triggered.connect(self._rename_favorite_folder)
             delete_action.triggered.connect(self._delete_favorite_folder)
-        else:
-            search_request = self._favorite_search_request(item)
-            if search_request is not None:
-                target, name = search_request
-                search_action = menu.addAction("검색목록으로 이동")
-                search_action.triggered.connect(
-                    lambda _checked=False, selected_target=target, selected_name=name: (
-                        self.searchRequested.emit(selected_target, selected_name)
-                    )
+            return menu
+        search_request = self._favorite_search_request(item)
+        if search_request is not None:
+            target, name = search_request
+            search_action = menu.addAction("검색목록으로 이동")
+            search_action.triggered.connect(
+                lambda _checked=False, selected_target=target, selected_name=name: (
+                    self.searchRequested.emit(selected_target, selected_name)
                 )
-                menu.addSeparator()
-            remove_action = menu.addAction("즐겨찾기 해제")
-            remove_action.triggered.connect(self._remove_selected_favorite)
-        menu.exec(tree.viewport().mapToGlobal(position))
+            )
+            menu.addSeparator()
+        remove_action = menu.addAction("즐겨찾기 해제")
+        remove_action.triggered.connect(self._remove_selected_favorite)
+        return menu
 
     def _copy_favorite_item_to_project(
         self, item: QTreeWidgetItem, project_id: str

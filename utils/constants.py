@@ -36,7 +36,9 @@ DEFAULT_POPUP_FONT_POINT = 9.0
 DETAIL_HEADER_CONTROL_HEIGHT = 30
 # 기본 본문 글꼴을 바꿀 때 기존 자동 저장값을 한 번만 새 기본값으로 옮긴다.
 # 사용자가 마이그레이션 뒤 직접 고른 글꼴과 크기는 다시 덮지 않는다.
-DETAIL_FONT_DEFAULTS_VERSION = 3
+# 5: 버전 4 마이그레이션 뒤 같은 실행 중 휠로 다시 저장된 Arial도
+# 다음 실행에서 되돌린다.
+DETAIL_FONT_DEFAULTS_VERSION = 5
 
 APP_TITLE = "국가법령정보 통합검색"
 APP_VERSION = "1.4.2"

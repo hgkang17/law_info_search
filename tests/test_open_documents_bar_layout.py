@@ -56,9 +56,15 @@ def test_open_documents_bar_starts_at_the_left(window) -> None:
     assert main_window.open_document_tabs.count() == 3
     assert strip.x() == 0
     assert button.isVisible()
-    # 탭 사각형의 위ㆍ아래 1px margin을 뺀, 실제로 칠해지는 높이와 같다.
-    assert button.height() == (
-        main_window.open_document_tabs.tabRect(0).height() - 2
+    # 탭 스타일에는 위ㆍ아래 margin이 없어 칠해지는 면이 곧 tabRect다.
+    # 예전에는 여백이 있다고 보고 2px을 뺐는데, 그만큼 단추가 짧아져 띠
+    # 가운데로 밀리면서 윗선이 탭보다 한 픽셀 위에 있는 것처럼 보였다.
+    tabs = main_window.open_document_tabs
+    assert button.height() == tabs.tabRect(0).height()
+    holder = main_window.open_documents_widget
+    assert (
+        button.mapTo(holder, button.rect().topLeft()).y()
+        == tabs.mapTo(holder, tabs.tabRect(0).topLeft()).y()
     )
     # 단추는 탭 오른쪽 끝에 바짝 붙는다(레이아웃 간격만큼만 떨어진다).
     gap = button.x() - (strip.x() + strip.width())
