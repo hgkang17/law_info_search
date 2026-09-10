@@ -642,6 +642,7 @@ def body_to_html(
     current_article_jo = ""
     current_article_branch = ""
     image_left_margin = 0
+    image_note_context = False
 
     def flush_paragraph() -> None:
         if not paragraph_lines:
@@ -820,6 +821,26 @@ def body_to_html(
         source_lines = separated_lines
 
     for line in source_lines:
+        if image_note_context and re.match(r"^[*※]\s*\S", line):
+            flush_bullet()
+            flush_paragraph()
+            parts.append(
+                '<div class="law-source-image-note" '
+                f'style="margin:0 0 {item_gap}px {image_left_margin}px;">'
+                + law_reference_html_text(
+                    line,
+                    terms,
+                    current_law_name=current_law_name,
+                    current_law_id=current_law_id,
+                    current_article_jo=current_article_jo,
+                    current_article_branch=current_article_branch,
+                    use_api_links=use_api_links,
+                    law_aliases=document_aliases,
+                )
+                + "</div>"
+            )
+            continue
+        image_note_context = False
         if not line:
             flush_bullet()
             flush_paragraph()
@@ -850,6 +871,7 @@ def body_to_html(
                     f'<a href="{escape(image_url, quote=True)}">'
                     "원문 표 이미지 열기</a></div>"
                 )
+            image_note_context = True
             continue
 
         heading_match = LAW_HEADING_PATTERN.match(line)

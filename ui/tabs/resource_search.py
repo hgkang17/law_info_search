@@ -94,6 +94,8 @@ from models.law import (
     RESOURCE_CATEGORIES,
     SEARCH_SCOPE_ITEMS,
     SEARCH_SCOPE_PLACEHOLDERS,
+    EXPC_AGENCY,
+    PREC_AGENCY,
 )
 from storage.cache import LawDocumentCache, SearchResultCache
 from storage.recent import RecentSearchManager
@@ -105,6 +107,7 @@ from storage.paths import (
 )
 from workers.search_worker import (
     AnnexReferenceWorker,
+    ApiWorker,
     ResourceApiWorker,
 )
 from workers.download_worker import (
@@ -113,7 +116,11 @@ from workers.download_worker import (
 )
 from ui.tabs.ai_chat_panel import AiChatPanel
 from llm.law_aliases import resolve_law_alias
-from llm.inquiries import is_inquiry_target, split_doc_reference
+from llm.inquiries import (
+    is_inquiry_target,
+    law_go_case_doc_reference,
+    split_doc_reference,
+)
 from molit_cgm_expc_api import (
     ADMIN_RULE_IMAGES_KEY,
     AGENCY_BY_TARGET,
@@ -599,6 +606,7 @@ class ResourceSearchTab(QWidget):
         )
         self._pending_reference_popup = self.reference_popup
         self._pending_document_row: dict[str, object] | None = None
+        self._pending_case_reference: dict[str, str] | None = None
         self._extra_reference_popups: list[LawReferencePopup] = []
         self.three_stage_popup = LawReferencePopup(
             self._detail_link_clicked, self
@@ -1323,7 +1331,8 @@ class ResourceSearchTab(QWidget):
         self.family_law_tree.setHeaderHidden(True)
         self.family_law_tree.setRootIsDecorated(False)
         self.family_law_tree.setUniformRowHeights(True)
-        self.family_law_tree.setFixedHeight(88)
+        self.family_law_tree.setFont(ui_font(point_size=8.0))
+        self.family_law_tree.setFixedHeight(70)
         self.family_law_tree.setToolTip("법률·시행령·시행규칙을 더블클릭하면 전문을 엽니다.")
         self.family_law_tree.itemDoubleClicked.connect(self._open_family_law)
         toc_panel_layout.addWidget(self.family_law_tree)
@@ -2899,7 +2908,9 @@ class ResourceSearchTab(QWidget):
             return
         for suffix in ("", " 시행령", " 시행규칙"):
             full_name = base + suffix
-            item = QTreeWidgetItem(self.family_law_tree, [full_name])
+            official_short = self._known_law_short_name(full_name)
+            display_name = law_short_name(full_name, official_short)
+            item = QTreeWidgetItem(self.family_law_tree, [display_name])
             item.setData(0, Qt.ItemDataRole.UserRole, full_name)
             item.setToolTip(0, full_name + " · 더블클릭하여 전문 열기")
             if full_name == name:
@@ -3691,11 +3702,10 @@ class ResourceSearchTab(QWidget):
             self._current_three_stage_articles,
             self._three_stage_buttons,
         ):
-            # None은 아직 3단비교 API 확인 전인 상태다. 예전에는 이때도
-            # 버튼을 먼저 보여 줘서, 비교 조문이 없는 항목의 버튼이
-            # 응답이 온 1초 뒤 사라지는 깜빡임이 있었다. 실제 비교가
-            # 확인된 True 항목만 표시한다.
-            if article.get("comparison_available") is not True:
+            # None은 아직 3단비교 API 확인 전인 상태다. 조회가 늦거나
+            # 실패했을 때 모든 3단비교가 사라진 것처럼 보이지 않도록
+            # 먼저 버튼을 유지하고, 자료 없음이 확인된 False만 숨긴다.
+            if article.get("comparison_available") is False:
                 button.hide()
                 continue
             position = self._three_stage_anchor_positions.get(
@@ -5741,6 +5751,9 @@ class ResourceSearchTab(QWidget):
             if is_inquiry_target(category) and item_id:
                 self._open_inquiry_reference_popup(category, item_id, href)
                 return
+            if category in ("expc", "prec") and item_id:
+                self._open_case_reference_popup(category, item_id, href)
+                return
             self._open_document_reference_popup(url)
             return
         self._detail_link_clicked(url)
@@ -6252,6 +6265,91 @@ class ResourceSearchTab(QWidget):
             ),
             f"{title_guess} 본문 조회 중...",
         )
+
+    def _open_case_reference_popup(
+        self, category: str, item_id: str, href: str, *, force_api: bool = False
+    ) -> None:
+        """법령해석례·판례 링크를 브라우저 대신 공용 참조 팝업으로 연다."""
+        reference_key = f"doc:{category}:{item_id}"
+        title_guess = "법령해석례" if category == "expc" else "판례"
+        if not force_api:
+            cached = self._reference_popup_states.get(reference_key) or self._load_reference_cache(reference_key)
+            if cached is not None:
+                popup = self._reference_popup_for_request()
+                popup.reference_key = reference_key
+                popup.reference_request = {
+                    "href": href, "category": category, "item_id": item_id,
+                    "reference_key": reference_key, "title": str(cached["title"]),
+                }
+                popup.show_content_at(str(cached["title"]), str(cached["html"]), QCursor.pos())
+                return
+        if self.worker and self.worker.isRunning():
+            self.status_label.setText("현재 API 조회가 진행 중입니다 · 완료 후 다시 눌러 주세요.")
+            return
+        oc = self.oc_provider().strip()
+        if not oc:
+            prompt_oc_api_key(self)
+            return
+        popup = self._reference_popup_for_request()
+        popup.reference_key = reference_key
+        popup.reference_request = {
+            "href": href, "category": category, "item_id": item_id,
+            "reference_key": reference_key, "title": title_guess,
+        }
+        popup.show_loading(title_guess, QCursor.pos())
+        self._pending_reference_popup = popup
+        self._pending_reference_key = reference_key
+        self._pending_case_reference = {
+            "category": category, "item_id": item_id, "href": href,
+        }
+        self._start_worker(
+            ApiWorker(
+                "case_reference_detail", oc=oc, item_id=item_id,
+                agency=EXPC_AGENCY if category == "expc" else PREC_AGENCY,
+                parent=self,
+            ),
+            f"{title_guess} 본문 조회 중...",
+        )
+
+    def _show_case_reference_detail(self, result: object) -> None:
+        request = self._pending_case_reference
+        self._pending_case_reference = None
+        if not isinstance(result, dict) or request is None:
+            raise ValueError("해석례·판례 본문 응답 형식이 올바르지 않습니다.")
+        root = result.get("root")
+        category = request["category"]
+        if root is None:
+            raise ValueError("해석례·판례 본문을 찾지 못했습니다.")
+        title = _find_text(root, "안건명" if category == "expc" else "사건명") or ("법령해석례" if category == "expc" else "판례")
+        metadata_fields = (
+            ("법령해석례일련번호", "안건번호", "해석일자", "해석기관명", "질의기관명")
+            if category == "expc"
+            else ("판례정보일련번호", "사건번호", "선고일자", "법원명", "사건종류명", "판결유형")
+        )
+        section_fields = (
+            ("질의요지", "회답", "이유", "관련법령")
+            if category == "expc"
+            else ("판시사항", "판결요지", "참조조문", "참조판례", "판례내용")
+        )
+        metadata = [(label, _find_text(root, label)) for label in metadata_fields if _find_text(root, label)]
+        html_parts = self._popup_detail_header(title, metadata)
+        has_body = False
+        for label in section_fields:
+            value = _find_text(root, label)
+            if not value or value.casefold() == "null":
+                continue
+            has_body = True
+            html_parts.append(f'<div class="popup-section-title">{escape(label)}</div>')
+            html_parts.append('<div class="content">' + body_to_html(value, self.detail_highlight_terms) + '</div>')
+        if not has_body:
+            raise ValueError("해석례·판례 응답에서 표시할 본문을 찾지 못했습니다.")
+        html = "".join(html_parts)
+        popup = self._pending_reference_popup
+        popup.set_content(title, html)
+        popup.reference_key = self._pending_reference_key
+        popup.reference_request["title"] = title
+        self._save_reference_cache(self._pending_reference_key, title, html)
+        self.status_label.setText(f"{title} 조회 완료")
 
     def _document_reference_html(
         self,
@@ -8373,6 +8471,8 @@ class ResourceSearchTab(QWidget):
                 self._show_document_reference_detail(payload)
             elif operation == "inquiry_reference_detail":
                 self._show_inquiry_reference_detail(payload)
+            elif operation == "case_reference_detail":
+                self._show_case_reference_detail(payload)
             elif operation == "three_stage_links":
                 self._show_three_stage_links(payload)
             elif operation == "three_stage_comparison":
@@ -8443,6 +8543,8 @@ class ResourceSearchTab(QWidget):
             if operation == "document_reference_detail"
             else "질의회신 본문 조회"
             if operation == "inquiry_reference_detail"
+            else "해석례·판례 본문 조회"
+            if operation == "case_reference_detail"
             else "하위법령 링크 조회"
             if operation == "three_stage_links"
             else "3단비교 조회"
@@ -8495,6 +8597,10 @@ class ResourceSearchTab(QWidget):
             self._pending_reference_popup.set_error(error)
             return
         if operation == "inquiry_reference_detail":
+            self._pending_reference_popup.set_error(error)
+            return
+        if operation == "case_reference_detail":
+            self._pending_case_reference = None
             self._pending_reference_popup.set_error(error)
             return
         if operation == "three_stage_links":

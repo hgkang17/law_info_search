@@ -31,3 +31,21 @@ def test_image_uses_preceding_numbered_body_indent_and_no_extra_line_height():
     assert picture.blockFormat().leftMargin() == number
     assert picture.blockFormat().lineHeight() == 100
     assert document.documentLayout().blockBoundingRect(picture).height() < 215
+
+
+def test_notes_immediately_below_image_follow_image_left_margin():
+    app = QApplication.instance() or QApplication([])
+    image = QImage(20, 20, QImage.Format.Format_RGB32)
+    image.fill(0xff000000)
+    html = body_to_html(
+        "1-1-1. 본문\n(1) 수수료 표\n[[LAW_IMAGE:123]]\n* 비고\n※ 참고\n일반 문장",
+        administrative_rule=True,
+        embedded_images={"123": _to_data_uri(image)},
+    )
+    document = QTextDocument()
+    document.setHtml(DETAIL_DOCUMENT_STYLE + '<div class="content">' + html + "</div>")
+
+    image_margin = document.find("\ufffc").block().blockFormat().leftMargin()
+    assert document.find("* 비고").block().blockFormat().leftMargin() == image_margin
+    assert document.find("※ 참고").block().blockFormat().leftMargin() == image_margin
+    assert document.find("일반 문장").block().blockFormat().leftMargin() != image_margin

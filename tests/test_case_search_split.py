@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
-from PySide6.QtCore import QSettings, Signal
+from PySide6.QtCore import QSettings, QUrl, Signal
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -351,6 +353,41 @@ def test_saved_case_opens_in_reading_mode(qt_app, tmp_path) -> None:
         assert "저장된 법령해석례" in tab.detail_view.toPlainText()
         assert tab._reading_mode
         assert tab.main_splitter.sizes()[0] == 0
+    finally:
+        tab.close()
+        qt_app.processEvents()
+
+
+@pytest.mark.parametrize(
+    "service,url,expected",
+    [
+        (
+            "central",
+            "https://www.law.go.kr/LSW/cgmExpcInfoP.do?cgmExpcSeq=123",
+            "doc:molitCgmExpc:123",
+        ),
+        (
+            "expc",
+            "https://www.law.go.kr/LSW/expcInfoP.do?expcSeq=123",
+            "doc:expc:123",
+        ),
+        (
+            "prec",
+            "https://www.law.go.kr/LSW/precInfoP.do?precSeq=123",
+            "doc:prec:123",
+        ),
+    ],
+)
+def test_case_detail_law_go_link_routes_to_program_popup(
+    qt_app, tmp_path, service, url, expected
+) -> None:
+    tab = _tab(tmp_path, service)
+    opened = []
+    tab.reference_tab = SimpleNamespace(open_reference_link=opened.append)
+    tab._active_detail_row = _row(service)
+    try:
+        tab._detail_link_clicked(QUrl(url))
+        assert [item.toString() for item in opened] == [expected]
     finally:
         tab.close()
         qt_app.processEvents()

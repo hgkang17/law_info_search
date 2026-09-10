@@ -419,10 +419,42 @@ class LawSearchWindow(QMainWindow):
             "QScrollArea { background: transparent; border: none; }"
             "QScrollArea > QWidget > QWidget { background: transparent; }"
         )
-        # 탭 폭만큼만 차지하게 두면 아래 전체 끄기 단추가 탭 오른쪽에
-        # 붙어 있다가 탭이 늘 때마다 함께 밀려난다.
-        self.open_document_tab_strip.set_hug_content(True)
-        self.open_documents_layout.addWidget(self.open_document_tab_strip, 0)
+        self.open_document_scroll_left = QPushButton("‹")
+        self.open_document_scroll_right = QPushButton("›")
+        for button, name, tip in (
+            (self.open_document_scroll_left, "openDocumentsScrollLeft", "이전 열린 본문 보기"),
+            (self.open_document_scroll_right, "openDocumentsScrollRight", "다음 열린 본문 보기"),
+        ):
+            button.setObjectName(name)
+            button.setFixedHeight(30)
+            button.setFixedWidth(0)
+            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            button.setToolTip(tip)
+            button.hide()
+        self.open_document_scroll_left.clicked.connect(
+            lambda: self.open_document_tab_strip.horizontalScrollBar().setValue(
+                self.open_document_tab_strip.horizontalScrollBar().value() - 120
+            )
+        )
+        self.open_document_scroll_right.clicked.connect(
+            lambda: self.open_document_tab_strip.horizontalScrollBar().setValue(
+                self.open_document_tab_strip.horizontalScrollBar().value() + 120
+            )
+        )
+        self.open_documents_layout.addWidget(self.open_document_scroll_left, 0)
+        # 창이 최소화·최대화되어도 전체 끄기 단추를 뺀 나머지 폭을 탭 띠가
+        # 전부 사용한다. 넘치는 경우에만 양쪽 이동 단추를 드러낸다.
+        self.open_document_tab_strip.set_hug_content(False)
+        self.open_documents_layout.addWidget(self.open_document_tab_strip, 1)
+        self.open_documents_layout.addWidget(self.open_document_scroll_right, 0)
+        self.open_document_tab_strip.horizontalScrollBar().rangeChanged.connect(
+            self._update_open_document_scroll_buttons
+        )
+        self.open_document_tab_strip.horizontalScrollBar().valueChanged.connect(
+            lambda _value: self._update_open_document_scroll_buttons(
+                0, self.open_document_tab_strip.horizontalScrollBar().maximum()
+            )
+        )
 
         # 탭이 두 줄이라 단추도 두 줄로 적어 높이를 맞춘다.
         self.close_all_documents_button = QPushButton("전체\n끄기")
@@ -450,7 +482,7 @@ class LawSearchWindow(QMainWindow):
         self.open_documents_layout.addWidget(self.open_documents_empty, 0)
         # 남는 자리는 모두 오른쪽에 몰아 준다. 이 여백이 없으면 탭과 단추가
         # 띠 가운데로 모여 왼쪽 끝에서 시작하지 않았다.
-        self.open_documents_layout.addStretch(1)
+        self.open_documents_layout.addStretch(0)
         # 창 제목 표시줄에 이미 프로그램 이름이 있어 머리글에서는 로고만
         # 남긴다. 이름 라벨이 차지하던 자리는 열린 본문 띠가 넘겨받는다.
         header_layout.addWidget(logo_label)
@@ -621,6 +653,9 @@ class LawSearchWindow(QMainWindow):
         # 키워드검색 탭은 링크만 넘겨 같은 화면을 재사용한다.
         self.ai_search_tab.reference_tab = self.resource_tab
         self.ai_related_tab.reference_tab = self.resource_tab
+        self.central_tab.reference_tab = self.resource_tab
+        self.expc_tab.reference_tab = self.resource_tab
+        self.prec_tab.reference_tab = self.resource_tab
         self.ai_tabs.addWidget(self.ai_related_tab)
         self.ai_tabs.addWidget(self.ai_search_tab)
         ai_layout.addWidget(self.ai_tabs)
@@ -858,6 +893,24 @@ class LawSearchWindow(QMainWindow):
             return
         self._open_document_refresh_pending = True
         QTimer.singleShot(0, self._refresh_open_documents)
+
+    def _update_open_document_scroll_buttons(self, _minimum=0, maximum=0) -> None:
+        """탭이 실제로 넘칠 때만 좌우 이동 가능성을 보여 준다."""
+        visible = bool(maximum > 0 and self.open_document_tab_strip.isVisible())
+        for button in (
+            self.open_document_scroll_left,
+            self.open_document_scroll_right,
+        ):
+            button.setFixedWidth(24 if visible else 0)
+            button.setVisible(visible)
+        # rangeChanged는 레이아웃 계산 도중에도 올 수 있다. 숨긴 단추의
+        # 직전 24px 자리가 한 프레임 남지 않도록 즉시 다시 배치한다.
+        self.open_documents_layout.invalidate()
+        self.open_documents_layout.activate()
+        if visible:
+            bar = self.open_document_tab_strip.horizontalScrollBar()
+            self.open_document_scroll_left.setEnabled(bar.value() > bar.minimum())
+            self.open_document_scroll_right.setEnabled(bar.value() < bar.maximum())
 
     @staticmethod
     def _document_title(row: dict[str, object], fallback: str) -> tuple[str, str]:
@@ -4131,6 +4184,22 @@ class LawSearchWindow(QMainWindow):
                 background: #dcecf9;
                 color: #1768aa;
             }
+            QTreeWidget#familyLawTree {
+                background: #f8fbfe;
+                border: 1px solid #d5e1eb;
+                border-radius: 7px;
+                color: #526176;
+                font-size: 8pt;
+                outline: none;
+            }
+            QTreeWidget#familyLawTree::item {
+                min-height: 19px;
+                padding: 0 3px;
+            }
+            QTreeWidget#familyLawTree::item:selected {
+                background: #dcecf9;
+                color: #1768aa;
+            }
             QTreeWidget#articleToc QHeaderView::section {
                 background: #e8f1f8;
                 color: #445268;
@@ -4815,6 +4884,7 @@ class LawSearchWindow(QMainWindow):
 
             QTableWidget,
             QTreeWidget#articleToc,
+            QTreeWidget#familyLawTree,
             QTreeWidget#favoriteTree,
             QTreeWidget#favoriteCategoryTree,
             QListWidget#favoriteCategoryList {
@@ -4840,6 +4910,7 @@ class LawSearchWindow(QMainWindow):
             }
             QTableWidget::item:selected,
             QTreeWidget#articleToc::item:selected,
+            QTreeWidget#familyLawTree::item:selected,
             QTreeWidget#favoriteTree::item:selected,
             QTreeWidget#favoriteCategoryTree::item:selected,
             QListWidget#favoriteCategoryList::item:selected {

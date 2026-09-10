@@ -478,6 +478,9 @@ def test_full_law_body_has_article_favorite_stars_on_heading_left(tmp_path) -> N
     tab._position_three_stage_buttons()
 
     assert len(tab._article_favorite_buttons) == 2
+    assert len(tab._three_stage_buttons) == 2
+    assert tab._current_three_stage_articles[0]["comparison_available"] is None
+    assert tab._three_stage_buttons[0].isVisible()
     first_star = tab._article_favorite_buttons[0]
     assert first_star.text() == ""
     assert not first_star.icon().isNull()

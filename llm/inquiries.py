@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from urllib.parse import parse_qsl, urlsplit
 
 from molit_cgm_expc_api import AGENCIES, AGENCY_BY_TARGET, AgencyConfig
 
@@ -33,6 +34,31 @@ def split_doc_reference(href: str) -> tuple[str, str]:
     if len(parts) >= 2:
         return parts[0], ":".join(parts[1:])
     return parts[0], ""
+
+
+def law_go_case_doc_reference(href: str, *, inquiry_target: str = "") -> str:
+    """법제처 질의회신·해석례·판례 웹 주소를 내부 ``doc:`` 주소로 바꾼다."""
+    parsed = urlsplit(str(href or ""))
+    if (
+        parsed.scheme.casefold() not in ("http", "https")
+        or (
+            parsed.hostname or ""
+        ).casefold() not in ("law.go.kr", "www.law.go.kr")
+    ):
+        return ""
+    query = {key.casefold(): value for key, value in parse_qsl(parsed.query)}
+    mappings = (
+        ("cgmexpcseq", inquiry_target),
+        ("expcseq", "expc"),
+        ("precseq", "prec"),
+    )
+    for parameter, category in mappings:
+        item_id = str(query.get(parameter) or "").strip()
+        if item_id and (
+            category in ("expc", "prec") or is_inquiry_target(category)
+        ):
+            return f"doc:{category}:{item_id}"
+    return ""
 
 
 def compact_agency_key(value: str) -> str:

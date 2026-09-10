@@ -35,6 +35,26 @@ def test_toc_family_tracks_current_document_and_double_click(tab, monkeypatch, n
     assert started[0].law_name == tree.topLevelItem(index).text(0)
 
 
+def test_toc_family_uses_official_short_name_but_opens_full_name(tab, monkeypatch):
+    full = "국토의 계획 및 이용에 관한 법률 시행령"
+    tab._law_short_name_cache["국토의계획및이용에관한법률"] = "국토계획법"
+    tab.pending_row = {"target": "law", "id": "1", "name": full}
+    tab._set_detail_document(full, [], [("조문", "제1조(목적) 본문")], build_toc=True)
+
+    tree = tab.family_law_tree
+    assert [tree.topLevelItem(i).text(0) for i in range(3)] == [
+        "국토계획법", "국토계획법 시행령", "국토계획법 시행규칙",
+    ]
+    assert tree.currentItem().text(0) == "국토계획법 시행령"
+    assert tree.height() == 70
+    assert tree.font().pointSizeF() < tab.toc_tree.font().pointSizeF()
+
+    started = []
+    monkeypatch.setattr(tab, "_start_worker", lambda worker, message: started.append(worker))
+    tree.itemDoubleClicked.emit(tree.topLevelItem(2), 0)
+    assert started[0].law_name == "국토의 계획 및 이용에 관한 법률 시행규칙"
+
+
 def test_ordinance_does_not_invent_enforcement_decree(tab):
     tab.pending_row = {"target": "ordin", "id": "2", "name": "이천시 도시계획 조례"}
     tab._set_detail_document("이천시 도시계획 조례", [], [("조문", "제1조(목적) 본문")], build_toc=True)

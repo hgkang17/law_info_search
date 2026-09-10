@@ -66,8 +66,37 @@ def test_open_documents_bar_starts_at_the_left(window) -> None:
         button.mapTo(holder, button.rect().topLeft()).y()
         == tabs.mapTo(holder, tabs.tabRect(0).topLeft()).y()
     )
-    # 단추는 탭 오른쪽 끝에 바짝 붙는다(레이아웃 간격만큼만 떨어진다).
+    # 화살표가 필요 없을 때는 폭까지 0으로 접혀 탭 띠와 전체 끄기 사이에
+    # 빈 단추 자리를 남기지 않는다.
     gap = button.x() - (strip.x() + strip.width())
     assert 0 <= gap <= 12
+    assert main_window.open_document_scroll_left.width() == 0
+    assert main_window.open_document_scroll_right.width() == 0
     # 늘어나지 않는 작은 단추다.
     assert button.width() <= 90
+
+
+def test_open_documents_bar_uses_full_width_and_shows_overflow_arrows(window) -> None:
+    main_window, app = window
+    main_window.resize(620, 720)
+    tab = main_window.resource_tab
+    for index in range(14):
+        tab._open_document_tab(
+            dict(ROW, id=f"overflow-{index}", name=f"아주 긴 열린 법령 이름 {index}")
+        )
+    for key, state in tab._document_states.items():
+        if isinstance(state, dict) and key != "__preview__":
+            state["plain_text"] = "제1조(목적) 본문이다."
+    main_window._refresh_open_documents()
+    app.processEvents()
+
+    strip = main_window.open_document_tab_strip
+    bar = strip.horizontalScrollBar()
+    assert strip.sizePolicy().horizontalPolicy().name == "Expanding"
+    assert bar.maximum() > 0
+    assert main_window.open_document_scroll_left.isVisible()
+    assert main_window.open_document_scroll_right.isVisible()
+    assert main_window.open_document_scroll_left.width() == 24
+    assert main_window.open_document_scroll_right.width() == 24
+    assert not main_window.open_document_scroll_left.isEnabled()
+    assert main_window.open_document_scroll_right.isEnabled()

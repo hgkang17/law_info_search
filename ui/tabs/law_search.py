@@ -50,6 +50,7 @@ from ui.dialogs import (
     MemoNoteDialog,
 )
 from ui.tabs.ai_chat_panel import AiChatPanel
+from llm.inquiries import law_go_case_doc_reference
 from models.law import (
     EXPC_AGENCY,
     PREC_AGENCY,
@@ -121,6 +122,7 @@ class LawSearchTab(QWidget):
         self.search_result_cache = SearchResultCache(SEARCH_RESULT_CACHE_DIR)
         self.worker: ApiWorker | None = None
         self.result_rows: list[dict[str, object]] = []
+        self.reference_tab = None
         self._pending_detail_row: dict[str, object] | None = None
         self._pending_favorite_row: dict[str, object] | None = None
         self._active_detail_row: dict[str, object] | None = None
@@ -439,7 +441,8 @@ class LawSearchTab(QWidget):
         )
         self.detail_view.setFont(detail_font)
         self.detail_view.document().setDefaultFont(detail_font)
-        self.detail_view.setOpenExternalLinks(True)
+        self.detail_view.setOpenExternalLinks(False)
+        self.detail_view.anchorClicked.connect(self._detail_link_clicked)
         self.detail_view.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
             | Qt.TextInteractionFlag.TextSelectableByKeyboard
@@ -1779,6 +1782,24 @@ class LawSearchTab(QWidget):
             return
         if self._request_detail(self.result_rows[row]):
             self._set_reading_mode(True)
+
+    def _detail_link_clicked(self, url: QUrl) -> None:
+        """법령·질의회신·해석례·판례 링크를 프로그램 팝업으로 연다."""
+        current_target = str((self._active_detail_row or {}).get("target") or "")
+        internal = law_go_case_doc_reference(
+            url.toString(), inquiry_target=current_target
+        )
+        target = QUrl(internal) if internal else url
+        if target.scheme().casefold() in ("lawref", "annexref", "lawsub", "doc"):
+            if self.reference_tab is None:
+                self.status_label.setText("링크를 열 법령검색 화면을 찾지 못했습니다.")
+                return
+            self.reference_tab.open_reference_link(target)
+            return
+        if target.scheme().casefold() in ("http", "https") and QDesktopServices.openUrl(target):
+            self.status_label.setText("외부 자료를 웹 브라우저에서 열었습니다.")
+            return
+        QMessageBox.warning(self, "링크 열기 실패", "링크를 열지 못했습니다.")
 
     def open_selected_detail(self, *_args: object) -> bool:
         row = self.result_table.currentRow()

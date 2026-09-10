@@ -11,6 +11,7 @@ from storage.recent import RecentSearchManager
 from ui.tabs.ai_search import AiLawSearchTab
 from ui.tabs.resource_search import ResourceSearchTab
 from ui.tabs.ai_chat_panel import AiChatPanel
+from llm.inquiries import law_go_case_doc_reference
 from utils.parsing import law_article_text, normalize_legal_body
 
 
@@ -140,6 +141,42 @@ def test_keyword_link_routes_to_shared_popup(tab, scheme):
     keyword._detail_link_clicked(QUrl(f"{scheme}://open?name=test"))
     assert len(opened) == 1
     keyword.close()
+
+
+@pytest.mark.parametrize(
+    "url,target,expected",
+    [
+        ("https://www.law.go.kr/LSW/expcInfoP.do?expcSeq=123", "", "doc:expc:123"),
+        ("https://law.go.kr/LSW/precInfoP.do?precSeq=456", "", "doc:prec:456"),
+        (
+            "https://www.law.go.kr/LSW/cgmExpcInfoP.do?cgmExpcSeq=789",
+            "molitCgmExpc",
+            "doc:molitCgmExpc:789",
+        ),
+    ],
+)
+def test_law_go_case_links_convert_to_internal_popup_urls(url, target, expected):
+    assert law_go_case_doc_reference(url, inquiry_target=target) == expected
+
+
+def test_unrelated_host_case_link_is_not_converted():
+    assert law_go_case_doc_reference(
+        "https://evil-law.go.kr/LSW/precInfoP.do?precSeq=456"
+    ) == ""
+
+
+@pytest.mark.parametrize("category", ["expc", "prec"])
+def test_case_doc_reference_routes_to_case_popup(tab, monkeypatch, category):
+    opened = []
+    monkeypatch.setattr(
+        tab,
+        "_open_case_reference_popup",
+        lambda actual_category, item_id, href: opened.append(
+            (actual_category, item_id, href)
+        ),
+    )
+    tab.open_reference_link(QUrl(f"doc:{category}:123"))
+    assert opened == [(category, "123", f"doc:{category}:123")]
 
 
 @pytest.mark.parametrize("kind,category", [("법령", "licbyl"), ("행정규칙", "admbyl")])
