@@ -84,6 +84,7 @@ from utils.parsing import (
     law_unit_code,
     row_search_text,
     search_terms,
+    split_article_query,
     whitespace_insensitive_contains,
     serialize_agency_search_payload,
 )
@@ -219,7 +220,7 @@ class AiLawSearchTab(QWidget):
         self.scope_combo.setFixedWidth(SEARCH_COMBO_WIDTH)
 
         self.query_input = QLineEdit()
-        self.query_input.setPlaceholderText("검색할 키워드를 입력하세요")
+        self.query_input.setPlaceholderText("키워드 또는 법령명+조문 (예: 국토계획법 시행령 19조의2)")
         self.query_input.setClearButtonEnabled(True)
         self.query_input.returnPressed.connect(self.start_search)
 
@@ -1332,6 +1333,13 @@ class AiLawSearchTab(QWidget):
             )
             if cached is not None:
                 restored = deserialize_agency_search_payload(cached["payload"])
+                if not self.is_related and split_article_query(query) and not any(
+                    root.get("direct_article_query") == query
+                    for _agency, root in restored["roots"]
+                ):
+                    # 구버전 키워드 결과(빈 목록 포함)는 지정 조문 조회 결과가 아니다.
+                    cached = None
+            if cached is not None:
                 self._show_search_results(restored)
                 saved_at = str(cached.get("saved_at") or "").replace("T", " ")
                 if "+" in saved_at:
@@ -1555,7 +1563,7 @@ class AiLawSearchTab(QWidget):
                                 or _find_text(node, "법령명약칭")
                             )
                         ),
-                        "provision": provision,
+                        "provision": _find_text(node, "직접조회표기") or provision,
                         "date": self._display_date(
                             _find_text(node, "시행일자")
                             or _find_text(node, "발령일자")
@@ -1584,6 +1592,7 @@ class AiLawSearchTab(QWidget):
                         ),
                         "mok": self._clean_number(_find_text(node, "목번호")),
                         "article_loading": "",
+                        "article_api_loaded": _find_text(node, "직접조회완료"),
                         "article_error": "",
                         "publication_date": self._display_date(
                             _find_text(node, "발령일자" if is_admin else "공포일자")
@@ -1592,7 +1601,7 @@ class AiLawSearchTab(QWidget):
                             node, "발령번호" if is_admin else "공포번호"
                         ),
                     }
-                if self.is_related or self._direct_row_matches_query(
+                if row["article_api_loaded"] == "1" or self.is_related or self._direct_row_matches_query(
                     row, self.query_input.text()
                 ):
                     rows.append(row)

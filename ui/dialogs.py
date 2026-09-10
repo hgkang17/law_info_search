@@ -15,7 +15,7 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QCursor, QPixmap, QTextCursor
+from PySide6.QtGui import QCursor, QPixmap, QTextCursor, QTextBlockFormat
 from PySide6.QtPdf import QPdfDocument
 from PySide6.QtPdfWidgets import QPdfView
 from PySide6.QtWidgets import (
@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
 )
 
 from ui.assets import SPIN_DOWN_ICON_PATH, SPIN_UP_ICON_PATH
-from ui.theme import detail_font
+from ui.theme import detail_font, scale_document_font_sizes
 from ui.widgets import (
     DETAIL_FONT_SIZE_STEP,
     DetailSearchBar,
@@ -45,7 +45,9 @@ from ui.widgets import (
     favorite_icon,
     normalize_detail_font_size,
 )
-from utils.constants import DEFAULT_POPUP_FONT_POINT
+from utils.constants import DEFAULT_POPUP_FONT_POINT, DETAIL_FONT_FAMILY
+from utils.formatting import BODY_LINE_HEIGHT
+from utils.legal_body import repair_enumerated_reference_links
 from workers.download_worker import PdfDownloadWorker
 
 
@@ -1149,6 +1151,7 @@ class LawReferencePopup(QFrame):
     refreshRequested = Signal(object)
     favoriteRequested = Signal(object)
     fontSizeChanged = Signal(float)
+    fontResetRequested = Signal()
 
     def __init__(self, link_handler, parent=None) -> None:
         super().__init__(
@@ -1163,10 +1166,11 @@ class LawReferencePopup(QFrame):
         self.content_font_point = float(DEFAULT_POPUP_FONT_POINT)
         # 본문에서 고른 글꼴을 팝업도 따라간다. 비워 두면 기본 굴림.
         self.content_font_family = ""
+        self._source_html = ""
         self._content_generation = 0
         self._restoring_scroll = False
-        self.setMinimumSize(320, 220)
-        self.resize(440, 300)
+        self.setMinimumSize(560, 220)
+        self.resize(640, 320)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 0, 10, 10)
@@ -1206,14 +1210,22 @@ class LawReferencePopup(QFrame):
             "저장된 조문을 사용하지 않고 같은 조문을 API에서 다시 불러옵니다."
         )
         self.refresh_button.setEnabled(False)
-        self.font_smaller_button = QPushButton("가－")
+        self.font_smaller_button = QPushButton("가−")
         self.font_smaller_button.setObjectName("referencePopupFontSmaller")
-        self.font_smaller_button.setFixedSize(30, 30)
+        self.font_smaller_button.setFixedSize(36, 30)
         self.font_smaller_button.setToolTip("팝업 글자를 작게 합니다.")
-        self.font_larger_button = QPushButton("가＋")
+        self.font_larger_button = QPushButton("가+")
         self.font_larger_button.setObjectName("referencePopupFontLarger")
-        self.font_larger_button.setFixedSize(30, 30)
+        self.font_larger_button.setFixedSize(36, 30)
         self.font_larger_button.setToolTip("팝업 글자를 크게 합니다.")
+        self.font_reset_button = QPushButton("기본값")
+        self.font_reset_button.setObjectName("referencePopupFontReset")
+        self.font_reset_button.setFixedSize(48, 30)
+        self.font_reset_button.setToolTip("굴림 9.5pt와 기본 줄간격으로 되돌립니다.")
+        self.font_size_label = QLabel("9.5pt")
+        self.font_size_label.setObjectName("referencePopupFontSize")
+        self.font_size_label.setMinimumWidth(42)
+        self.font_size_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.favorite_button = QPushButton()
         self.favorite_button.setObjectName("referencePopupFavorite")
         self.favorite_button.setIconSize(QSize(16, 16))
@@ -1225,7 +1237,9 @@ class LawReferencePopup(QFrame):
         apply_close_icon(self.close_button)
         self.close_button.setFixedSize(30, 30)
         header.addWidget(self.title_label, 1)
+        header.addWidget(self.font_reset_button)
         header.addWidget(self.font_smaller_button)
+        header.addWidget(self.font_size_label)
         header.addWidget(self.font_larger_button)
         header.addWidget(self.favorite_button)
         header.addWidget(self.refresh_button)
@@ -1236,6 +1250,7 @@ class LawReferencePopup(QFrame):
         for button in (
             self.font_smaller_button,
             self.font_larger_button,
+            self.font_reset_button,
             self.favorite_button,
             self.refresh_button,
             self.pin_button,
@@ -1279,6 +1294,7 @@ class LawReferencePopup(QFrame):
         self.font_larger_button.clicked.connect(
             lambda: self._step_content_font(1)
         )
+        self.font_reset_button.clicked.connect(self._reset_content_font)
         self._create_resize_handles()
 
     def _step_content_font(self, direction: int) -> None:
@@ -1297,14 +1313,55 @@ class LawReferencePopup(QFrame):
         """
         point = normalize_detail_font_size(point)
         changed = abs(point - self.content_font_point) >= 0.01
+        family_changed = bool(family and family != self.content_font_family)
         self.content_font_point = point
         if family:
             self.content_font_family = family
         font = detail_font(point, self.content_font_family or None)
         self.browser.setFont(font)
         self.browser.document().setDefaultFont(font)
+        self.font_size_label.setText(f"{point:g}pt")
+        self.font_size_label.setToolTip(
+            f"현재 글꼴: {self.content_font_family or DETAIL_FONT_FAMILY} · 기본값: 굴림 9.5pt"
+        )
+        if self._source_html and (changed or family_changed):
+            bar = self.browser.verticalScrollBar()
+            ratio = bar.value() / bar.maximum() if bar.maximum() else 0.0
+            self._render_content()
+            bar.setValue(round(bar.maximum() * ratio))
         if notify and changed:
             self.fontSizeChanged.emit(point)
+
+    def _reset_content_font(self) -> None:
+        self.set_content_font_point(DEFAULT_POPUP_FONT_POINT, family=DETAIL_FONT_FAMILY)
+        # 값이 이미 기본값이어도 구버전 문서의 줄간격을 다시 맞춘다.
+        if self._source_html:
+            self._render_content()
+        self.fontResetRequested.emit()
+
+    def _render_content(self) -> None:
+        """항상 원본 HTML에서 다시 그려 확대/축소 서식이 누적되지 않게 한다."""
+        font = detail_font(self.content_font_point, self.content_font_family or None)
+        self.browser.document().setDefaultFont(font)
+        self.browser.setHtml(scale_document_font_sizes(
+            self._source_html, DEFAULT_POPUP_FONT_POINT, self.content_font_point,
+            self.content_font_family or DETAIL_FONT_FAMILY,
+        ))
+        document = self.browser.document()
+        repair_enumerated_reference_links(document)
+        # Qt는 body/div의 줄간격을 표 안의 문단에 항상 상속하지 않는다.
+        # 구버전 HTML의 고정 높이도 글자 크기에 비례하는 간격으로 복구한다.
+        block = document.begin()
+        while block.isValid():
+            if block.text().replace("\ufffc", "").strip():
+                cursor = QTextCursor(block)
+                format_ = block.blockFormat()
+                format_.setLineHeight(
+                    float(BODY_LINE_HEIGHT) * 100,
+                    QTextBlockFormat.LineHeightTypes.ProportionalHeight.value,
+                )
+                cursor.setBlockFormat(format_)
+            block = block.next()
 
     def _create_resize_handles(self) -> None:
         handle_specs = (
@@ -1376,6 +1433,7 @@ class LawReferencePopup(QFrame):
     def set_loading(self, title: str, message: str) -> None:
         """Show loading content without changing the popup position."""
         self._content_generation += 1
+        self._source_html = ""
         self._restoring_scroll = False
         self.refresh_button.setEnabled(False)
         self._refresh_favorite_button()
@@ -1465,7 +1523,8 @@ class LawReferencePopup(QFrame):
         self._content_generation += 1
         generation = self._content_generation
         self._restoring_scroll = True
-        self.browser.setHtml(html)
+        self._source_html = html
+        self._render_content()
         QTimer.singleShot(
             0,
             lambda: self._restore_content_scroll(
@@ -1490,6 +1549,7 @@ class LawReferencePopup(QFrame):
         self._restoring_scroll = False
 
     def set_error(self, message: str) -> None:
+        self._source_html = ""
         self._content_generation += 1
         self._restoring_scroll = False
         self.refresh_button.setEnabled(bool(self.reference_request))

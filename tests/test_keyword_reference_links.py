@@ -108,7 +108,7 @@ def test_keyword_detail_renders_internal_reference_links(tmp_path) -> None:
             "provision": "제56조",
             "date": "",
             "agency": "",
-            "content": "대통령령 제5조제1항 및 제3조제2항에 따른다.",
+            "content": "대통령령 제5조제1항 및 제3조제2항에 따른다. 법 제26조제1항제1호 및 제5호에 따른다.",
             "source_id": "001",
             "article_number": "56",
             "article_branch": "",
@@ -128,6 +128,11 @@ def test_keyword_detail_renders_internal_reference_links(tmp_path) -> None:
     html = tab.detail_view.toHtml()
 
     assert "lawref://open?" in html
+    cursor = tab.detail_view.document().find("제5호")
+    query = QUrlQuery(QUrl(cursor.charFormat().anchorHref()))
+    assert query.queryItemValue("jo") == "26"
+    assert query.queryItemValue("hang") == "1"
+    assert query.queryItemValue("ho") == "5"
 
 
 def test_administrative_rule_detail_keeps_self_reference_plain(tmp_path) -> None:

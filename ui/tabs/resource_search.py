@@ -1318,6 +1318,15 @@ class ResourceSearchTab(QWidget):
         # 않도록 본문 검색줄과 같은 여백을 준다.
         toc_panel_layout.setContentsMargins(8, 8, 0, 0)
         toc_panel_layout.setSpacing(6)
+        self.family_law_tree = QTreeWidget()
+        self.family_law_tree.setObjectName("familyLawTree")
+        self.family_law_tree.setHeaderHidden(True)
+        self.family_law_tree.setRootIsDecorated(False)
+        self.family_law_tree.setUniformRowHeights(True)
+        self.family_law_tree.setFixedHeight(88)
+        self.family_law_tree.setToolTip("법률·시행령·시행규칙을 더블클릭하면 전문을 엽니다.")
+        self.family_law_tree.itemDoubleClicked.connect(self._open_family_law)
+        toc_panel_layout.addWidget(self.family_law_tree)
         # "조문 검색" 제목 줄은 두지 않는다. 바로 아래 입력칸의 안내
         # 글귀가 같은 말을 하고 있어 한 줄을 그냥 잡아먹었다.
         toc_panel_layout.addWidget(self.toc_search_input)
@@ -2837,6 +2846,7 @@ class ResourceSearchTab(QWidget):
         bar.setValue(max(0, min(value, bar.maximum())))
 
     def _populate_toc(self, entries: list[tuple[int, str, str]]) -> None:
+        self._refresh_family_laws()
         self._current_toc_entries = list(entries)
         self.toc_tree.clear()
         self._toc_items = []
@@ -2877,6 +2887,43 @@ class ResourceSearchTab(QWidget):
         # 스크롤 값은 남아, 문서를 바꾸면 앞 문서에서 보던 자리가 그대로
         # 보였다. 기억해 둔 자리가 있으면 부르는 쪽이 뒤이어 되돌린다.
         self.toc_tree.verticalScrollBar().setValue(0)
+
+    def _refresh_family_laws(self) -> None:
+        self.family_law_tree.clear()
+        row = self._current_document_row()
+        name = str(row.get("name") or "")
+        base = law_base_name(name)
+        available = row.get("target") in ("law", "law_article") and base.endswith(("법", "법률"))
+        self.family_law_tree.setVisible(available)
+        if not available:
+            return
+        for suffix in ("", " 시행령", " 시행규칙"):
+            full_name = base + suffix
+            item = QTreeWidgetItem(self.family_law_tree, [full_name])
+            item.setData(0, Qt.ItemDataRole.UserRole, full_name)
+            item.setToolTip(0, full_name + " · 더블클릭하여 전문 열기")
+            if full_name == name:
+                font = item.font(0)
+                font.setBold(True)
+                item.setFont(0, font)
+                self.family_law_tree.setCurrentItem(item)
+
+    def _open_family_law(self, item: QTreeWidgetItem, _column: int = 0) -> None:
+        name = str(item.data(0, Qt.ItemDataRole.UserRole) or "")
+        if not name or (self.worker is not None and self.worker.isRunning()):
+            return
+        for state in self._document_states.values():
+            row = state.get("row") or {}
+            if row.get("target") == "law" and row.get("name") == name:
+                self._request_resource_detail(dict(row))
+                return
+        oc = self.oc_provider().strip()
+        if not oc:
+            prompt_oc_api_key(self)
+            return
+        self._start_worker(ResourceApiWorker(
+            "family_law_detail", oc=oc, target="law", law_name=name, parent=self,
+        ), f"{name} 전문 조회 중...")
 
     def _toggle_compact_toc(self, checked: bool) -> None:
         """좁은 화면에서 본문 폭을 지키며 목차를 필요할 때만 연다."""
@@ -5815,6 +5862,13 @@ class ResourceSearchTab(QWidget):
             self._pending_reference_popup._close_popup()
             self._open_pdf_preview(pdf_url, shown)
             return
+        if category in ("ordinbyl", "admbyl"):
+            entry = self._annex_row_entry(row)
+            preview_url = str(entry.get("preview_url") or "")
+            if preview_url:
+                self._pending_reference_popup._close_popup()
+                self._open_annex_image_preview(preview_url, shown)
+                return
         if not file_url:
             self._annex_reference_failed(
                 f"{shown}의 원문 파일이 없습니다."
@@ -5858,6 +5912,14 @@ class ResourceSearchTab(QWidget):
         rows = [
             row for row in rows if not is_annex_stub_name(row.get("name") or "")
         ] or rows
+        if title.strip().startswith("별표"):
+            ordinance_tables = [
+                row for row in rows
+                if row.get("target") == "ordinbyl"
+                and str(row.get("name") or "").lstrip().startswith("[별표")
+            ]
+            if len(ordinance_tables) == 1 and str(ordinance_tables[0].get("name") or "").lstrip().startswith("[별표]"):
+                return ordinance_tables[0]
         if hint:
             matched = [
                 row
@@ -6513,6 +6575,9 @@ class ResourceSearchTab(QWidget):
         if not preview_url:
             self._toggle_annex_preview(str(index))
             return
+        self._open_annex_image_preview(preview_url, title)
+
+    def _open_annex_image_preview(self, preview_url: str, title: str) -> None:
         popup = self._pdf_popup_for_request(preview_url)
         popup.show_loading(title, QCursor.pos())
         self._place_pdf_popup(popup)
@@ -7209,6 +7274,11 @@ class ResourceSearchTab(QWidget):
             self.popup_font_size, family=self.detail_font_family
         )
         popup.fontSizeChanged.connect(self._set_popup_font_size)
+        popup.fontResetRequested.connect(self._reset_popup_font)
+
+    def _reset_popup_font(self) -> None:
+        self._reset_detail_font()
+        self._set_popup_font_size(DEFAULT_POPUP_FONT_POINT)
 
     def _set_popup_font_size(self, size: float) -> None:
         size = normalize_detail_font_size(size)
@@ -7218,6 +7288,7 @@ class ResourceSearchTab(QWidget):
         self.recent_search_manager.settings.setValue(
             "resource_popup_font_size", size
         )
+        self.recent_search_manager.settings.sync()
 
     def _apply_popup_font_family(self) -> None:
         """본문 글꼴을 바꾸면 열려 있는 팝업도 같은 글꼴로 맞춘다."""
@@ -8293,6 +8364,9 @@ class ResourceSearchTab(QWidget):
                         )
             elif operation == "law_reference_detail":
                 self._show_law_reference_detail(payload)
+            elif operation == "family_law_detail":
+                self.pending_row = dict(payload["row"])
+                self._show_detail(payload["payload"])
             elif operation == "favorite_article_detail":
                 self._show_favorite_article_api_result(payload)
             elif operation == "document_reference_detail":
@@ -10276,7 +10350,10 @@ class ResourceSearchTab(QWidget):
                 # 구버전 저장본은 이미지 ID 자체를 버린 뒤라 화면에서
                 # 재정규화할 수 없다. 이 문서를 처음 다시 열 때만 API를
                 # 호출하고, 새 버전으로 저장한 뒤부터는 로컬에서 연다.
-                if cached_parse_version < ADMIN_RULE_PARSE_VERSION:
+                if (
+                    cached_parse_version < 30
+                    and not isinstance(cached_snapshot.get("detail_payload"), dict)
+                ):
                     cached_snapshot = None
             if cached_snapshot is not None:
                 self._open_cached_resource_snapshot(row, cached_snapshot)
@@ -10478,6 +10555,11 @@ class ResourceSearchTab(QWidget):
         state.update(
             {
                 "html": str(record.get("html") or ""),
+                # defer_restore가 만든 빈 QTextDocument를 완성 문서로
+                # 오인하면 원문 없는 자치법규 저장 HTML을 전혀 읽지 않는다.
+                "document": None,
+                "source_html": "",
+                "prefer_source_html": False,
                 "plain_text": str(record.get("plain_text") or ""),
                 "toc_entries": list(record.get("toc_entries") or []),
                 "font_size": float(
@@ -10521,14 +10603,31 @@ class ResourceSearchTab(QWidget):
         record: dict[str, object],
     ) -> list[tuple[str, str]]:
         """저장 화면의 평문에서 행정규칙 섹션을 꺼내 문단 구조를 복원."""
+        payload = record.get("detail_payload")
+        service = payload.get("AdmRulService") if isinstance(payload, dict) else None
+        if isinstance(service, dict):
+            # 원문이 남아 있으면 이미지 위치를 잃은 구버전 섹션보다 우선한다.
+            source_sections = []
+            for label, source in (
+                ("조문", service.get("조문내용") or service.get("조문")),
+                ("부칙", service.get("부칙")),
+            ):
+                value = admin_rule_text(source)
+                if value:
+                    source_sections.append((label, normalize_admin_rule_text(value)))
+            if source_sections:
+                return source_sections
+        stored_sections = record.get("administrative_rule_sections")
         try:
             parse_version = int(record.get("administrative_rule_parse_version") or 0)
         except (TypeError, ValueError):
             parse_version = 0
-        stored_sections = record.get("administrative_rule_sections")
-        if (
-            parse_version >= ADMIN_RULE_PARSE_VERSION
-            and isinstance(stored_sections, list)
+        has_image_positions = isinstance(stored_sections, list) and any(
+            "[[LAW_IMAGE:" in str(section.get("value") or "")
+            for section in stored_sections if isinstance(section, dict)
+        )
+        if isinstance(stored_sections, list) and (
+            parse_version >= ADMIN_RULE_PARSE_VERSION or has_image_positions
         ):
             sections = []
             for section in stored_sections:
@@ -11767,6 +11866,9 @@ class ResourceSearchTab(QWidget):
         if not isinstance(raw, dict):
             raw = source.get("administrative_rule_images")
         if not isinstance(raw, dict):
+            payload = source.get("detail_payload")
+            raw = payload.get(ADMIN_RULE_IMAGES_KEY) if isinstance(payload, dict) else None
+        if not isinstance(raw, dict):
             return {}
         # 아래에 빈 종이가 붙어 온 그림은 잘라서 넣는다. 그대로 두면
         # 그림 아래에 흰 칸이 남아 다음 항목이 한참 밑으로 밀린다.
@@ -12426,6 +12528,9 @@ class ResourceSearchTab(QWidget):
             " ".join(str(entry.get("label") or "").split()): index
             for index, entry in enumerate(self._annex_section_entries)
         }
+        if sum(str(entry.get("label") or "").strip() == "별표"
+               for entry in self._annex_section_entries) != 1:
+            entries_by_label.pop("별표", None)
         row = self._current_document_row()
         apply_annex_links(
             self.detail_view.document(), document_name=str(row.get("name") or ""),

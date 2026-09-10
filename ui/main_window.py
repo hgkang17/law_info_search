@@ -2719,6 +2719,7 @@ class LawSearchWindow(QMainWindow):
             QPushButton#referencePopupFavorite,
             QPushButton#referencePopupFontSmaller,
             QPushButton#referencePopupFontLarger,
+            QPushButton#referencePopupFontReset,
             QPushButton#referencePopupPin,
             QPushButton#referencePopupClose {
                 min-height: 28px;
@@ -2733,6 +2734,19 @@ class LawSearchWindow(QMainWindow):
                 background: #1768aa;
                 color: white;
                 border-color: #1768aa;
+            }
+            QPushButton#referencePopupFontSmaller,
+            QPushButton#referencePopupFontLarger,
+            QPushButton#referencePopupFontReset {
+                padding: 0;
+                font-size: 12px;
+                font-weight: 400;
+            }
+            QLabel#referencePopupFontSize {
+                background: transparent;
+                color: #1768aa;
+                font-size: 12px;
+                font-weight: 400;
             }
             QPushButton#referencePopupFavorite[favorite="true"] {
                 color: #d79a00;

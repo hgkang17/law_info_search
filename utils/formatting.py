@@ -389,9 +389,13 @@ def law_reference_html_text(
     # ``제2조제1호 및 제2호``에서 뒤의 호가 이어받을 조 번호.
     adjacent_jo = ""
     adjacent_jo_branch = ""
+    adjacent_hang = ""
+    adjacent_hang_branch = ""
     # 본문이 (이하 "법"이라 한다)로 선언한 약칭 → 실제 법령명.
     declared_aliases: dict[str, str] = dict(law_aliases or {})
     for match in LAW_REFERENCE_PATTERN.finditer(value):
+        previous_law = adjacent_law
+        previous_gap = value[adjacent_end : match.start()] if adjacent_end >= 0 else None
         parts.append(highlight_html_text(value[last : match.start()], terms))
         explicit_law = match.group("law")
         sibling_unit = match.group("sibling_unit")
@@ -455,20 +459,41 @@ def law_reference_html_text(
         # 이어지는 경우는 그 조의 다른 호를 가리키므로 조를 이어받아 건다.
         carried_jo = ""
         carried_jo_branch = ""
+        carried_hang = ""
+        carried_hang_branch = ""
         if unit_match and not unit_match.group("jo"):
             if (
                 adjacent_jo
-                and _is_enumeration_gap(value[adjacent_end : match.start()])
+                and previous_gap is not None
+                and "\n" not in previous_gap
+                and "\r" not in previous_gap
+                and _is_enumeration_gap(previous_gap)
+                and law_name == previous_law
+                and not explicit_law
+                and not sibling_unit
             ):
                 carried_jo = adjacent_jo
                 carried_jo_branch = adjacent_jo_branch
+                # 호만 잇는 열거는 앞 항도 이어받는다. 새 항이 명시되면
+                # 앞 항/항 가지번호를 버려 중복된 URL 매개변수를 만들지 않는다.
+                if not unit_match.group("hang"):
+                    carried_hang = adjacent_hang
+                    carried_hang_branch = adjacent_hang_branch
             else:
+                adjacent_jo = adjacent_jo_branch = ""
+                adjacent_hang = adjacent_hang_branch = ""
                 parts.append(highlight_html_text(reference, terms))
                 last = match.end()
                 continue
         if unit_match and unit_match.group("jo"):
             adjacent_jo = str(unit_match.group("jo") or "")
             adjacent_jo_branch = str(unit_match.group("jo_branch") or "")
+        if unit_match:
+            adjacent_hang = str(unit_match.group("hang") or carried_hang)
+            adjacent_hang_branch = str(unit_match.group("hang_branch") or carried_hang_branch)
+        else:
+            adjacent_jo = adjacent_jo_branch = ""
+            adjacent_hang = adjacent_hang_branch = ""
         if use_api_links:
             parameters = [f"name={quote(law_name, safe='')}"]
             # 법령ID는 지금 보고 있는 법령을 가리킬 때만 재사용한다.
@@ -486,6 +511,10 @@ def law_reference_html_text(
                     parameters.append(
                         f"jo_branch={quote(carried_jo_branch, safe='')}"
                     )
+                if carried_hang:
+                    parameters.append(f"hang={quote(carried_hang, safe='')}")
+                if carried_hang_branch:
+                    parameters.append(f"hang_branch={quote(carried_hang_branch, safe='')}")
             body = article_reference.strip()
             if body and reference.endswith(body):
                 prefix = reference[: len(reference) - len(body)]
@@ -612,6 +641,7 @@ def body_to_html(
     marker_metrics = QFontMetrics(marker_font)
     current_article_jo = ""
     current_article_branch = ""
+    image_left_margin = 0
 
     def flush_paragraph() -> None:
         if not paragraph_lines:
@@ -633,7 +663,7 @@ def body_to_html(
         paragraph_lines.clear()
 
     def flush_bullet() -> None:
-        nonlocal bullet_marker, bullet_level
+        nonlocal bullet_marker, bullet_level, image_left_margin
         if not bullet_lines:
             return
         content = "<br>".join(
@@ -713,6 +743,7 @@ def body_to_html(
         # 않으므로, 번호 폭을 margin-left에 포함해야 음수 text-indent로
         # 번호가 문서 바깥으로 잘리지 않는다.
         block_left_margin = left_margin + marker_indent
+        image_left_margin = block_left_margin
         parts.append(
             f'<div class="legal-indent level-{bullet_level}" '
             f'style="margin:0 0 {item_gap}px {block_left_margin}px; '
@@ -803,7 +834,7 @@ def body_to_html(
             if image_uri.startswith("data:image/"):
                 parts.append(
                     '<div class="law-source-image" '
-                    'style="margin:8px 0 12px 0;">'
+                    f'style="margin:4px 0 {item_gap}px {image_left_margin}px; line-height:100%;">'
                     f'<img src="{escape(image_uri, quote=True)}" '
                     f'alt="원문 표 이미지 {escape(image_id)}" '
                     'style="max-width:100%;" /></div>'
@@ -815,7 +846,7 @@ def body_to_html(
                 )
                 parts.append(
                     '<div class="law-source-image-missing" '
-                    'style="margin:8px 0 12px 0; color:#526176;">'
+                    f'style="margin:4px 0 {item_gap}px {image_left_margin}px; color:#526176;">'
                     f'<a href="{escape(image_url, quote=True)}">'
                     "원문 표 이미지 열기</a></div>"
                 )
@@ -835,6 +866,7 @@ def body_to_html(
         if heading_match:
             flush_bullet()
             flush_paragraph()
+            image_left_margin = 0
             marker, heading = heading_match.groups()
             # 조 제목(제1조(목적))은 본문 크기 그대로다. 장 제목은 그보다
             # 한 포인트만 크게 둔다. px로 못 박으면 사용자가 본문 크기를

@@ -34,6 +34,7 @@ from utils.parsing import (
     resolve_law_reference_row,
     slice_law_detail_to_article,
     split_article_query,
+    extract_law_article,
 )
 import re
 import xml.etree.ElementTree as ET
@@ -169,6 +170,54 @@ def load_law_reference_payload(
     return historical
 
 
+def named_article_search_hit(oc: str, query: str) -> dict | None:
+    """법령 약칭과 조문 지정을 통합검색/조문검색에서 같은 방식으로 해석한다."""
+    request = split_article_query(query)
+    if request is None:
+        return None
+    canonical = resolve_law_alias(request["law_name"]).canonical or request["law_name"]
+    row = named_law_reference_row(oc, canonical)
+    payload = get_law_article(
+        oc, str(row.get("id") or ""), request["jo"],
+        hang=request["hang"], ho=request["ho"],
+    )
+    return {"row": dict(row), "unit": request, "payload": payload}
+
+
+def named_article_search_root(oc: str, query: str) -> ET.Element:
+    """직접 받은 조문을 기존 목록/캐시가 읽는 XML 형태로 전달한다."""
+    root = ET.Element("직접조문검색", direct_article_query=query)
+    count = ET.SubElement(root, "검색결과개수")
+    count.text = "0"
+    hit = named_article_search_hit(oc, query)
+    if hit is None:
+        return root
+    row, unit = hit["row"], hit["unit"]
+    content = extract_law_article(hit["payload"], unit["jo"], unit["hang"], unit["ho"])
+    if not content.strip():
+        return root
+    node = ET.SubElement(root, "법령", id=str(row.get("id") or ""))
+    fields = {
+        "법령명": str(row.get("name") or unit["law_name"]),
+        "법령약칭명": str(row.get("short_name") or ""),
+        "법령ID": str(row.get("id") or ""),
+        "조문번호": str(int(unit["jo"][:4])),
+        "조문가지번호": str(int(unit["jo"][4:])),
+        "항번호": str(int(unit["hang"][:4])) if unit["hang"] else "",
+        "호번호": str(int(unit["ho"][:4])) if unit["ho"] else "",
+        "조문내용": content,
+        "조문제목": "",
+        "직접조회완료": "1",
+        "직접조회표기": unit["label"],
+        "시행일자": str(row.get("effective") or ""),
+        "소관부처명": str(row.get("organization") or ""),
+    }
+    for key, value in fields.items():
+        ET.SubElement(node, key).text = value
+    count.text = "1"
+    return root
+
+
 class ApiWorker(QThread):
     """네트워크 요청으로 UI가 멈추지 않도록 하는 작업 스레드."""
 
@@ -199,13 +248,17 @@ class ApiWorker(QThread):
     def run(self) -> None:
         try:
             if self.operation == "search":
-                roots, errors = search_agencies(
-                    self.oc,
-                    self.agencies,
-                    query=self.query,
-                    search=self.search_scope,
-                    display=100,
-                )
+                if self.agencies == (AI_SEARCH_AGENCY,) and split_article_query(self.query):
+                    roots = [(AI_SEARCH_AGENCY, named_article_search_root(self.oc, self.query))]
+                    errors = []
+                else:
+                    roots, errors = search_agencies(
+                        self.oc,
+                        self.agencies,
+                        query=self.query,
+                        search=self.search_scope,
+                        display=100,
+                    )
                 result = {"roots": roots, "errors": errors}
             else:
                 if self.agency is None:
@@ -332,29 +385,12 @@ class ResourceApiWorker(QThread):
         떼어 내 그 법의 그 조문을 직접 받는다. 실제로 있는 조문일 때만
         돌려주므로 없는 조문으로 헛줄이 생기지 않는다.
         """
-        request = split_article_query(self.query)
-        if request is None:
-            return None
         try:
-            # 약칭으로 적어도 찾는다(국토계획법 → 국토의 계획 및 이용에
-            # 관한 법률). 목록 API는 정식 명칭으로 물어야 정확히 걸린다.
-            canonical = (
-                resolve_law_alias(request["law_name"]).canonical
-                or request["law_name"]
-            )
-            law_row = named_law_reference_row(self.oc, canonical)
-            payload = get_law_article(
-                self.oc,
-                str(law_row.get("id") or ""),
-                request["jo"],
-                hang=request["hang"],
-                ho=request["ho"],
-            )
+            return named_article_search_hit(self.oc, self.query)
         except Exception:
             # 조문을 못 찾으면 그냥 넣지 않는다. 나머지 검색 결과는 그대로
             # 보여 준다.
             return None
-        return {"row": dict(law_row), "unit": dict(request), "payload": payload}
 
     def _search_law_family(self, errors: list[str]) -> dict | None:
         """하위법령을 찾은 검색어면 모법 이름으로 목록을 한 번 더 받는다.
@@ -460,6 +496,11 @@ class ResourceApiWorker(QThread):
                         search_scope=self.search_scope,
                         display=100,
                     )
+            elif self.operation == "family_law_detail":
+                row = named_law_reference_row(self.oc, self.law_name)
+                payload = get_resource_detail(self.oc, "eflaw", str(row["id"]))
+                attach_law_images(payload)
+                result = {"row": {**row, "target": "law", "label": "법령", "raw": row.get("raw", {})}, "payload": payload}
             elif self.operation in (
                 "resource_detail",
                 "document_reference_detail",

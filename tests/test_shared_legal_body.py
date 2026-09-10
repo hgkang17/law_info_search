@@ -10,6 +10,7 @@ from storage.cache import LawDocumentCache
 from storage.recent import RecentSearchManager
 from ui.tabs.ai_search import AiLawSearchTab
 from ui.tabs.resource_search import ResourceSearchTab
+from ui.tabs.ai_chat_panel import AiChatPanel
 from utils.parsing import law_article_text, normalize_legal_body
 
 
@@ -28,6 +29,7 @@ class _Anchors(HTMLParser):
 def tab(tmp_path, monkeypatch):
     QApplication.instance() or QApplication([])
     monkeypatch.setattr(ResourceSearchTab, "_queue_three_stage_link_request", lambda *a: None)
+    monkeypatch.setattr(AiChatPanel, "_start_visible_background_checks", lambda self: None)
     settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
     widget = ResourceSearchTab(lambda: "", RecentSearchManager(settings), LawDocumentCache(tmp_path / "saved"))
     yield widget
@@ -35,6 +37,48 @@ def tab(tmp_path, monkeypatch):
 
 
 SOURCE = "제1조(기준) 별표 1 및 제2조에 따른다."
+
+
+def test_decree_enumerated_ho_click_keeps_all_api_units(tab, monkeypatch):
+    from utils.formatting import law_reference_html_text
+
+    html = law_reference_html_text(
+        "법 제26조제1항제1호 및 제5호", (),
+        current_law_name="국토의 계획 및 이용에 관한 법률 시행령", use_api_links=True,
+    )
+    url = next(url for url in _Anchors(html).urls if QUrlQuery(QUrl(url)).queryItemValue("ho") == "5")
+    monkeypatch.setattr(tab, "_load_reference_cache", lambda key: {"title": "제5호", "html": "<p>본문</p>"})
+    tab.open_reference_link(QUrl(url))
+    requests = [popup.reference_request for popup in tab._all_reference_popups()]
+    assert any(request and request.get("jo") == "002600"
+               and request.get("hang") == "000100" and request.get("ho") == "000500"
+               for request in requests)
+
+
+@pytest.mark.parametrize("target", ["law", "admrul", "ordin"])
+def test_enumerated_ho_in_full_document_popup_and_comparison(tab, target):
+    law = "국토의 계획 및 이용에 관한 법률"
+    source = f"제19조의2(기준) 1. 「{law}」 제26조제1항제1호 및 제5호에 따른다."
+    row = {"target": target, "id": "test-id", "name": "검증문서"}
+    payloads = {
+        "law": {"법령": {"조문": {"조문단위": {"조문내용": source}}}},
+        "ordin": {"LawService": {"조문": {"조": {"조내용": source}}}},
+        "admrul": {"AdmRulService": {"조문내용": source}},
+    }
+    tab.pending_row = row
+    tab._set_detail_document(row["name"], [], [("조문", source)], build_toc=True,
+                             administrative_rule=target == "admrul")
+    _, popup_html = tab._document_reference_html(row, payload=payloads[target])
+    comparison_html = tab._three_stage_node_html(
+        {"조내용": source}, fallback_law_name=row["name"],
+    )
+    for html in (tab.detail_view.toHtml(), popup_html, comparison_html):
+        queries = [QUrlQuery(QUrl(url)) for url in _Anchors(html).urls if url.startswith("lawref:")]
+        fifth = [query for query in queries if query.queryItemValue("ho") == "5"]
+        assert fifth
+        assert all(query.queryItemValue("name") == law
+                   and query.queryItemValue("jo") == "26"
+                   and query.queryItemValue("hang") == "1" for query in fifth)
 
 
 @pytest.mark.parametrize("target,category", [("law", "licbyl"), ("admrul", "admbyl"), ("ordin", "ordinbyl")])
