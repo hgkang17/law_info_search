@@ -353,8 +353,9 @@ class AiLawSearchTab(QWidget):
         self.detail_font_spin = detail_controls.font_spin
         self.detail_font_reset = detail_controls.font_reset
         self.detail_font_reset.clicked.connect(self._reset_detail_font)
-        self.detail_font_combo.currentFontChanged.connect(
-            self._set_detail_font_family
+        # 모델 갱신ㆍ프로그램의 선택 복원은 사용자 글꼴 설정이 아니다.
+        self.detail_font_combo.activated.connect(
+            lambda _index: self._set_detail_font_family(self.detail_font_combo.currentFont())
         )
         self.detail_font_spin.valueChanged.connect(self._set_detail_font_size)
 

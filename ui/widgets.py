@@ -850,21 +850,20 @@ class LeadingFontComboBox(QFontComboBox):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        # 눌러서 고른 뒤에만 휠이 먹는다. 아래 본문 참조.
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.currentFontChanged.connect(self._queue_leading_text)
 
     def wheelEvent(self, event) -> None:
-        """고르지 않은 칸 위에서는 휠을 흘려보낸다.
+        """닫힌 글꼴 칸에서는 포커스가 남아 있어도 휠로 바꾸지 않는다.
 
         이 칸은 본문 바로 위 머리줄에 있다. 본문을 굴리려다 커서가 여기에
         걸리면 글꼴이 통째로 바뀌고 그 값이 설정에 저장돼, 다음에 프로그램을
         켜도 엉뚱한 글꼴로 열렸다(Arial로 바뀌어 있던 일이 그것이다).
         """
-        if not self.hasFocus():
-            event.ignore()
-            return
-        super().wheelEvent(event)
+        # 글꼴을 고른 뒤에도 포커스는 남는다. 그때 휠 한 칸만 굴려도
+        # Gulim 다음의 GulimChe가 저장된다. 펼친 목록의 스크롤은 목록
+        # 뷰가 처리하므로 여기서는 키보드ㆍ명시적 목록 선택만 허용한다.
+        event.ignore()
 
     def setCurrentFont(self, font: QFont) -> None:
         super().setCurrentFont(font)
@@ -2026,7 +2025,7 @@ class StableHorizontalTableWidget(QTableWidget):
 
 
 class DeferredWrapTextBrowser(QTextBrowser):
-    """실제 최상위 창 크기 조절 중에만 줄바꿈을 잠시 미룬다."""
+    """창ㆍ패널 폭 변경 중 줄바꿈을 미루고 상단 글자의 높이를 보존한다."""
 
     WRAP_SETTLE_MS = 140
 
@@ -2034,16 +2033,17 @@ class DeferredWrapTextBrowser(QTextBrowser):
         super().__init__(parent)
         self._wrap_deferred = False
         self._restoring_wrap = False
-        self._resize_scroll_ratio = 0.0
         self._resize_anchor_position = -1
         self._resize_anchor_viewport_y = 0
-        self._last_top_level_size = QSize()
         self._deferred_horizontal_policy = (
             Qt.ScrollBarPolicy.ScrollBarAsNeeded
         )
         self._wrap_timer = QTimer(self)
         self._wrap_timer.setSingleShot(True)
         self._wrap_timer.timeout.connect(self._finish_deferred_wrap)
+        self._resize_restore_timer = QTimer(self)
+        self._resize_restore_timer.setSingleShot(True)
+        self._resize_restore_timer.timeout.connect(self._restore_resize_scroll)
         # Qt 기본 문서 여백 4px은 글자가 테두리에 붙어 보인다. 본문을 쓰는
         # 세 화면이 모두 이 클래스를 쓰므로 여기서 한 번만 넓혀 둔다.
         self.document().setDocumentMargin(DETAIL_DOCUMENT_MARGIN)
@@ -2098,25 +2098,24 @@ class DeferredWrapTextBrowser(QTextBrowser):
 
     def viewportEvent(self, event) -> bool:
         if event.type() == QEvent.Type.Resize and hasattr(self, "_wrap_timer"):
-            top_level_size = self.window().size()
-            top_level_resized = (
-                self._last_top_level_size.isValid()
-                and top_level_size != self._last_top_level_size
+            viewport_resized = (
+                event.oldSize().isValid() and event.size() != event.oldSize()
             )
-            self._last_top_level_size = QSize(top_level_size)
             if (
                 not self._restoring_wrap
                 and self.document().characterCount() > 1
-                and (top_level_resized or self._wrap_deferred)
+                and (viewport_resized or self._wrap_deferred)
             ):
                 if not self._wrap_deferred:
-                    scroll_bar = self.verticalScrollBar()
-                    self._resize_scroll_ratio = (
-                        scroll_bar.value() / scroll_bar.maximum()
-                        if scroll_bar.maximum() > 0
-                        else 0.0
-                    )
                     anchor_cursor = self.cursorForPosition(QPoint(2, 2))
+                    anchor_rect = self.cursorRect(anchor_cursor)
+                    if anchor_rect.top() < 0:
+                        # 첫 줄이 위로 잘려 있으면 그다음 온전한 줄을 잡는다.
+                        # 글자 없는 밑 여백만 남은 직전 줄을 기준으로 삼으면
+                        # 폭 변경 후 그 줄이 다시 화면 위에 나타날 수 있다.
+                        anchor_cursor = self.cursorForPosition(
+                            QPoint(2, max(2, anchor_rect.bottom() + 1))
+                        )
                     self._resize_anchor_position = anchor_cursor.position()
                     self._resize_anchor_viewport_y = self.cursorRect(
                         anchor_cursor
@@ -2148,8 +2147,26 @@ class DeferredWrapTextBrowser(QTextBrowser):
         바꾼 직후 본문이 빈 것처럼 보이던 원인이다.
         """
         self._wrap_timer.stop()
+        self._resize_restore_timer.stop()
         self._resize_anchor_position = -1
         self._finish_deferred_wrap()
+        self._resize_restore_timer.stop()
+
+    def setDocument(self, document: QTextDocument) -> None:
+        self.settle_wrap_now()
+        super().setDocument(document)
+
+    def setHtml(self, text: str) -> None:
+        self.settle_wrap_now()
+        super().setHtml(text)
+
+    def setPlainText(self, text: str) -> None:
+        self.settle_wrap_now()
+        super().setPlainText(text)
+
+    def clear(self) -> None:
+        self.settle_wrap_now()
+        super().clear()
 
     def _finish_deferred_wrap(self) -> None:
         if not self._wrap_deferred:
@@ -2165,9 +2182,8 @@ class DeferredWrapTextBrowser(QTextBrowser):
         finally:
             self.setUpdatesEnabled(True)
             self._restoring_wrap = False
-        # 수신 객체를 함께 넘겨, 창을 닫은 뒤 남은 다음 틱 콜백이 파괴된
-        # QTextBrowser를 다시 만지지 않게 한다.
-        QTimer.singleShot(0, self, self._restore_resize_scroll)
+        # 문서 교체 시 취소할 수 있게 소유 타이머를 사용한다.
+        self._resize_restore_timer.start(0)
         self.viewport().update()
 
     def _restore_resize_scroll(self) -> None:
@@ -2186,7 +2202,7 @@ class DeferredWrapTextBrowser(QTextBrowser):
             )
             self._resize_anchor_position = -1
             return
-        scroll_bar.setValue(round(self._resize_scroll_ratio * scroll_bar.maximum()))
+        # 문서 전환ㆍ재렌더링으로 취소한 복원을 새 본문에 적용하지 않는다.
 
 
 class SearchHighlightDelegate(QStyledItemDelegate):

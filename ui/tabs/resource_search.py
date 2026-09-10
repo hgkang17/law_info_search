@@ -1093,8 +1093,9 @@ class ResourceSearchTab(QWidget):
         self.detail_font_spin = detail_controls.font_spin
         self.detail_font_reset = detail_controls.font_reset
         self.detail_font_reset.clicked.connect(self._reset_detail_font)
-        self.detail_font_combo.currentFontChanged.connect(
-            self._set_detail_font_family
+        # 모델 갱신ㆍ프로그램의 선택 복원은 사용자 글꼴 설정이 아니다.
+        self.detail_font_combo.activated.connect(
+            lambda _index: self._set_detail_font_family(self.detail_font_combo.currentFont())
         )
         self.restore_view_button = build_restore_view_button(self)
         self.toc_toggle_button = QPushButton("목차")
@@ -1563,49 +1564,15 @@ class ResourceSearchTab(QWidget):
             self._show_ai_chat()
         self._ai_chat_was_open = self.ai_chat_panel.isVisible()
 
-    def _detail_reading_position(self) -> int:
-        """지금 화면 맨 위에 걸린 본문 글자의 자리."""
-        cursor = self.detail_view.cursorForPosition(QPoint(0, 0))
-        return int(cursor.position())
-
-    def _restore_detail_reading_position(self, position: int) -> None:
-        """본문 폭이 바뀐 뒤에도 그 글자가 다시 화면 맨 위에 오게 한다.
-
-        패널을 열면 본문이 좁아지며 줄바꿈이 다시 잡힌다. 스크롤 막대의
-        픽셀 값은 그대로여서, 보던 조문이 화면 밖으로 밀려 어디를 읽고
-        있었는지 놓치게 된다.
-        """
-        settle = getattr(self.detail_view, "settle_wrap_now", None)
-        if callable(settle):
-            settle()
-        document = self.detail_view.document()
-        limit = max(0, document.characterCount() - 1)
-        cursor = QTextCursor(document)
-        cursor.setPosition(min(max(0, position), limit))
-        scroll_bar = self.detail_view.verticalScrollBar()
-        offset = self.detail_view.cursorRect(cursor).top()
-        scroll_bar.setValue(
-            max(0, min(scroll_bar.value() + offset, scroll_bar.maximum()))
-        )
-
-    def _keep_reading_position(self, position: int) -> None:
-        """폭 변화가 한 프레임 뒤에 반영되는 경우까지 자리를 지킨다."""
-        self._restore_detail_reading_position(position)
-        QTimer.singleShot(
-            0, lambda target=position: self._restore_detail_reading_position(target)
-        )
-
     def _show_ai_chat(self) -> None:
         sizes = self.main_splitter.sizes()
         total = sum(sizes) or self.main_splitter.width()
         # 본문을 가리지 않도록 다섯 중 하나만 쓴다. 다만 너무 좁으면
         # 글이 한 줄에 몇 자 안 들어가므로 최소 폭은 지킨다.
         chat_width = max(300, total // 5)
-        reading_position = self._detail_reading_position()
         self.ai_chat_panel.show()
         self.main_splitter.setSizes([0, max(1, total - chat_width), chat_width])
         self.ai_chat_panel.input_edit.setFocus()
-        self._keep_reading_position(reading_position)
 
     def _close_ai_chat(self, *_args: object) -> None:
         """× 로 닫으면 다음 크게 보기에서도 닫힌 채로 시작한다."""
@@ -1616,12 +1583,10 @@ class ResourceSearchTab(QWidget):
         if not self.ai_chat_panel.isVisible():
             return
         total = sum(self.main_splitter.sizes())
-        reading_position = self._detail_reading_position()
         self.ai_chat_panel.hide()
         if self._reading_mode:
             self.main_splitter.setSizes([0, max(1, total), 0])
             self.detail_view.setFocus()
-        self._keep_reading_position(reading_position)
 
     def _exit_reading_mode(self) -> None:
         if self._reading_mode:

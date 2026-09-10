@@ -86,3 +86,18 @@ def test_wheel_still_works_after_the_control_is_focused(tmp_path) -> None:
 
     assert tab.detail_font_size < DEFAULT_DETAIL_FONT_POINT
     tab.close()
+
+
+def test_focused_closed_font_combo_does_not_change_font_on_scroll(tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    tab, settings = _tab(tmp_path)
+    try:
+        tab.detail_font_combo.setFocus()
+        app.processEvents()
+        assert tab.detail_font_combo.hasFocus()
+        _scroll(app, tab.detail_font_combo, steps=1)
+        assert tab.detail_font_combo.currentFont().family() == DETAIL_FONT_FAMILY
+        assert tab.detail_font_family == DETAIL_FONT_FAMILY
+        assert settings.value('resource_detail_font_family') == DETAIL_FONT_FAMILY
+    finally:
+        tab.close()
