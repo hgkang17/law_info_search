@@ -25,7 +25,7 @@ from molit_cgm_expc_api import (
     search_agencies,
     search_resource,
 )
-from llm.law_aliases import resolve_law_alias
+from llm.law_aliases import law_family_base_name, resolve_law_alias
 from utils.parsing import (
     choose_law_reference_row,
     json_list,
@@ -356,6 +356,25 @@ class ResourceApiWorker(QThread):
             return None
         return {"row": dict(law_row), "unit": dict(request), "payload": payload}
 
+    def _search_law_family(self, errors: list[str]) -> dict | None:
+        """하위법령을 찾은 검색어면 모법 이름으로 목록을 한 번 더 받는다.
+
+        ``국토계획법 시행규칙``으로 물으면 그 시행규칙 한 줄만 온다.
+        모법 이름(``국토계획법``)으로 물으면 법ㆍ시행령ㆍ시행규칙이 함께
+        오므로, 그 응답을 따로 넘겨 화면에서 한 벌로 세운다. 실패해도
+        나머지 검색 결과는 그대로 낸다.
+        """
+        base_name = law_family_base_name(self.query)
+        if not base_name:
+            return None
+        try:
+            return search_resource(
+                self.oc, "law", base_name, search_scope=1, display=100
+            )
+        except Exception as exc:
+            errors.append(f"법령 한 벌: {exc}")
+            return None
+
     def run(self) -> None:
         try:
             if self.operation == "resource_search":
@@ -398,6 +417,12 @@ class ResourceApiWorker(QThread):
                     result = {
                         "integrated_results": results,
                         "keyword_roots": keyword_roots,
+                        # ``국토계획법 시행규칙``처럼 하위법령을 찾았으면
+                        # 모법 이름으로 한 번 더 물어 같은 한 벌(모법ㆍ
+                        # 시행령ㆍ시행규칙)을 함께 올린다. 목록 검색은
+                        # 이름을 앞에서부터 맞춰 하위법령 이름으로는
+                        # 그 하나만 오기 때문이다.
+                        "law_family": self._search_law_family(errors),
                         # ``국토계획법 25조``처럼 조문을 집어 적은 검색어면
                         # 그 조문을 조항호목 API로 직접 받아 함께 넘긴다.
                         "article_hit": self._search_article_hit(),

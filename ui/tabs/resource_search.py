@@ -327,24 +327,60 @@ def search_name_similarity(
 _LAW_FAMILY_SUFFIXES = ("시행령", "시행규칙")
 
 
-def search_name_family_rank(query: str, name: str) -> int | None:
-    """이름을 그대로 찾았거나 그 법의 시행령ㆍ시행규칙이면 그 순위.
+def _law_family_query_keys(query: str) -> list[str]:
+    """검색어와 그 약칭을 푼 정식 제명을 같은 자로 잰 열쇠로 만든다."""
+    keys: list[str] = []
+    for value in (query, resolve_law_alias(query).canonical):
+        key = search_name_key(value)
+        if key and key not in keys:
+            keys.append(key)
+    return keys
+
+
+def _law_family_split(key: str) -> tuple[str, str]:
+    """``농지법시행규칙``을 (``농지법``, ``시행규칙``)으로 나눈다."""
+    for suffix in _LAW_FAMILY_SUFFIXES:
+        if key.endswith(suffix) and len(key) > len(suffix):
+            return key[: -len(suffix)], suffix
+    return key, ""
+
+
+def search_name_family_rank(
+    query: str, name: str, short_name: str = ""
+) -> int | None:
+    """검색한 법령과 한 벌로 세울 자료면 그 순위. 아니면 ``None``.
 
     ``농지법``을 찾으면 ``농지법``ㆍ``농지법 시행령``ㆍ``농지법 시행규칙``
     세 줄이 한 묶음으로 맨 위에 서야 한다. 이름 유사도만으로는 시행령ㆍ
-    시행규칙이 기준(0.8)에 못 미쳐 한참 아래로 밀렸다. 이름이 정확히
-    ``검색어 + 시행령/시행규칙``일 때만 걸리므로, 상위법 이름을 품기만 한
-    다른 자료(``「농지법」 제23조제1항9호 …`` 별표)는 올라오지 않는다.
+    시행규칙이 기준(0.8)에 못 미쳐 한참 아래로 밀렸다.
+
+    하위법령 이름으로 찾았을 때도 같은 한 벌을 세운다. 찾은 것이 0번이고
+    나머지는 법 → 시행령 → 시행규칙 차례다(``국토계획법 시행규칙``을
+    찾으면 시행규칙ㆍ법ㆍ시행령). 찾은 줄이 맨 위여야 목록을 열자마자
+    그 조문이 열린다. 이름이 정확히 ``모법 + 시행령/시행규칙``일 때만
+    걸리므로, 상위법 이름을 품기만 한 다른 자료(``「농지법」 제23조제1항
+    9호 …`` 별표)는 올라오지 않는다.
     """
-    query_key = search_name_key(query)
-    name_key = search_name_key(name)
-    if not query_key or not name_key:
+    query_keys = _law_family_query_keys(query)
+    name_keys = [
+        key
+        for key in (search_name_key(name), search_name_key(short_name))
+        if key
+    ]
+    if not query_keys or not name_keys:
         return None
-    if name_key == query_key:
+    if any(query_key in name_keys for query_key in query_keys):
         return 0
-    for index, suffix in enumerate(_LAW_FAMILY_SUFFIXES, start=1):
-        if name_key == query_key + suffix:
-            return index
+    for query_key in query_keys:
+        base, _suffix = _law_family_split(query_key)
+        if not base:
+            continue
+        family = [base] + [base + suffix for suffix in _LAW_FAMILY_SUFFIXES]
+        # 찾은 줄은 0번으로 이미 나갔으므로 나머지만 차례를 매긴다.
+        rest = [member for member in family if member != query_key]
+        for index, member in enumerate(rest, start=1):
+            if member in name_keys:
+                return index
     return None
 
 
@@ -5216,6 +5252,27 @@ class ResourceSearchTab(QWidget):
             node_links(decree_nodes, "대통령령", "시행령")
         )
         base_authority_links = {"대통령령": decree_href} if decree_href else {}
+        # 법률이 시행령을 거치지 않고 부령에 곧바로 위임하기도 한다
+        # (물환경보전법 제56조 → 기후에너지환경부령). 대통령령만 이어 두면
+        # 그런 조문에는 3단비교 표 안에 링크가 하나도 걸리지 않았다.
+        # 부처 이름은 개편으로 바뀌므로(환경부 → 기후에너지환경부) 소관부처
+        # 값이 아니라 조문에 적힌 문구를 그대로 집어 링크를 건다.
+        rule_phrases: list[str] = []
+        for phrase in self._RULE_DELEGATION_PATTERN.findall(
+            json_text(base_node.get("조내용"))
+        ):
+            if phrase not in rule_phrases:
+                rule_phrases.append(phrase)
+        rule_href = (
+            self._inline_subordinate_href(
+                node_links(rule_nodes, rule_phrases[0], "시행규칙")
+            )
+            if rule_phrases
+            else ""
+        )
+        if rule_href:
+            for phrase in rule_phrases:
+                base_authority_links.setdefault(phrase, rule_href)
 
         base_html = self._three_stage_node_html(
             base_node,
@@ -9052,6 +9109,11 @@ class ResourceSearchTab(QWidget):
                 total_count += keyword_total
             except Exception as exc:
                 errors.append(f"연관검색ㆍ직접검색: {exc}")
+            # 하위법령 이름으로 찾았으면 같은 한 벌(모법ㆍ시행령ㆍ시행규칙)
+            # 가운데 목록에 없던 나머지를 채운다.
+            family_rows = self._law_family_rows(payload.get("law_family"), rows)
+            rows.extend(family_rows)
+            total_count += len(family_rows)
             # 검색어가 조문을 집어 적었으면 그 조문을 목록 맨 앞에 세운다.
             article_row = self._article_hit_row(payload.get("article_hit"))
             if article_row is not None:
@@ -9116,7 +9178,9 @@ class ResourceSearchTab(QWidget):
                 score = name_scores.get(id(row), 0.0)
                 matched = score >= self.INTEGRATED_NAME_MATCH_RATIO
                 family_rank = search_name_family_rank(
-                    query_text, str(row.get("name") or "")
+                    query_text,
+                    str(row.get("name") or ""),
+                    str(row.get("short_name") or ""),
                 )
                 is_family = (
                     family_rank is not None and not row.get("ai_recommended")
@@ -9927,6 +9991,44 @@ class ResourceSearchTab(QWidget):
         except (TypeError, ValueError):
             total_count = len(rows)
         return rows, total_count
+
+    def _law_family_rows(
+        self, payload: object, existing: list[dict[str, object]]
+    ) -> list[dict[str, object]]:
+        """모법 이름으로 다시 받은 목록에서 같은 한 벌만 골라 낸다.
+
+        ``국토계획법 시행규칙``으로 찾으면 목록에는 그 시행규칙 한 줄만
+        온다. 모법 이름으로 한 번 더 받은 응답(`law_family`)에서 모법ㆍ
+        시행령ㆍ시행규칙만 추려 이미 있는 줄을 빼고 채운다. 이름이 정확히
+        ``모법 + 시행령/시행규칙``인 것만 통과하므로 이름이 비슷한 다른
+        법령은 따라 들어오지 않는다.
+        """
+        if not isinstance(payload, dict):
+            return []
+        try:
+            candidates, _total = self._parse_resource_rows(payload, "law")
+        except ValueError:
+            return []
+        query = self.query_input.text().strip()
+        seen = {
+            (str(row.get("target") or ""), str(row.get("id") or ""))
+            for row in existing
+        }
+        family: list[dict[str, object]] = []
+        for row in candidates:
+            key = ("law", str(row.get("id") or ""))
+            if key in seen:
+                continue
+            rank = search_name_family_rank(
+                query,
+                str(row.get("name") or ""),
+                str(row.get("short_name") or ""),
+            )
+            if rank is None:
+                continue
+            seen.add(key)
+            family.append(row)
+        return family
 
     @staticmethod
     def _keyword_result_number(value: str) -> str:

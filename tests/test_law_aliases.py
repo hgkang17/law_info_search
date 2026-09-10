@@ -4,6 +4,7 @@ from llm.base import progress_law_name
 from llm.law_aliases import (
     display_alias,
     expand_search_queries,
+    law_family_base_name,
     has_related_hit,
     resolve_law_alias,
     resolved_law_matches,
@@ -73,3 +74,17 @@ def test_resolved_law_matches_rejects_like_substring() -> None:
     assert not resolved_law_matches("민법", "난민법")
     assert resolved_law_matches("주차장법", "주차장법")
     assert resolved_law_matches("국토계획법", "국토의 계획 및 이용에 관한 법률")
+
+
+def test_law_family_base_name_strips_subordinate_suffix() -> None:
+    """하위법령 이름에서 모법 이름만 떼어 낸다."""
+    assert law_family_base_name("국토계획법 시행규칙") == "국토계획법"
+    assert law_family_base_name("국토계획법 시행령") == "국토계획법"
+    assert (
+        law_family_base_name("국토의 계획 및 이용에 관한 법률 시행규칙")
+        == "국토의 계획 및 이용에 관한 법률"
+    )
+    # 모법 이름 자체이거나 법ㆍ법률로 끝나지 않는 지침에는 붙이지 않는다.
+    assert law_family_base_name("국토계획법") == ""
+    assert law_family_base_name("도시ㆍ군관리계획수립지침 시행령") == ""
+    assert law_family_base_name("") == ""

@@ -202,3 +202,108 @@ def test_law_family_sorts_before_ai_recommendations() -> None:
         "농지법 시행규칙",
     ]
     assert rows[3].get("ai_recommended")
+
+
+def test_subordinate_law_search_keeps_its_own_row_first() -> None:
+    """하위법령으로 찾으면 그 줄이 0번, 나머지 한 벌이 법→령→규칙 차례."""
+    assert (
+        search_name_family_rank(
+            "국토계획법 시행규칙",
+            "국토의 계획 및 이용에 관한 법률 시행규칙",
+            "국토계획법 시행규칙",
+        )
+        == 0
+    )
+    assert (
+        search_name_family_rank(
+            "국토계획법 시행규칙",
+            "국토의 계획 및 이용에 관한 법률",
+            "국토계획법",
+        )
+        == 1
+    )
+    assert (
+        search_name_family_rank(
+            "국토계획법 시행규칙",
+            "국토의 계획 및 이용에 관한 법률 시행령",
+            "국토계획법 시행령",
+        )
+        == 2
+    )
+    # 시행령으로 찾아도 마찬가지로 자기 줄이 먼저다.
+    assert search_name_family_rank("농지법 시행령", "농지법 시행령") == 0
+    assert search_name_family_rank("농지법 시행령", "농지법") == 1
+    assert search_name_family_rank("농지법 시행령", "농지법 시행규칙") == 2
+    # 이름이 비슷할 뿐인 다른 법령은 한 벌에 들지 않는다.
+    assert search_name_family_rank("농지법 시행령", "농어촌정비법") is None
+
+
+def _law_list_payload(*names: str) -> dict:
+    return {
+        "LawSearch": {
+            "totalCnt": len(names),
+            "law": [
+                {
+                    # 같은 법령은 어느 응답에서 와도 같은 ID여야 겹침을
+                    # 걸러 낼 수 있다.
+                    "법령ID": f"{abs(hash(name)) % 1000000:06d}",
+                    "법령명한글": name,
+                    "소관부처명": "국토교통부",
+                    "공포일자": "20250101",
+                    "공포번호": "1",
+                    "시행일자": "20250101",
+                    "법령구분명": "법률",
+                }
+                for name in names
+            ],
+        }
+    }
+
+
+def test_law_family_rows_fill_in_the_missing_members(tmp_path) -> None:
+    """시행규칙으로 찾아도 모법ㆍ시행령이 목록에 함께 오른다."""
+    from PySide6.QtCore import QSettings
+    from PySide6.QtWidgets import QApplication
+
+    from storage.cache import LawDocumentCache
+    from storage.recent import RecentSearchManager
+
+    QApplication.instance() or QApplication([])
+    settings = QSettings(str(tmp_path / "family.ini"), QSettings.Format.IniFormat)
+    tab = ResourceSearchTab(
+        lambda: "test-oc",
+        RecentSearchManager(settings),
+        LawDocumentCache(tmp_path / "saved"),
+    )
+    tab.query_input.setText("농지법 시행규칙")
+    existing, _total = tab._parse_resource_rows(
+        _law_list_payload("농지법 시행규칙"), "law"
+    )
+    family = tab._law_family_rows(
+        _law_list_payload(
+            "농지법", "농지법 시행령", "농지법 시행규칙", "농어촌정비법"
+        ),
+        existing,
+    )
+
+    # 이미 목록에 있는 시행규칙은 다시 넣지 않고, 무관한 법령도 거른다.
+    assert [row["name"] for row in family] == ["농지법", "농지법 시행령"]
+
+
+def test_law_family_rows_ignore_a_plain_law_name_search(tmp_path) -> None:
+    """모법 이름으로 찾은 검색에는 덧붙일 것이 없다(응답도 없다)."""
+    from PySide6.QtCore import QSettings
+    from PySide6.QtWidgets import QApplication
+
+    from storage.cache import LawDocumentCache
+    from storage.recent import RecentSearchManager
+
+    QApplication.instance() or QApplication([])
+    settings = QSettings(str(tmp_path / "family2.ini"), QSettings.Format.IniFormat)
+    tab = ResourceSearchTab(
+        lambda: "test-oc",
+        RecentSearchManager(settings),
+        LawDocumentCache(tmp_path / "saved"),
+    )
+    tab.query_input.setText("농지법")
+    assert tab._law_family_rows(None, []) == []

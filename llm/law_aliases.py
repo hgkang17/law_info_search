@@ -304,6 +304,26 @@ def _resolve_subordinate_alias(cleaned: str) -> AliasResolution | None:
     )
 
 
+def law_family_base_name(query: str) -> str:
+    """``국토계획법 시행규칙``에서 모법 이름(``국토계획법``)만 떼어 낸다.
+
+    하위법령 이름으로 찾았을 때 같은 한 벌(모법ㆍ시행령ㆍ시행규칙)을 함께
+    올리려면 모법 이름으로 한 번 더 물어봐야 한다. 목록 검색은 이름을
+    앞에서부터 맞춰 보므로 모법 이름으로 물으면 세 개가 함께 온다.
+    하위법령 이름이 아니면 빈 문자열을 돌려준다.
+    """
+    cleaned = " ".join(str(query or "").split()).strip()
+    match = _SUBORDINATE_SUFFIX_PATTERN.match(cleaned)
+    if match is None:
+        return ""
+    base = match.group("base").strip()
+    # ``도시ㆍ군관리계획수립지침 시행령`` 같은 없는 이름을 만들지 않는다.
+    # 약칭이든 정식 제명이든 모법은 ``법``ㆍ``법률``로 끝난다.
+    if not re.search(r"(?:법|법률)$", base):
+        return ""
+    return base
+
+
 def resolve_law_alias(query: str) -> AliasResolution:
     """쿼리 전체가 약칭이면 정식 명칭을 돌려준다."""
     cleaned = " ".join(str(query or "").split()).strip()

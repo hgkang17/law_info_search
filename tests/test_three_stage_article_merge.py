@@ -793,3 +793,92 @@ def test_announcement_needs_markers_in_order() -> None:
     source = "다음 각 목의 사항을 말한다.나. 어떤 것다. 다른 것"
 
     assert insert_admin_clause_breaks(source).splitlines() == [source]
+
+
+def _water_quality_payload() -> dict:
+    """시행령을 거치지 않고 부령에 곧바로 위임하는 법률 조문(물환경보전법 제56조)."""
+    law_content = (
+        "①  시ㆍ도지사는 기후에너지환경부장관으로부터 제55조제2항에 따라 "
+        "관리대책을 통보받았을 때에는 관리대책의 시행을 위한 계획을 수립하여 "
+        "기후에너지환경부령으로 정하는 바에 따라 기후에너지환경부장관의 승인을 "
+        "받아 시행하여야 한다."
+        "②  시ㆍ도지사는 기후에너지환경부령으로 정하는 바에 따라 전년도 "
+        "시행계획의 이행사항을 평가한 보고서를 작성하여야 한다."
+    )
+
+    def article(rule_number: str, rule_title: str, rule_content: str) -> dict:
+        return {
+            "조번호": "0056",
+            "조가지번호": "00",
+            "조제목": "제56조(시행계획의 수립)",
+            "조내용": law_content,
+            "시행규칙조문": {
+                "법령명": "물환경보전법 시행규칙",
+                "조번호": rule_number,
+                "조가지번호": "00",
+                "조제목": rule_title,
+                "조내용": rule_content,
+            },
+        }
+
+    return {
+        "LawService": {
+            "기본정보": {
+                "법령명": "물환경보전법",
+                "기준법령명": "물환경보전법",
+            },
+            "위임조문삼단비교": {
+                "법률조문": [
+                    article(
+                        "0081",
+                        "제81조(관리대책의 시행을 위한 계획의 절차 등)",
+                        "①  시ㆍ도지사는 법 제56조제1항에 따라 관리대책의 시행을 "
+                        "위한 계획을 수립하려는 경우에는 의견을 수렴하여야 한다.",
+                    ),
+                    article(
+                        "0083",
+                        "제83조(이행사항 평가보고서의 내용 등)",
+                        "①  시ㆍ도지사는 법 제56조제2항에 따라 이행사항 "
+                        "평가보고서를 작성하여야 한다.",
+                    ),
+                ]
+            },
+        }
+    }
+
+
+def test_law_delegating_straight_to_a_rule_links_the_authority(tmp_path) -> None:
+    """법률 칸의 ``기후에너지환경부령``에도 시행규칙 조문 링크가 걸린다."""
+    tab = _tab(tmp_path)
+    html = tab._build_three_stage_comparison_html(
+        _water_quality_payload(),
+        law_id="000166",
+        law_name="물환경보전법",
+        jo="005600",
+        label="제56조(시행계획의 수립)",
+    )
+
+    linked = re.findall(r"<a[^>]*>기후에너지환경부령</a>", html)
+    # 법률 칸의 두 문구 모두 링크가 된다.
+    assert len(linked) == 2
+    # 걸린 시행규칙이 둘이므로 고르는 창을 여는 링크다.
+    assert "lawsub://open?" in html
+
+
+def test_authority_link_is_absent_without_a_connected_rule(tmp_path) -> None:
+    """이어진 시행규칙이 없으면 밑줄만 그어 놓지 않는다."""
+    tab = _tab(tmp_path)
+    payload = _water_quality_payload()
+    articles = payload["LawService"]["위임조문삼단비교"]["법률조문"]
+    for article in articles:
+        article.pop("시행규칙조문")
+    html = tab._build_three_stage_comparison_html(
+        payload,
+        law_id="000166",
+        law_name="물환경보전법",
+        jo="005600",
+        label="제56조(시행계획의 수립)",
+    )
+
+    assert "기후에너지환경부령" in html
+    assert not re.search(r"<a[^>]*>기후에너지환경부령</a>", html)
