@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from utils.legal_body import apply_annex_links, legal_body_to_html
+
 from ui.assets import (
     SEARCH_API_REFRESH_TOOLTIP,
 )
@@ -69,7 +71,6 @@ from workers.search_worker import (
 )
 from utils.constants import DEFAULT_DETAIL_FONT_POINT, DETAIL_FONT_FAMILY
 from utils.formatting import (
-    body_to_html,
     detail_document_header,
     strip_search_highlight_html,
 )
@@ -2165,6 +2166,7 @@ class AiLawSearchTab(QWidget):
                 self._replace_detail_content(
                     html=str(snapshot.get("html") or ""), source_font_size=10
                 )
+                self._apply_cached_annex_links(row)
                 self._update_three_stage_button(self._active_detail_row)
                 replace_search_term_backgrounds(
                     self.detail_view, self.highlight_terms
@@ -2216,9 +2218,11 @@ class AiLawSearchTab(QWidget):
             # 법령검색 탭과 같은 규칙으로 링크를 건다. 행정규칙은 조문 번호
             # 체계가 달라 자기 참조 링크를 만들지 않는다.
             is_admin_rule = str(row.get("kind") or "").startswith("행정규칙")
-            content_html = body_to_html(
+            content_html = legal_body_to_html(
                 display_content,
                 self.highlight_terms,
+                document_target="admrul" if is_admin_rule else "law",
+                document_name=str(row.get("name") or ""),
                 current_law_name="" if is_admin_rule else row["name"],
                 current_law_id=(
                     "" if is_admin_rule else str(row.get("source_id") or "")
@@ -2303,6 +2307,7 @@ class AiLawSearchTab(QWidget):
             raise ValueError("저장 파일에 본문 화면이 없습니다.")
         self._active_detail_row = dict(row)
         self._replace_detail_content(html=html, source_font_size=10)
+        self._apply_cached_annex_links(row)
         self._update_three_stage_button(self._active_detail_row)
         replace_search_term_backgrounds(self.detail_view, self.highlight_terms)
         self.detail_view.moveCursor(QTextCursor.MoveOperation.Start)
@@ -2315,6 +2320,13 @@ class AiLawSearchTab(QWidget):
         provision = str(row.get("provision") or "").strip()
         self.status_label.setText(
             f"{name}{f' {provision}' if provision else ''} 저장된 본문 열기 · API 호출 없음"
+        )
+
+    def _apply_cached_annex_links(self, row: dict[str, object]) -> None:
+        apply_annex_links(
+            self.detail_view.document(),
+            document_name=str(row.get("name") or ""),
+            document_target=("admrul" if str(row.get("kind") or "").startswith("행정규칙") else "law"),
         )
 
     def _three_stage_target(
@@ -2520,7 +2532,7 @@ class AiLawSearchTab(QWidget):
 
     def _detail_link_clicked(self, url: QUrl) -> None:
         """조문 참조는 법령검색 탭 팝업으로, 나머지는 브라우저로 연다."""
-        if url.scheme().casefold() == "lawref":
+        if url.scheme().casefold() in ("lawref", "annexref", "lawsub"):
             if self.reference_tab is None:
                 self.status_label.setText(
                     "조문 참조를 열 법령검색 화면을 찾지 못했습니다."

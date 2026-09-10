@@ -715,6 +715,21 @@ def normalize_admin_rule_text(
     return insert_law_style_article_breaks(normalized)
 
 
+def normalize_legal_body(text: str, target: str = "law") -> str:
+    """같은 번호체계에는 APIㆍ화면과 무관하게 같은 줄바꿈 순서를 적용한다."""
+    if target not in ("law", "law_article", "ordin", "admrul"):
+        return text
+    if target == "admrul":
+        normalized = normalize_admin_rule_text(text)
+        if uses_guideline_numbering(text):
+            return normalized
+    else:
+        normalized = insert_admin_clause_breaks(normalize_amendment_note_dates(text))
+        if target == "ordin":
+            normalized = insert_law_style_article_breaks(normalized)
+    return split_inline_law_subitems(normalized)
+
+
 def extract_admin_rule_article(
     text: str, article_number: str, article_branch: str = ""
 ) -> str:
@@ -1852,7 +1867,7 @@ def law_article_text(units: object) -> str:
         note = law_article_note(unit)
         if note:
             parts.append(note)
-    return "\n".join(parts)
+    return normalize_legal_body("\n".join(parts))
 
 
 def law_payload_has_body(payload: object) -> bool:

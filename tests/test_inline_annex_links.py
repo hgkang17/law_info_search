@@ -1,6 +1,7 @@
 """본문 문장 속 별표ㆍ별지서식 인용에 링크가 걸리는지 검증."""
 
 import os
+import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -10,6 +11,13 @@ from PySide6.QtWidgets import QApplication
 from storage.cache import LawDocumentCache
 from storage.recent import RecentSearchManager
 from ui.tabs.resource_search import ResourceSearchTab
+
+
+@pytest.fixture(autouse=True)
+def no_background_comparison_request(monkeypatch):
+    # 이 묶음은 본문 안의 별표 링크를 검사한다. 실제 3단비교 요청이
+    # 끝나기 전에 QApplication이 종료되면 QThread 소멸로 실패한다.
+    monkeypatch.setattr(ResourceSearchTab, "_queue_three_stage_link_request", lambda *a: None)
 
 
 ROW = {

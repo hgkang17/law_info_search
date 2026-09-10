@@ -32,6 +32,11 @@ class FavoriteProjectTabBar(QTabBar):
 
     favoriteDropped = Signal(str, object)
 
+    def wheelEvent(self, event) -> None:
+        # 이 선택은 다른 화면에서 누르는 별의 저장 목적지도 바꾼다.
+        # 목록을 스크롤하다 탭 띠를 스쳐도 프로젝트를 전환하지 않는다.
+        event.ignore()
+
     def _drop_project_id(self, position) -> str:
         index = self.tabAt(position)
         project_id = str(self.tabData(index) or "") if index >= 0 else ""
@@ -126,6 +131,7 @@ class ViewedLawsTab(QWidget):
     FAVORITE_PROJECT_IDS_ROLE = int(Qt.ItemDataRole.UserRole) + 6
     FAVORITE_FOLDER_ID_ROLE = int(Qt.ItemDataRole.UserRole) + 2
     FAVORITE_CATEGORY_ROLE = int(Qt.ItemDataRole.UserRole) + 3
+    FAVORITE_ORDER_ROLE = int(Qt.ItemDataRole.UserRole) + 7
 
     def __init__(
         self,
@@ -154,9 +160,10 @@ class ViewedLawsTab(QWidget):
         self.union_tree: FavoriteCategoryTree | None = None
         self.favorite_body_splitter: QSplitter | None = None
         self._syncing_union_widths = False
-        self.law_cache.set_active_favorite_project(
-            self.active_favorite_project
-        )
+        if self.favorites_only:
+            self.law_cache.set_active_favorite_project(
+                self.active_favorite_project
+            )
 
         root = QVBoxLayout(self)
         # 왼쪽ㆍ오른쪽과 같은 12px을 위에도 준다. 저장내역만 0으로 두었더니
@@ -761,8 +768,12 @@ class ViewedLawsTab(QWidget):
             self._persist_favorite_tree("현재 프로젝트의 정리를 저장했습니다.")
         self.active_favorite_project = project_id
         self._save_favorite_projects()
-        self.law_cache.set_active_favorite_project(project_id)
-        self.favorite_folders = self._load_favorite_folders()
+        self._saving_favorite_layout = True
+        try:
+            self.law_cache.set_active_favorite_project(project_id)
+            self.favorite_folders = self._load_favorite_folders()
+        finally:
+            self._saving_favorite_layout = False
         self.refresh()
         self.status_label.setText(
             f"'{self._current_project_name()}' 프로젝트를 열었습니다."
@@ -1150,6 +1161,7 @@ class ViewedLawsTab(QWidget):
                         "id": folder_id,
                         "name": name,
                         "category": str(node.get("category") or ""),
+                        "favorite_order": node.get("favorite_order", -1),
                         "children": clean(node.get("children")),
                     }
                 )
@@ -1192,6 +1204,7 @@ class ViewedLawsTab(QWidget):
                 "id": str(folder["id"]),
                 "name": str(folder["name"]),
                 "category": category,
+                "favorite_order": folder.get("favorite_order", -1),
                 "children": [
                     migrate_custom_folder(child, category)
                     for child in child_folders
@@ -1253,6 +1266,7 @@ class ViewedLawsTab(QWidget):
     ) -> QTreeWidgetItem:
         item = QTreeWidgetItem((str(folder.get("name") or "폴더"), "폴더", ""))
         item.setData(0, self.FAVORITE_KIND_ROLE, "folder")
+        item.setData(0, self.FAVORITE_ORDER_ROLE, folder.get("favorite_order", -1))
         item.setData(
             0, self.FAVORITE_FOLDER_ID_ROLE, str(folder.get("id") or "")
         )
@@ -1411,6 +1425,7 @@ class ViewedLawsTab(QWidget):
                     item = QTreeWidgetItem((name,))
                     item.setData(0, Qt.ItemDataRole.UserRole, record.get("path"))
                     item.setData(0, self.FAVORITE_KIND_ROLE, "record")
+                    item.setData(0, self.FAVORITE_ORDER_ROLE, stored_order(record))
                     item.setData(0, self.FAVORITE_CATEGORY_ROLE, category)
                     item.setData(
                         0,
@@ -1462,6 +1477,7 @@ class ViewedLawsTab(QWidget):
                     article_item.setData(
                         0, self.FAVORITE_KIND_ROLE, "article"
                     )
+                    article_item.setData(0, self.FAVORITE_ORDER_ROLE, stored_order(entry))
                     article_item.setData(
                         0, self.FAVORITE_ARTICLE_ROLE, jo
                     )
@@ -1504,6 +1520,7 @@ class ViewedLawsTab(QWidget):
                     category_counts["article"] += 1
             for category, label in self.FAVORITE_CATEGORIES:
                 tree = self.favorite_trees[category]
+                self._restore_favorite_sibling_order(tree.invisibleRootItem())
                 if query_active or not tree_had_items[category]:
                     tree.expandAll()
                 else:
@@ -1527,6 +1544,21 @@ class ViewedLawsTab(QWidget):
             for tree in self.favorite_trees.values():
                 tree.blockSignals(False)
             self._populating_favorite_tree = False
+
+    def _restore_favorite_sibling_order(self, parent: QTreeWidgetItem) -> None:
+        """폴더ㆍ문서ㆍ서로 다른 법령의 조문 모두 같은 형제 순서를 쓴다."""
+        children = parent.takeChildren()
+
+        def order(item: QTreeWidgetItem) -> int:
+            try:
+                return int(item.data(0, self.FAVORITE_ORDER_ROLE))
+            except (TypeError, ValueError):
+                return 1_000_000_000
+
+        parent.addChildren(sorted(children, key=order))
+        for child in children:
+            if child.childCount():
+                self._restore_favorite_sibling_order(child)
 
     def _create_union_tree(self, category: str) -> FavoriteCategoryTree:
         tree = FavoriteCategoryTree(category)
@@ -2085,6 +2117,8 @@ class ViewedLawsTab(QWidget):
         QTimer.singleShot(0, self._persist_scheduled_favorite_tree)
 
     def _persist_scheduled_favorite_tree(self) -> None:
+        if not self._favorite_tree_persist_pending:
+            return
         self._favorite_tree_persist_pending = False
         self._persist_favorite_tree("즐겨찾기 폴더와 표시 순서를 저장했습니다.")
 
@@ -2095,8 +2129,10 @@ class ViewedLawsTab(QWidget):
             (self._is_common_favorite_view() and not force)
             or not self.favorite_trees
             or self._populating_favorite_tree
+            or bool(self.search_input.text().strip())
         ):
             return
+        self._favorite_tree_persist_pending = False
         folders: list[dict[str, object]] = []
         layout: list[tuple[object, str, int]] = []
         article_layout: list[
@@ -2106,15 +2142,14 @@ class ViewedLawsTab(QWidget):
         self._populating_favorite_tree = True
 
         def read_folder(
-            item: QTreeWidgetItem, category: str
+            item: QTreeWidgetItem, category: str, sibling_order: int
         ) -> dict[str, object]:
             folder_id = str(item.data(0, self.FAVORITE_FOLDER_ID_ROLE) or "")
             children: list[dict[str, object]] = []
-            record_order = 0
             for index in range(item.childCount()):
                 child = item.child(index)
                 if child.data(0, self.FAVORITE_KIND_ROLE) == "folder":
-                    children.append(read_folder(child, category))
+                    children.append(read_folder(child, category, index))
                     continue
                 path = child.data(0, Qt.ItemDataRole.UserRole)
                 if path:
@@ -2122,15 +2157,15 @@ class ViewedLawsTab(QWidget):
                         unit = child.data(0, self.FAVORITE_UNIT_ROLE)
                         if isinstance(unit, dict):
                             article_layout.append(
-                                (path, dict(unit), folder_id, record_order)
+                                (path, dict(unit), folder_id, index)
                             )
                     else:
-                        layout.append((path, folder_id, record_order))
-                    record_order += 1
+                        layout.append((path, folder_id, index))
             return {
                 "id": folder_id,
                 "name": item.text(0).strip(),
                 "category": category,
+                "favorite_order": sibling_order,
                 "children": children,
             }
 
@@ -2138,11 +2173,10 @@ class ViewedLawsTab(QWidget):
             for category, label in self.FAVORITE_CATEGORIES:
                 tree = self.favorite_trees[category]
                 children: list[dict[str, object]] = []
-                record_order = 0
                 for index in range(tree.topLevelItemCount()):
                     child = tree.topLevelItem(index)
                     if child.data(0, self.FAVORITE_KIND_ROLE) == "folder":
-                        children.append(read_folder(child, category))
+                        children.append(read_folder(child, category, index))
                         continue
                     path = child.data(0, Qt.ItemDataRole.UserRole)
                     if path:
@@ -2150,11 +2184,10 @@ class ViewedLawsTab(QWidget):
                             unit = child.data(0, self.FAVORITE_UNIT_ROLE)
                             if isinstance(unit, dict):
                                 article_layout.append(
-                                    (path, dict(unit), "", record_order)
+                                    (path, dict(unit), "", index)
                                 )
                         else:
-                            layout.append((path, category, record_order))
-                        record_order += 1
+                            layout.append((path, category, index))
                 folders.append(
                     {
                         "id": category,
@@ -2165,11 +2198,14 @@ class ViewedLawsTab(QWidget):
                 )
         finally:
             self._populating_favorite_tree = False
-        self._save_favorite_folders(folders)
-        article_saved = self.law_cache.set_article_favorite_layout(
-            article_layout
-        )
-        if article_saved and self.law_cache.set_favorite_layout(layout):
+        self._saving_favorite_layout = True
+        try:
+            self._save_favorite_folders(folders)
+            article_saved = self.law_cache.set_article_favorite_layout(article_layout)
+            layout_saved = article_saved and self.law_cache.set_favorite_layout(layout)
+        finally:
+            self._saving_favorite_layout = False
+        if layout_saved:
             self.status_label.setText(success_message)
         else:
             self.status_label.setText(
@@ -2177,6 +2213,12 @@ class ViewedLawsTab(QWidget):
             )
 
     def refresh(self) -> None:
+        if getattr(self, "_saving_favorite_layout", False):
+            return
+        # 드래그 직후의 지연 저장보다 본문 저장 알림이 먼저 올 수 있다.
+        # 현재 트리를 지우기 전에 사용자가 바꾼 순서를 확정한다.
+        if self._favorite_tree_persist_pending:
+            self._persist_favorite_tree("즐겨찾기 표시 순서를 저장했습니다.")
         # 목록은 이름ㆍ구분ㆍ날짜ㆍ즐겨찾기 표시만 쓴다. 본문까지 들어
         # 있는 기록을 읽으면 저장 건수에 비례해 창 여는 시간이 늘어난다.
         # 실제로 열 때는 ``_open_path``가 그 파일만 다시 읽는다.

@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+from utils.legal_body import (
+    ANNEX_CATEGORY_BY_TARGET, INLINE_ANNEX_REFERENCE_PATTERN,
+    apply_annex_links, inline_annex_label, legal_body_to_html,
+    mask_annex_mentions, restore_annex_mentions,
+)
+
 from difflib import SequenceMatcher
 
 from ui.assets import (
@@ -152,10 +158,8 @@ from utils.parsing import (
     insert_admin_clause_breaks,
     json_list,
     json_text,
-    law_article_note,
+    law_article_text,
     law_text,
-    split_inline_law_subitems,
-    normalize_amendment_note_dates,
     law_unit_code,
     normalize_admin_rule_text,
     row_search_text,
@@ -4224,6 +4228,7 @@ class ResourceSearchTab(QWidget):
                 same_source = (
                     existing.get("source_hang") == link.get("source_hang")
                     and existing.get("source_ho") == link.get("source_ho")
+                    and existing.get("source_mok") == link.get("source_mok")
                 )
                 same_target = bool(
                     existing.get("href") == link.get("href")
@@ -4610,23 +4615,16 @@ class ResourceSearchTab(QWidget):
                 article_content, authority_links or {}
             )
             # 3단비교 칸 안의 ``별표 1`` 인용도 본문과 같이 눌러서 연다.
-            article_content, annex_tokens = self._mask_annex_mentions(
-                article_content,
-                related_law=law_name,
-                category="licbyl",
-            )
-            content_html = body_to_html(
+            content_html = legal_body_to_html(
                 article_content,
                 self.detail_highlight_terms,
+                document_name=law_name,
                 current_law_name=law_name,
                 current_law_id=current_law_id,
                 use_api_links=True,
             )
             content_html = self._restore_authority_mentions(
                 content_html, authority_tokens
-            )
-            content_html = self._restore_annex_mentions(
-                content_html, annex_tokens
             )
             parts.append(
                 '<div class="comparison-content">'
@@ -4635,7 +4633,7 @@ class ResourceSearchTab(QWidget):
             )
         else:
             parts.append('<div class="comparison-empty">조문 내용 없음</div>')
-            parts.append("</div>")
+        parts.append("</div>")
         return "".join(parts)
 
     @staticmethod
@@ -4691,49 +4689,14 @@ class ResourceSearchTab(QWidget):
     def _mask_annex_mentions(
         cls, text: str, *, related_law: str, category: str
     ) -> tuple[str, dict[str, tuple[str, str, str]]]:
-        """본문 속 ``별표 1``ㆍ``별지 제3호서식`` 인용을 표식으로 바꿔 둔다.
-
-        본문 화면은 그려 놓은 문서 위에서 자리를 찾아 링크를 걸지만
-        (`_apply_inline_annex_links`), 팝업과 3단비교 표는 HTML 문자열로
-        만들어 그대로 넣는다. 대통령령 링크와 같은 방식으로 옮기기 전에
-        표식으로 바꿔 두었다가 옮긴 뒤 링크로 되살린다.
-        """
-        tokens: dict[str, tuple[str, str, str]] = {}
-        if not related_law:
-            return text, tokens
-
-        def replace(match: "re.Match[str]") -> str:
-            # ``[별표 1] 이름``은 별표 목록 줄이라 제 링크를 따로 갖는다.
-            if match.start() and text[match.start() - 1] == "[":
-                return match.group(0)
-            label = cls._inline_annex_label(match)
-            if not label:
-                return match.group(0)
-            token = f"INLINEANNEXLINK{len(tokens)}TOKEN"
-            href = (
-                "annexref://open?"
-                f"name={quote(label, safe='')}"
-                f"&category={quote(category, safe='')}"
-                f"&related={quote(related_law, safe='')}"
-            )
-            tokens[token] = (match.group(0), href, label)
-            return token
-
-        return cls._INLINE_ANNEX_REFERENCE_PATTERN.sub(replace, text), tokens
+        """이전 호출부도 공통 별표 링크 규칙에 위임한다."""
+        return mask_annex_mentions(text, related_law=related_law, category=category)
 
     @staticmethod
     def _restore_annex_mentions(
         html: str, tokens: dict[str, tuple[str, str, str]]
     ) -> str:
-        for token, (mention, href, label) in tokens.items():
-            html = html.replace(
-                token,
-                f'<a href="{escape(href, quote=True)}" '
-                'style="color:#006dcc; text-decoration:underline;" '
-                f'title="{escape(label)}을(를) 엽니다.">'
-                f"{escape(mention)}</a>",
-            )
-        return html
+        return restore_annex_mentions(html, tokens)
 
     @staticmethod
     def _three_stage_base_law_name(payload: dict) -> str:
@@ -4758,7 +4721,7 @@ class ResourceSearchTab(QWidget):
         )
 
     def _popup_authority_links(
-        self, law_name: str, jo: str, hang: str = "", ho: str = ""
+        self, law_name: str, jo: str, hang: str = "", ho: str = "", mok: str = ""
     ) -> dict[str, str]:
         """팝업으로 연 조문 안의 대통령령ㆍ부령에 걸 하위법령 링크.
 
@@ -4779,26 +4742,34 @@ class ResourceSearchTab(QWidget):
             )
             # 다른 법령의 3단비교 자료에서 조 번호만 같은 조문을 집어
             # 엉뚱한 시행령을 걸지 않도록 법령명까지 맞춰 본다.
-            matched = False
-            for node in json_list(comparison.get("법률조문")):
-                if not isinstance(node, dict):
+            document_level = self._law_document_level({}, law_name)
+            candidates = []
+            for article in json_list(comparison.get("법률조문")):
+                if not isinstance(article, dict):
                     continue
+                if document_level == "law":
+                    candidates.append(article)
+                elif document_level == "decree":
+                    for key in ("시행령조문", "시행령조문목록"):
+                        candidates.extend(self._three_stage_child_nodes(article.get(key)))
+            matched = False
+            for node in candidates:
                 if self._three_stage_article_code(node) != jo:
                     continue
                 node_name = re.sub(r"\s+", "", json_text(node.get("법령명")))
                 if node_name == normalized_name or (
-                    not node_name and base_name == normalized_name
+                    not node_name and document_level == "law" and base_name == normalized_name
                 ):
                     matched = True
                     break
             if not matched:
                 continue
             links = self._three_stage_subordinate_links(
-                payload, document_level="law"
+                payload, document_level=document_level
             ).get(jo) or []
             if not links:
                 continue
-            scoped = self._links_for_inline_source(links, hang, ho) or links
+            scoped = self._links_for_inline_source(links, hang, ho, mok)
             grouped: dict[str, list[dict[str, str]]] = {}
             for link in scoped:
                 authority_match = re.match(
@@ -4809,7 +4780,7 @@ class ResourceSearchTab(QWidget):
                 grouped.setdefault(
                     authority_match.group(1).strip(), []
                 ).append(link)
-            source_label = self._law_reference_label(jo, hang, ho)
+            source_label = self._law_reference_label(jo, hang, ho, mok)
             authority_links: dict[str, str] = {}
             for authority, authority_group in grouped.items():
                 href = self._inline_subordinate_href(authority_group)
@@ -6323,10 +6294,12 @@ class ResourceSearchTab(QWidget):
                 )
                 html_parts.append(
                     '<div class="content">'
-                    + body_to_html(
+                    + legal_body_to_html(
                         value,
                         self.detail_highlight_terms,
-                        current_law_name=title,
+                        document_target=target,
+                        document_name=title,
+                        current_law_name=title if target == "law" else "",
                         current_law_id=(
                             str(row.get("id") or "")
                             if target == "law"
@@ -8581,7 +8554,7 @@ class ResourceSearchTab(QWidget):
         has_body = False
         # 본문 화면과 같게 팝업 안의 ``대통령령``ㆍ``부령``에도 그 위임을
         # 받은 하위법령 조문 링크를 건다.
-        authority_links = self._popup_authority_links(title, jo, hang, ho)
+        authority_links = self._popup_authority_links(title, jo, hang, ho, mok)
         for label, value in sections:
             value = str(value or "")
             if not value:
@@ -8597,16 +8570,11 @@ class ResourceSearchTab(QWidget):
             # 본문 화면과 같게 팝업 조문 안의 ``별표 1`` 인용도 누르면
             # 그 별표를 연다. 예전에는 본문에서만 링크가 걸려, 부령
             # 링크로 들어간 팝업의 ``별표 1``은 그냥 글씨였다.
-            value, annex_tokens = self._mask_annex_mentions(
-                value,
-                related_law=str(source_row.get("name") or title),
-                category=self._ANNEX_CATEGORY_BY_TARGET.get(
-                    str(source_row.get("target") or "law"), "licbyl"
-                ),
-            )
-            section_html = body_to_html(
+            section_html = legal_body_to_html(
                 value,
                 self.detail_highlight_terms,
+                document_target=str(source_row.get("target") or "law"),
+                document_name=str(source_row.get("name") or title),
                 current_law_name=title,
                 current_law_id=str(source_row.get("id") or ""),
                 use_api_links=True,
@@ -8618,7 +8586,7 @@ class ResourceSearchTab(QWidget):
             )
             html_parts.append(
                 '<div class="content">'
-                + self._restore_annex_mentions(section_html, annex_tokens)
+                + section_html
                 + "</div>"
             )
         law_label = str(source_row.get("name") or title)
@@ -11644,20 +11612,7 @@ class ResourceSearchTab(QWidget):
         ]
         units = law.get("조문", {})
         units = units.get("조문단위") if isinstance(units, dict) else []
-        body_parts: list[str] = []
-        for unit in json_list(units):
-            if not isinstance(unit, dict):
-                continue
-            content = law_text(unit.get("조문내용"))
-            if content:
-                body_parts.append(normalize_amendment_note_dates(content))
-            for paragraph in json_list(unit.get("항")):
-                self._append_law_children(paragraph, body_parts)
-            # 법제처 본문처럼 ``[전문개정 …]``은 조문 끝 별도 줄에 둔다.
-            note = law_article_note(unit)
-            if note:
-                body_parts.append(note)
-        return title, metadata, [("조문", "\n".join(body_parts))]
+        return title, metadata, [("조문", law_article_text(units))]
 
     @staticmethod
     def _law_annex_label(unit: dict[str, object]) -> str:
@@ -11795,25 +11750,6 @@ class ResourceSearchTab(QWidget):
                 }
             )
         return entries
-
-    def _append_law_children(self, node: object, output: list[str]) -> None:
-        if not isinstance(node, dict):
-            return
-        content = law_text(
-            node.get("항내용") or node.get("호내용") or node.get("목내용")
-        )
-        if content:
-            # 법령 API는 목 하나를 통째로 한 문자열에 담아 준다. 그 안에
-            # ``1) …  2) …``ㆍ``가) …  나) …``가 줄바꿈 없이 붙어 있어,
-            # 본문 변환이 줄머리 표지를 알아보지 못하고 한 문단으로 붙였다.
-            output.append(
-                split_inline_law_subitems(
-                    normalize_amendment_note_dates(content)
-                )
-            )
-        for key in ("호", "목"):
-            for child in json_list(node.get(key)):
-                self._append_law_children(child, output)
 
     def _parse_admrul_detail(self, data: dict) -> tuple[str, list, list]:
         service = data.get("AdmRulService")
@@ -12236,9 +12172,11 @@ class ResourceSearchTab(QWidget):
             # 둔다.
             if str(label) != "조문":
                 html_parts.append(f"<h2>{escape(str(label))}</h2>")
-            section_html = body_to_html(
+            section_html = legal_body_to_html(
                 value,
                 self.detail_highlight_terms,
+                document_target=str((self.pending_row or {}).get("target") or ""),
+                document_name=title if build_toc else "",
                 toc_entries=toc_entries if build_toc else None,
                 anchor_prefix=f"toc-{section_index}",
                 current_law_name=title if is_law_document else "",
@@ -12493,30 +12431,14 @@ class ResourceSearchTab(QWidget):
 
     # 본문 문장 속 별표ㆍ별지서식 인용. ``별표 1``ㆍ``별표 제1호``ㆍ
     # ``별표 1의2``ㆍ``별지 제3호서식``ㆍ``별지 제3호의2서식``을 잡는다.
-    _INLINE_ANNEX_REFERENCE_PATTERN = re.compile(
-        r"별지\s*제\s*(?P<form>\d+)\s*호(?:\s*의\s*(?P<form_branch>\d+))?"
-        r"\s*서식"
-        r"|별표\s*제?\s*(?P<table>\d+)(?:\s*의\s*(?P<table_branch>\d+))?"
-    )
+    _INLINE_ANNEX_REFERENCE_PATTERN = INLINE_ANNEX_REFERENCE_PATTERN
     # 문서 종류별로 별표를 찾을 검색 분류.
-    _ANNEX_CATEGORY_BY_TARGET = {
-        "law": "licbyl",
-        "admrul": "admbyl",
-        "ordin": "ordinbyl",
-    }
+    _ANNEX_CATEGORY_BY_TARGET = ANNEX_CATEGORY_BY_TARGET
 
     @classmethod
     def _inline_annex_label(cls, match: "re.Match[str]") -> str:
         """인용에서 별표 목록과 같은 표기를 만든다."""
-        if match.group("form"):
-            branch = match.group("form_branch") or ""
-            suffix = f"의{branch}" if branch else ""
-            return f"별지 제{int(match.group('form'))}호{suffix}서식"
-        number = match.group("table")
-        if not number:
-            return ""
-        branch = match.group("table_branch") or ""
-        return f"별표 {int(number)}" + (f"의{int(branch)}" if branch else "")
+        return inline_annex_label(match)
 
     def _current_document_row(self) -> dict[str, object]:
         """지금 보고 있는 본문의 행(조항호목 탭이면 그 법령의 행)."""
@@ -12535,58 +12457,15 @@ class ResourceSearchTab(QWidget):
         (``annex:``), 조문 하나만 연 화면처럼 목록이 없으면 별표를 찾아
         미리보기로 여는 링크(``annexref://``)를 건다.
         """
-        document = self.detail_view.document()
-        text = document.toPlainText()
-        if not text:
-            return
         entries_by_label = {
             " ".join(str(entry.get("label") or "").split()): index
             for index, entry in enumerate(self._annex_section_entries)
         }
         row = self._current_document_row()
-        related = str(row.get("name") or "")
-        category = self._ANNEX_CATEGORY_BY_TARGET.get(
-            str(row.get("target") or ""), "licbyl"
+        apply_annex_links(
+            self.detail_view.document(), document_name=str(row.get("name") or ""),
+            document_target=str(row.get("target") or ""), entries_by_label=entries_by_label,
         )
-        cursor = QTextCursor(document)
-        cursor.beginEditBlock()
-        try:
-            for match in self._INLINE_ANNEX_REFERENCE_PATTERN.finditer(text):
-                # ``[별표 1] 이름``은 아래 별표 목록 줄이다. 그 줄은 이미
-                # 제 링크를 갖고 있으므로 건드리지 않는다.
-                if match.start() and text[match.start() - 1] == "[":
-                    continue
-                label = self._inline_annex_label(match)
-                if not label:
-                    continue
-                index = entries_by_label.get(label)
-                if index is not None:
-                    # 아래 목록으로 데려가면 읽던 자리를 잃는다. 그 별표만
-                    # 미리보기 창으로 띄운다.
-                    href = f"annexopen:{index}"
-                elif related:
-                    href = (
-                        "annexref://open?"
-                        f"name={quote(label, safe='')}"
-                        f"&category={quote(category, safe='')}"
-                        f"&related={quote(related, safe='')}"
-                    )
-                else:
-                    continue
-                cursor.setPosition(match.start())
-                cursor.setPosition(
-                    match.end(), QTextCursor.MoveMode.KeepAnchor
-                )
-                character_format = QTextCharFormat()
-                character_format.setAnchor(True)
-                character_format.setAnchorHref(href)
-                # 조문 인용 링크와 같은 색ㆍ밑줄로 맞춘다.
-                character_format.setForeground(QColor("#006dcc"))
-                character_format.setFontUnderline(True)
-                character_format.setToolTip(f"{label}을(를) 엽니다.")
-                cursor.mergeCharFormat(character_format)
-        finally:
-            cursor.endEditBlock()
 
     # 별표 목록 글자 크기(pt). 본문 글자 크기를 바꾸면 본문 전체와 같은
     # 비율로 함께 커지고 줄어든다.
