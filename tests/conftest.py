@@ -15,6 +15,23 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def isolate_application_settings(tmp_path):
+    """메인 창을 직접 만드는 테스트도 실제 사용자 INI를 덮어쓰지 않는다.
+
+    파일명을 지정한 QSettings만 격리하면 조직/앱 이름으로 여는 메인 창은
+    실제 설정을 쓴다. 글꼴 회귀 테스트의 Arial이 다음 실행에 남았던 원인이다.
+    시스템 범위 fallback도 함께 격리하며, 경로는 시험 프로세스에만 적용된다.
+    """
+    from PySide6.QtCore import QSettings
+
+    for scope, name in (
+        (QSettings.Scope.UserScope, "user"),
+        (QSettings.Scope.SystemScope, "system"),
+    ):
+        QSettings.setPath(QSettings.Format.IniFormat, scope, str(tmp_path / name))
+
+
+@pytest.fixture(autouse=True)
 def isolate_ai_tool_cache(monkeypatch: pytest.MonkeyPatch):
     """AI 검색 도구 캐시를 임시 폴더로 돌린다.
 

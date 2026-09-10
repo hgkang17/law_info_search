@@ -130,11 +130,19 @@ def test_favorite_back_keeps_open_document_scroll_until_tab_is_closed(
 
 
 def test_home_then_favorite_reuses_scroll_and_font_of_open_document(
-    qt_app, monkeypatch
+    qt_app, monkeypatch, tmp_path
 ) -> None:
     """메인 화면을 거쳐 즐겨찾기로 재진입해도 열린 문서를 다시 그리지 않는다."""
+    from pathlib import Path
+    from ui.tabs.ai_chat_panel import AiChatPanel
+    from ui.tabs.resource_search import ResourceSearchTab
+
+    monkeypatch.setattr("ui.main_window.LAW_CACHE_DIR", tmp_path / "saved")
+    monkeypatch.setattr(AiChatPanel, "_start_visible_background_checks", lambda self: None)
+    monkeypatch.setattr(ResourceSearchTab, "_queue_three_stage_link_request", lambda *a: None)
     window = LawSearchWindow()
     try:
+        assert Path(window.settings.fileName()).is_relative_to(tmp_path)
         window.resize(1200, 800)
         window.show()
         resource = window.resource_tab
