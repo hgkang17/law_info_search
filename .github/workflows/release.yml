@@ -52,6 +52,7 @@ jobs:
           $checksum = "dist\law_info_search.exe.sha256"
           $sourceArchive = "dist\law_info_search-source-$env:GITHUB_REF_NAME.zip"
           $buildInfo = "dist\law_info_search-build-info.txt"
+          $releaseNotes = "dist\release-notes.md"
           Copy-Item -LiteralPath $source -Destination $releaseExe -Force
           $assetName = python -c "from utils.constants import UPDATE_ASSET_NAME; print(UPDATE_ASSET_NAME)"
           if ($assetName.Trim() -ne "law_info_search.exe") {
@@ -60,6 +61,9 @@ jobs:
           $hash = (Get-FileHash -LiteralPath $releaseExe -Algorithm SHA256).Hash.ToLowerInvariant()
           Set-Content -LiteralPath $checksum -Value "$hash  law_info_search.exe" -Encoding utf8
           git archive --format=zip --output=$sourceArchive HEAD
+          # 앱의 업데이트 전 미리보기와 완료 후 누적 창이 같은 설명을 쓰도록
+          # 이번 태그에 해당하는 항목을 사용자용 내역 파일에서 꺼낸다.
+          python -m utils.release_notes "업데이트내역.md" $env:GITHUB_REF_NAME $releaseNotes
           $pythonVersion = python --version
           $pysideVersion = python -c "import PySide6; print(PySide6.__version__)"
           $pyinstallerVersion = python -m PyInstaller --version
@@ -83,4 +87,5 @@ jobs:
           $checksum = "dist\law_info_search.exe.sha256"
           $sourceArchive = "dist\law_info_search-source-$tag.zip"
           $buildInfo = "dist\law_info_search-build-info.txt"
-          gh release create $tag $exe $checksum $sourceArchive $buildInfo --verify-tag --generate-notes --title $tag
+          $releaseNotes = "dist\release-notes.md"
+          gh release create $tag $exe $checksum $sourceArchive $buildInfo --verify-tag --notes-file $releaseNotes --title $tag

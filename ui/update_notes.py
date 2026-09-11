@@ -16,14 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from ui.assets import UPDATE_NOTES_PATH
-
-
-def display_version(value: str) -> str:
-    """업데이트 도우미가 넘긴 ``v1.4.4``를 화면용 ``1.4.4``로 바꾼다."""
-    version = str(value or "").strip()
-    if version[:1].casefold() == "v":
-        version = version[1:]
-    return version or "새 버전"
+from utils.release_notes import cumulative_notes_through, display_version
 
 
 def load_update_notes(path: Path = UPDATE_NOTES_PATH) -> str:
@@ -44,11 +37,14 @@ class UpdateNotesDialog(QDialog):
         parent: QWidget | None = None,
         *,
         notes_path: Path = UPDATE_NOTES_PATH,
+        completed: bool = True,
     ) -> None:
         super().__init__(parent)
         version = display_version(updated_version)
         self.setObjectName("updateNotesDialog")
-        self.setWindowTitle(f"{version} 업데이트 완료")
+        self.setWindowTitle(
+            f"{version} 업데이트 완료" if completed else "업데이트 내역"
+        )
         self.setModal(True)
         self.resize(650, 540)
         self.setMinimumSize(520, 420)
@@ -57,7 +53,12 @@ class UpdateNotesDialog(QDialog):
         layout.setContentsMargins(24, 22, 24, 20)
         layout.setSpacing(12)
 
-        heading = QLabel(f"{version} 버전으로 업데이트했습니다.", self)
+        heading = QLabel(
+            f"{version} 버전으로 업데이트했습니다."
+            if completed
+            else f"현재 {version} 버전이 최신입니다.",
+            self,
+        )
         heading.setObjectName("updateNotesHeading")
         heading.setTextFormat(Qt.TextFormat.PlainText)
         heading.setStyleSheet(
@@ -66,7 +67,11 @@ class UpdateNotesDialog(QDialog):
         layout.addWidget(heading)
 
         description = QLabel(
-            "이번 버전과 이전 업데이트에서 달라진 내용을 최신순으로 보여드립니다.",
+            (
+                "이번 버전과 이전 업데이트에서 달라진 내용을 최신순으로 보여드립니다."
+                if completed
+                else "현재 버전까지 반영된 업데이트 내역을 최신순으로 보여드립니다."
+            ),
             self,
         )
         description.setObjectName("updateNotesDescription")
@@ -86,10 +91,16 @@ class UpdateNotesDialog(QDialog):
             " padding:14px;"
             "}"
         )
-        notes = load_update_notes(notes_path)
+        notes = cumulative_notes_through(
+            load_update_notes(notes_path), version
+        )
         self.notes_view.setMarkdown(
             notes
-            or f"## {version}\n\n- 업데이트가 완료되었습니다."
+            or (
+                f"## {version}\n\n- 업데이트가 완료되었습니다."
+                if completed
+                else "누적 업데이트 내역은 1.4.4 버전부터 제공됩니다."
+            )
         )
         self.notes_view.moveCursor(QTextCursor.MoveOperation.Start)
         layout.addWidget(self.notes_view, 1)
@@ -109,3 +120,12 @@ def show_update_notes_dialog(
 ) -> int:
     """업데이트 완료 대화상자를 모달로 표시한다."""
     return UpdateNotesDialog(updated_version, parent).exec()
+
+
+def show_update_history_dialog(
+    current_version: str, parent: QWidget | None = None
+) -> int:
+    """하단 업데이트 확인에서 현재까지의 누적 내역을 다시 표시한다."""
+    return UpdateNotesDialog(
+        current_version, parent, completed=False
+    ).exec()

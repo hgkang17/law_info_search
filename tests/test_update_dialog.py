@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -10,6 +11,7 @@ import pytest
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from ui.main_window import LawSearchWindow
+from utils.updater import ReleaseInfo
 
 
 @pytest.fixture(scope="module")
@@ -70,3 +72,83 @@ def test_localizing_twice_does_not_rename_real_buttons(qt_app) -> None:
     finally:
         box.close()
         window.close()
+
+
+def test_update_preview_uses_update_notes_label(qt_app) -> None:
+    window = LawSearchWindow()
+    box, _confirm = _build_box(window)
+    try:
+        LawSearchWindow._localize_message_box(
+            box, details_label="업데이트 내역"
+        )
+        box.show()
+        qt_app.processEvents()
+
+        assert {button.text() for button in box.buttons()} == {
+            "확인",
+            "취소",
+            "업데이트 내역",
+        }
+        details = next(
+            button
+            for button in box.buttons()
+            if box.buttonRole(button) == QMessageBox.ButtonRole.ActionRole
+        )
+        assert details.width() >= details.sizeHint().width()
+        details.click()
+        qt_app.processEvents()
+        assert details.text() == "업데이트 내역"
+        details.click()
+        qt_app.processEvents()
+        assert details.text() == "업데이트 내역"
+    finally:
+        box.close()
+        window.close()
+
+
+def test_manual_latest_check_opens_accumulated_history(monkeypatch) -> None:
+    opened: list[tuple[str, object]] = []
+    monkeypatch.setattr(
+        "ui.main_window.show_update_history_dialog",
+        lambda version, parent: opened.append((version, parent)),
+    )
+    state = SimpleNamespace(_update_check_silent=False)
+    release = ReleaseInfo(
+        version="1.4.3",
+        tag_name="v1.4.3",
+        name="v1.4.3",
+        notes="",
+        page_url="https://github.com/example/release",
+        download_url="https://github.com/example/app.exe",
+        asset_name="law_info_search.exe",
+        asset_size=1,
+        sha256="0" * 64,
+    )
+
+    LawSearchWindow._update_check_result(state, release)
+
+    assert opened == [("1.4.3", state)]
+
+
+def test_silent_latest_check_does_not_open_history(monkeypatch) -> None:
+    opened: list[object] = []
+    monkeypatch.setattr(
+        "ui.main_window.show_update_history_dialog",
+        lambda *_args: opened.append(object()),
+    )
+    state = SimpleNamespace(_update_check_silent=True)
+    release = ReleaseInfo(
+        version="1.4.3",
+        tag_name="v1.4.3",
+        name="v1.4.3",
+        notes="",
+        page_url="https://github.com/example/release",
+        download_url="https://github.com/example/app.exe",
+        asset_name="law_info_search.exe",
+        asset_size=1,
+        sha256="0" * 64,
+    )
+
+    LawSearchWindow._update_check_result(state, release)
+
+    assert opened == []

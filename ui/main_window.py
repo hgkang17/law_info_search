@@ -62,6 +62,7 @@ from ui.theme import (
     register_bundled_pretendard_fonts,
     ui_font,
 )
+from ui.update_notes import show_update_history_dialog
 from ui.widgets import (
     ClickableLabel,
     CornerCloseTabBar,
@@ -1508,11 +1509,7 @@ class LawSearchWindow(QMainWindow):
             return
         if not newer:
             if not self._update_check_silent:
-                QMessageBox.information(
-                    self,
-                    "업데이트 확인",
-                    f"현재 {APP_VERSION} 버전이 최신입니다.",
-                )
+                show_update_history_dialog(APP_VERSION, self)
             return
 
         box = QMessageBox(self)
@@ -1530,13 +1527,18 @@ class LawSearchWindow(QMainWindow):
         confirm_button = box.addButton("확인", QMessageBox.ButtonRole.AcceptRole)
         box.addButton("취소", QMessageBox.ButtonRole.RejectRole)
         box.setDefaultButton(confirm_button)
-        self._localize_message_box(box)
+        self._localize_message_box(box, details_label="업데이트 내역")
         box.exec()
         if box.clickedButton() is confirm_button:
             self._start_update_download(value)
 
     @staticmethod
-    def _localize_message_box(box: QMessageBox, minimum_width: int = 380) -> None:
+    def _localize_message_box(
+        box: QMessageBox,
+        minimum_width: int = 380,
+        *,
+        details_label: str = "자세히",
+    ) -> None:
         """상세 보기 단추를 한글로 바꾸고 단추 글자가 잘리지 않게 넓힌다.
 
         setDetailedText가 만드는 단추는 Qt가 직접 붙이는 것이라 우리가 이름을
@@ -1548,7 +1550,21 @@ class LawSearchWindow(QMainWindow):
         """
         for button in box.buttons():
             if box.buttonRole(button) == QMessageBox.ButtonRole.ActionRole:
-                button.setText("자세히")
+                button.setText(details_label)
+                button.setProperty("localizedDetailsLabel", details_label)
+                if not button.property("localizedDetailsHooked"):
+                    # Qt는 상세 영역을 펼치거나 접은 직후 단추 문구를 다시
+                    # Show/Hide Details...로 덮는다. 이벤트 처리가 끝난 다음
+                    # 우리가 정한 한글 이름을 복원한다.
+                    button.clicked.connect(
+                        lambda _checked=False, target=button: QTimer.singleShot(
+                            0,
+                            lambda: target.setText(
+                                str(target.property("localizedDetailsLabel") or "자세히")
+                            ),
+                        )
+                    )
+                    button.setProperty("localizedDetailsHooked", True)
         layout = box.layout()
         if layout is not None:
             layout.addItem(

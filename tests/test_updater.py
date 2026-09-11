@@ -244,4 +244,7 @@ def test_release_workflow_builds_required_assets() -> None:
     assert "국가법령정보 통합검색.spec" in workflow
     assert UPDATE_ASSET_NAME in workflow
     assert f"{UPDATE_ASSET_NAME}.sha256" in workflow
-    assert "--generate-notes" in workflow
+    # 업데이트 전 미리보기와 설치 후 누적 창이 같은 사용자용 설명을 쓴다.
+    assert "python -m utils.release_notes" in workflow
+    assert "--notes-file $releaseNotes" in workflow
+    assert "--generate-notes" not in workflow
