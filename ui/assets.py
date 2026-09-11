@@ -78,6 +78,10 @@ API_KEY_MANUAL_PATH = MANUAL_DIR / "API인증키 발급안내.html"
 GEMINI_KEY_MANUAL_PATH = MANUAL_DIR / "제미나이 API 발급안내.html"
 
 
+# 자동 업데이트가 끝나 재실행된 첫 화면에 표시할 누적 변경 내역.
+UPDATE_NOTES_PATH = APP_DIR / "업데이트내역.md"
+
+
 CHECK_ICON_PATH = APP_DIR / "checkbox_check.svg"
 
 

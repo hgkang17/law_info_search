@@ -141,6 +141,7 @@ def main() -> int:
     from ui.assets import LOGO_PATH
     from ui.main_window import LawSearchWindow
     from ui.theme import register_bundled_pretendard_fonts, ui_font
+    from ui.update_notes import show_update_notes_dialog
     from utils.constants import APP_VERSION
     from utils.updater import (
         cleanup_staged_executable,
@@ -186,11 +187,7 @@ def main() -> int:
     if updated_version:
         QTimer.singleShot(
             700,
-            lambda: QMessageBox.information(
-                window,
-                "업데이트 완료",
-                f"{updated_version} 버전으로 업데이트했습니다.",
-            ),
+            lambda: show_update_notes_dialog(updated_version, window),
         )
     elif update_error:
 

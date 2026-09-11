@@ -24,6 +24,7 @@ from PyInstaller.utils.hooks import collect_data_files
 datas = collect_data_files("hwpx") + [
     ("molit_law_logo.svg", "."),
     ("home_search.gif", "."),
+    ("업데이트내역.md", "."),
     # LGPL v3ㆍOFL 1.1이 요구하는 라이선스 사본. ui/assets.py의
     # LICENSE_DIR이 이 위치를 가리킨다.
     ("licenses/LICENSE.LGPLv3.txt", "licenses"),
