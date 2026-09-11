@@ -11,6 +11,7 @@ import pytest
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from ui.main_window import LawSearchWindow
+from utils.constants import APP_VERSION
 from utils.updater import ReleaseInfo
 
 
@@ -114,9 +115,9 @@ def test_manual_latest_check_opens_accumulated_history(monkeypatch) -> None:
     )
     state = SimpleNamespace(_update_check_silent=False)
     release = ReleaseInfo(
-        version="1.4.3",
-        tag_name="v1.4.3",
-        name="v1.4.3",
+        version=APP_VERSION,
+        tag_name=f"v{APP_VERSION}",
+        name=f"v{APP_VERSION}",
         notes="",
         page_url="https://github.com/example/release",
         download_url="https://github.com/example/app.exe",
@@ -127,7 +128,7 @@ def test_manual_latest_check_opens_accumulated_history(monkeypatch) -> None:
 
     LawSearchWindow._update_check_result(state, release)
 
-    assert opened == [("1.4.3", state)]
+    assert opened == [(APP_VERSION, state)]
 
 
 def test_silent_latest_check_does_not_open_history(monkeypatch) -> None:
@@ -138,9 +139,9 @@ def test_silent_latest_check_does_not_open_history(monkeypatch) -> None:
     )
     state = SimpleNamespace(_update_check_silent=True)
     release = ReleaseInfo(
-        version="1.4.3",
-        tag_name="v1.4.3",
-        name="v1.4.3",
+        version=APP_VERSION,
+        tag_name=f"v{APP_VERSION}",
+        name=f"v{APP_VERSION}",
         notes="",
         page_url="https://github.com/example/release",
         download_url="https://github.com/example/app.exe",
