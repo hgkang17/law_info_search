@@ -4604,6 +4604,7 @@ class ResourceSearchTab(QWidget):
         fallback_law_name: str,
         current_law_id: str = "",
         authority_links: dict[str, str] | None = None,
+        authority_link_candidates: dict[str, list[dict[str, str]]] | None = None,
         show_law_name: bool = True,
     ) -> str:
         law_name = json_text(node.get("법령명")) or fallback_law_name
@@ -4636,9 +4637,22 @@ class ResourceSearchTab(QWidget):
                 f"{article_title_html}</div>"
             )
         if article_content:
-            article_content, authority_tokens = self._mask_authority_mentions(
-                article_content, authority_links or {}
-            )
+            if authority_link_candidates:
+                article_content, authority_tokens = (
+                    self._mask_scoped_authority_mentions(
+                        article_content, authority_link_candidates
+                    )
+                )
+                article_content, fixed_authority_tokens = (
+                    self._mask_authority_mentions(
+                        article_content, authority_links or {}
+                    )
+                )
+                authority_tokens.update(fixed_authority_tokens)
+            else:
+                article_content, authority_tokens = self._mask_authority_mentions(
+                    article_content, authority_links or {}
+                )
             # 3단비교 칸 안의 ``별표 1`` 인용도 본문과 같이 눌러서 연다.
             content_html = legal_body_to_html(
                 article_content,
@@ -4694,6 +4708,61 @@ class ResourceSearchTab(QWidget):
             token = f"THREESTAGEAUTHORITYLINK{index}TOKEN"
             text = text.replace(mention, token)
             tokens[token] = (mention, href)
+        return text, tokens
+
+    def _mask_scoped_authority_mentions(
+        self,
+        text: str,
+        authority_link_candidates: dict[str, list[dict[str, str]]],
+    ) -> tuple[str, dict[str, tuple[str, str]]]:
+        """항ㆍ호ㆍ목마다 맞는 하위법령 후보로 위임 문구를 가린다.
+
+        3단비교 법률 칸은 한 조문 안의 모든 ``대통령령``에 같은 링크를
+        걸고 있었다. 국토계획법 제26조처럼 시행령 조문이 둘 이상이면
+        가목을 정확히 짚은 자리에서도 두 조문을 고르는 메뉴가 떴다.
+        전문 본문과 같은 근거 단위 선별을 HTML 변환 전 각 문구에 적용한다.
+        """
+        source_index = self._build_inline_source_index(text)
+        replacements: list[tuple[int, int, str]] = []
+        occupied: list[tuple[int, int]] = []
+        tokens: dict[str, tuple[str, str]] = {}
+        for authority, links in sorted(
+            (authority_link_candidates or {}).items(),
+            key=lambda item: len(item[0]),
+            reverse=True,
+        ):
+            if not authority or not links:
+                continue
+            mention = authority
+            if mention not in text:
+                mention = (
+                    "부령"
+                    if authority.endswith("부령") and "부령" in text
+                    else ""
+                )
+            if not mention:
+                continue
+            for match in re.finditer(re.escape(mention), text):
+                start, end = match.span()
+                if any(
+                    start < used_end and end > used_start
+                    for used_start, used_end in occupied
+                ):
+                    continue
+                hang, ho, mok = self._inline_law_source_context(
+                    start, *source_index
+                )
+                href = self._inline_subordinate_href(
+                    self._links_for_inline_source(links, hang, ho, mok)
+                )
+                if not href:
+                    continue
+                token = f"THREESTAGESCOPEDAUTHORITYLINK{len(tokens)}TOKEN"
+                tokens[token] = (mention, href)
+                replacements.append((start, end, token))
+                occupied.append((start, end))
+        for start, end, token in sorted(replacements, reverse=True):
+            text = text[:start] + token + text[end:]
         return text, tokens
 
     @staticmethod
@@ -5228,26 +5297,37 @@ class ResourceSearchTab(QWidget):
             or law_base_name(response_law_name)
             or response_law_name
         )
+        base_code = self._three_stage_article_code(base_node)
 
         def node_links(
             nodes: list[dict], authority: str, fallback_name: str
         ) -> list[dict[str, str]]:
-            return [
-                link
-                for node in nodes
-                if (
-                    link := self._three_stage_reference_link(
-                        node,
-                        authority=authority,
-                        fallback_law_name=fallback_name,
-                    )
+            links: list[dict[str, str]] = []
+            for node in nodes:
+                link = self._three_stage_reference_link(
+                    node,
+                    authority=authority,
+                    fallback_law_name=fallback_name,
                 )
-            ]
+                if link is None:
+                    continue
+                source_units = self._law_source_units_referenced_by_decree(
+                    json_text(node.get("조내용")), base_code
+                )
+                if not source_units:
+                    links.append(link)
+                    continue
+                for source_unit in source_units:
+                    scoped_link = dict(link)
+                    scoped_link.update(source_unit)
+                    links.append(scoped_link)
+            return links
 
-        decree_href = self._inline_subordinate_href(
-            node_links(decree_nodes, "대통령령", "시행령")
-        )
-        base_authority_links = {"대통령령": decree_href} if decree_href else {}
+        base_authority_candidates: dict[str, list[dict[str, str]]] = {}
+        base_authority_links: dict[str, str] = {}
+        decree_links = node_links(decree_nodes, "대통령령", "시행령")
+        if decree_links:
+            base_authority_candidates["대통령령"] = decree_links
         # 법률이 시행령을 거치지 않고 부령에 곧바로 위임하기도 한다
         # (물환경보전법 제56조 → 기후에너지환경부령). 대통령령만 이어 두면
         # 그런 조문에는 3단비교 표 안에 링크가 하나도 걸리지 않았다.
@@ -5282,6 +5362,7 @@ class ResourceSearchTab(QWidget):
                 else ""
             ),
             authority_links=base_authority_links,
+            authority_link_candidates=base_authority_candidates,
         )
         # 하위법령에서 열면 모법 조문이 통째로 오므로, 그 하위법령이
         # 위임 근거로 든 항ㆍ호를 찾아 표시하고 그 자리로 스크롤한다.
@@ -5292,7 +5373,6 @@ class ResourceSearchTab(QWidget):
             if law_name.strip().endswith("시행령")
             else []
         )
-        base_code = self._three_stage_article_code(base_node)
         for node in current_nodes:
             units = self._law_source_units_referenced_by_decree(
                 json_text(node.get("조내용")), base_code
@@ -5323,8 +5403,6 @@ class ResourceSearchTab(QWidget):
             r'<div class="comparison-law-name">.*?</div>', "", base_head, count=1
         )
         blocks = law_content_blocks(base_inner)
-        base_code = self._three_stage_article_code(base_node)
-
         def column_law_name(nodes: list[dict], fallback_name: str) -> str:
             """그 열을 대표하는 법령명. 열 머리에 한 번만 적는다."""
             for node in nodes:

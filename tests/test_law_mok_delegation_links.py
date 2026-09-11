@@ -8,8 +8,11 @@
 
 import os
 import re
+from html import unescape
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PySide6.QtWidgets import QApplication
 
 from ui.tabs.resource_search import ResourceSearchTab
 from utils.parsing import insert_admin_clause_breaks
@@ -141,3 +144,71 @@ def test_unreferenced_paragraph_still_offers_the_articles_of_that_jo() -> None:
         "001902",
         "002000",
     ]
+
+
+def _law_26_three_stage_payload() -> dict:
+    """제26조에 시행령 제19조의2와 제20조가 함께 내려오는 3단비교 응답."""
+    law_name = "국토의 계획 및 이용에 관한 법률"
+    decree_name = f"{law_name} 시행령"
+    return {
+        "LawService": {
+            "기본정보": {"법령명": law_name},
+            "위임조문삼단비교": {
+                "법률조문": {
+                    "법령명": law_name,
+                    "조번호": "0026",
+                    "조가지번호": "00",
+                    "조제목": "제26조(도시ㆍ군관리계획 입안의 제안)",
+                    "조내용": LAW_26_CONTENT,
+                    "시행령조문목록": [
+                        {
+                            "법령명": decree_name,
+                            "조번호": "0019",
+                            "조가지번호": "02",
+                            "조제목": "제19조의2(도시ㆍ군관리계획 입안의 제안)",
+                            "조내용": (
+                                "① 법 제26조제1항제3호가목 및 같은 항에 따른 "
+                                "제안은 요건을 갖추어야 한다. "
+                                "④ 법 제26조제4항에 따른 규모는 별표와 같다."
+                            ),
+                        },
+                        {
+                            "법령명": decree_name,
+                            "조번호": "0020",
+                            "조가지번호": "00",
+                            "조제목": "제20조(제안서의 처리절차)",
+                            "조내용": "법 제26조제1항에 따른 제안서를 검토한다.",
+                        },
+                    ],
+                }
+            },
+        }
+    }
+
+
+def test_three_stage_law_column_scopes_article_26_authority_links() -> None:
+    """조문검색에서 연 3단비교도 제26조 가목에 시행령 하나만 연결한다."""
+    QApplication.instance() or QApplication([])
+    tab = ResourceSearchTab.__new__(ResourceSearchTab)
+
+    html = tab._build_three_stage_comparison_html(
+        _law_26_three_stage_payload(),
+        law_id="009294",
+        law_name="국토의 계획 및 이용에 관한 법률",
+        jo="002600",
+        label="제26조(도시ㆍ군관리계획 입안의 제안)",
+    )
+
+    authority_hrefs = [
+        unescape(href)
+        for href in re.findall(
+            r'<a href="([^"]+)"[^>]*>대통령령</a>', html
+        )
+    ]
+    assert len(authority_hrefs) == 3
+    assert authority_hrefs[0].startswith("lawref://open?")
+    assert "jo=19" in authority_hrefs[0]
+    assert "jo_branch=2" in authority_hrefs[0]
+    assert not authority_hrefs[0].startswith("lawsub://")
+    assert authority_hrefs[1].startswith("lawref://open?")
+    assert "jo=19" in authority_hrefs[1]
