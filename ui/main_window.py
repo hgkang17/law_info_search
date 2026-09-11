@@ -119,6 +119,7 @@ class LawSearchWindow(QMainWindow):
         self._open_document_order: list[str] = []
         self._open_document_tab_signature: tuple[tuple[str, str, str], ...] = ()
         self._open_document_refresh_pending = False
+        self._updating_open_document_scroll_buttons = False
         # 메인 화면을 떠나며 본문 위젯이 숨으면 Qt 스크롤바가 잠시 0이
         # 된다. 열린 탭별 실제 위치를 위젯 밖에도 보관한다.
         self._open_document_scrolls: dict[str, int] = {}
@@ -442,9 +443,9 @@ class LawSearchWindow(QMainWindow):
             )
         )
         self.open_documents_layout.addWidget(self.open_document_scroll_left, 0)
-        # 창이 최소화·최대화되어도 전체 끄기 단추를 뺀 나머지 폭을 탭 띠가
-        # 전부 사용한다. 넘치는 경우에만 양쪽 이동 단추를 드러낸다.
-        self.open_document_tab_strip.set_hug_content(False)
+        # 탭 띠는 열린 본문 너비만큼만 차지한다. 그러면 전체 끄기 단추가
+        # 마지막 탭 바로 옆을 따라가다가, 탭이 넘칠 때만 오른쪽 끝에 멈춘다.
+        self.open_document_tab_strip.set_hug_content(True)
         self.open_documents_layout.addWidget(self.open_document_tab_strip, 1)
         self.open_documents_layout.addWidget(self.open_document_scroll_right, 0)
         self.open_document_tab_strip.horizontalScrollBar().rangeChanged.connect(
@@ -896,21 +897,44 @@ class LawSearchWindow(QMainWindow):
 
     def _update_open_document_scroll_buttons(self, _minimum=0, maximum=0) -> None:
         """탭이 실제로 넘칠 때만 좌우 이동 가능성을 보여 준다."""
-        visible = bool(maximum > 0 and self.open_document_tab_strip.isVisible())
-        for button in (
-            self.open_document_scroll_left,
-            self.open_document_scroll_right,
-        ):
-            button.setFixedWidth(24 if visible else 0)
-            button.setVisible(visible)
-        # rangeChanged는 레이아웃 계산 도중에도 올 수 있다. 숨긴 단추의
-        # 직전 24px 자리가 한 프레임 남지 않도록 즉시 다시 배치한다.
-        self.open_documents_layout.invalidate()
-        self.open_documents_layout.activate()
-        if visible:
+        if self._updating_open_document_scroll_buttons:
+            return
+        self._updating_open_document_scroll_buttons = True
+        try:
             bar = self.open_document_tab_strip.horizontalScrollBar()
-            self.open_document_scroll_left.setEnabled(bar.value() > bar.minimum())
-            self.open_document_scroll_right.setEnabled(bar.value() < bar.maximum())
+            visible = False
+            # 화살표 자체의 48px 때문에 탭 띠의 폭과 스크롤 범위가 다시
+            # 달라질 수 있다. 중첩 rangeChanged는 막고 최종 범위가 안정될
+            # 때까지 같은 레이아웃 계산 안에서 맞춘다.
+            for _attempt in range(3):
+                visible = bool(
+                    bar.maximum() > 0
+                    and self.open_document_tab_strip.isVisible()
+                )
+                for button in (
+                    self.open_document_scroll_left,
+                    self.open_document_scroll_right,
+                ):
+                    button.setFixedWidth(24 if visible else 0)
+                    button.setVisible(visible)
+                self.open_documents_layout.invalidate()
+                self.open_documents_layout.activate()
+                self.open_document_tab_strip.refresh()
+                settled = bool(
+                    bar.maximum() > 0
+                    and self.open_document_tab_strip.isVisible()
+                )
+                if settled == visible:
+                    break
+            if visible:
+                self.open_document_scroll_left.setEnabled(
+                    bar.value() > bar.minimum()
+                )
+                self.open_document_scroll_right.setEnabled(
+                    bar.value() < bar.maximum()
+                )
+        finally:
+            self._updating_open_document_scroll_buttons = False
 
     @staticmethod
     def _document_title(row: dict[str, object], fallback: str) -> tuple[str, str]:

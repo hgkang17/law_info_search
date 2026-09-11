@@ -70,13 +70,18 @@ def test_open_documents_bar_starts_at_the_left(window) -> None:
     # 빈 단추 자리를 남기지 않는다.
     gap = button.x() - (strip.x() + strip.width())
     assert 0 <= gap <= 12
+    # 탭 띠는 내용 너비까지만 차지한다. 따라서 전체 끄기는 창 오른쪽 끝에
+    # 고정되지 않고 마지막 열린본문 바로 옆을 따라간다.
+    tabs_right = tabs.mapTo(holder, tabs.tabRect(tabs.count() - 1).topRight()).x()
+    assert 0 <= button.x() - tabs_right <= 12
+    assert button.x() + button.width() < holder.width() - 100
     assert main_window.open_document_scroll_left.width() == 0
     assert main_window.open_document_scroll_right.width() == 0
     # 늘어나지 않는 작은 단추다.
     assert button.width() <= 90
 
 
-def test_open_documents_bar_uses_full_width_and_shows_overflow_arrows(window) -> None:
+def test_open_documents_bar_stops_at_right_edge_and_shows_overflow_arrows(window) -> None:
     main_window, app = window
     main_window.resize(620, 720)
     tab = main_window.resource_tab
@@ -92,7 +97,6 @@ def test_open_documents_bar_uses_full_width_and_shows_overflow_arrows(window) ->
 
     strip = main_window.open_document_tab_strip
     bar = strip.horizontalScrollBar()
-    assert strip.sizePolicy().horizontalPolicy().name == "Expanding"
     assert bar.maximum() > 0
     assert main_window.open_document_scroll_left.isVisible()
     assert main_window.open_document_scroll_right.isVisible()
@@ -100,3 +104,7 @@ def test_open_documents_bar_uses_full_width_and_shows_overflow_arrows(window) ->
     assert main_window.open_document_scroll_right.width() == 24
     assert not main_window.open_document_scroll_left.isEnabled()
     assert main_window.open_document_scroll_right.isEnabled()
+    holder = main_window.open_documents_widget
+    button = main_window.close_all_documents_button
+    button_right = button.x() + button.width()
+    assert holder.width() - button_right < 20
