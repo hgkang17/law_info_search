@@ -174,3 +174,38 @@ def test_stored_article_label_does_not_repeat_the_law_name(
         assert law_name in tab.status_label.text()
     finally:
         tab.close()
+
+
+def test_inline_article_star_stores_only_the_article_label(
+    qt_app, tmp_path
+) -> None:
+    """본문 안의 별표도 결과 목록의 별표와 같은 저장 이름을 쓴다."""
+    tab = _tab(tmp_path)
+    try:
+        law_name = "국토의 계획 및 이용에 관한 법률"
+        tab._active_detail_row = {
+            "kind": "법령조문",
+            "name": law_name,
+            "provision": "제30조(도시·군관리계획의 결정)",
+            "source_id": "009294",
+            "jo_code": "003000",
+        }
+        calls: list[tuple] = []
+        tab._resource_action = lambda *args, **kwargs: (
+            calls.append((args, kwargs)) or False
+        )
+        tab._begin_keyword_favorite = lambda _target: None
+
+        tab._toggle_inline_article_favorite()
+
+        toggle = next(
+            call
+            for call in calls
+            if call[0] and call[0][0] == "toggle_article_favorite_by_id"
+        )
+        stored_label = toggle[0][3]
+        assert law_name not in stored_label
+        assert stored_label.startswith("제30조")
+        assert law_name in tab.status_label.text()
+    finally:
+        tab.close()

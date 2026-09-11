@@ -499,6 +499,52 @@ def test_favorite_article_opens_in_full_reading_mode_with_back_button(
         qt_app.processEvents()
 
 
+def test_favorite_article_wins_over_an_open_full_law(qt_app) -> None:
+    """같은 법령 전문 탭이 열려 있어도 즐겨찾기 조문을 따로 연다."""
+    window = LawSearchWindow()
+    try:
+        row = {
+            "target": "law",
+            "id": "009294",
+            "label": "법령",
+            "name": "국토의 계획 및 이용에 관한 법률",
+        }
+        resource = window.resource_tab
+        resource._open_document_tab(row)
+        resource._set_detail_document(
+            row["name"],
+            [("법령ID", row["id"])],
+            [("조문", "전문 본문")],
+            build_toc=True,
+        )
+        window._refresh_open_documents()
+        assert window._open_token_for_saved_row(row)
+
+        opened: list[tuple[dict, dict]] = []
+        resource.open_cached_favorite_article = lambda record, unit: opened.append(
+            (record, unit)
+        )
+        record = {
+            "row": row,
+            "favorite_article_jo": "003000",
+            "favorite_article_unit": {
+                "jo": "003000",
+                "hang": "",
+                "ho": "",
+                "mok": "",
+                "label": "제30조",
+            },
+        }
+
+        window._route_saved_record(record)
+
+        assert len(opened) == 1
+        assert opened[0][1]["jo"] == "003000"
+    finally:
+        window.close()
+        qt_app.processEvents()
+
+
 def test_favorite_body_is_not_covered_by_keyword_page(qt_app) -> None:
     """직접검색을 보고 있어도 즐겨찾기 본문은 법령 크게 보기로 열린다."""
     window = LawSearchWindow()

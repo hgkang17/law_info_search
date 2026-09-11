@@ -1874,7 +1874,9 @@ class ViewedLawsTab(QWidget):
     @staticmethod
     def _article_favorite_caption(law_name: str, article_label: str) -> str:
         law_name = str(law_name or "").strip()
-        article_label = str(article_label or "").strip()
+        article_label = LawDocumentCache.article_favorite_label(
+            law_name, article_label
+        )
         if law_name and article_label:
             return f"{law_name} · {article_label}"
         return law_name or article_label

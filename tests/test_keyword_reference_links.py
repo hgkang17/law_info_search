@@ -255,8 +255,12 @@ def test_three_stage_button_is_aligned_beside_keyword_article(tmp_path) -> None:
     tab._active_detail_row = row
     tab._toggle_inline_article_favorite()
     assert tab.reference_tab.favorite_calls == [
-        ("001", "000200", "국토의 계획 및 이용에 관한 법률 제2조(정의) 제1항",
-         "국토의 계획 및 이용에 관한 법률")
+        (
+            "001",
+            "000200",
+            "제2조(정의) 제1항",
+            "국토의 계획 및 이용에 관한 법률",
+        )
     ]
     assert tab.reference_tab.favorite_units == [
         {"hang": "1", "ho": "", "mok": ""}

@@ -60,6 +60,30 @@ def test_article_favorite_is_kept_inside_the_law_record(tmp_path) -> None:
     assert not cache.is_favorite(ROW)
 
 
+def test_full_law_name_is_removed_from_article_label(tmp_path) -> None:
+    """기존·신규 저장값 모두 즐겨찾기에서 법령명을 한 번만 표시한다."""
+    cache = _cache(tmp_path)
+    full_label = f"{ROW['name']} 제30조"
+
+    assert cache.set_article_favorite(ROW, "003000", full_label, True)
+    assert cache.article_favorites(ROW)[0]["label"] == "제30조"
+
+    # 이미 사용자 캐시에 남아 있는 구형 중복값도 파일 수정 없이 읽을 때
+    # 바로 정규화되어야 한다.
+    path = cache.path_for_row(ROW)
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["favorite_articles"][0]["label"] = full_label
+    path.write_text(
+        json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    cache._snapshot_memory.clear()
+    assert cache.favorite_entries()[0]["favorite_articles"][0]["label"] == "제30조"
+    assert (
+        ViewedLawsTab._article_favorite_caption(ROW["name"], full_label)
+        == f"{ROW['name']} · 제30조"
+    )
+
+
 def test_article_remains_visible_if_parent_law_membership_is_missing(
     tmp_path,
 ) -> None:

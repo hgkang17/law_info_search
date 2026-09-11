@@ -2482,8 +2482,9 @@ class AiLawSearchTab(QWidget):
         target = self._article_favorite_target(self._active_detail_row or {})
         if target is None:
             return
-        label = " ".join(
-            part for part in (target["law_name"], target["label"]) if part
+        label = str(target["label"] or "").strip() or "조문"
+        spoken = " ".join(
+            part for part in (target["law_name"], label) if part
         )
         favorite = bool(
             self._resource_action(
@@ -2495,7 +2496,7 @@ class AiLawSearchTab(QWidget):
                 mok=target["mok"],
             )
         )
-        self.status_label.setText(f"{label} 즐겨찾기를 처리하는 중입니다.")
+        self.status_label.setText(f"{spoken} 즐겨찾기를 처리하는 중입니다.")
         if not favorite:
             self._begin_keyword_favorite(target)
         self._resource_action(

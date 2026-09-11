@@ -984,6 +984,17 @@ class LawDocumentCache(QObject):
             entry.pop("favorite_projects", None)
         return entries
 
+    @staticmethod
+    def article_favorite_label(law_name: str, label: str) -> str:
+        """조문 표기 앞에 중복 저장된 법령명을 제거한다."""
+        law_name = str(law_name or "").strip()
+        label = str(label or "").strip()
+        if law_name and label.startswith(law_name):
+            remainder = label[len(law_name):].lstrip(" ·")
+            if remainder.startswith("제"):
+                return remainder
+        return label
+
     def _article_favorites(
         self,
         record: dict[str, object],
@@ -994,6 +1005,11 @@ class LawDocumentCache(QObject):
         if not isinstance(entries, list):
             return []
         cleaned: list[dict[str, object]] = []
+        row = record.get("row")
+        row = row if isinstance(row, dict) else {}
+        law_name = str(
+            record.get("name") or row.get("name") or row.get("title") or ""
+        )
         for entry in entries:
             if not isinstance(entry, dict):
                 continue
@@ -1005,7 +1021,9 @@ class LawDocumentCache(QObject):
                 "hang": str(entry.get("hang") or "").strip(),
                 "ho": str(entry.get("ho") or "").strip(),
                 "mok": str(entry.get("mok") or "").strip(),
-                "label": str(entry.get("label") or ""),
+                "label": self.article_favorite_label(
+                    law_name, str(entry.get("label") or "")
+                ),
             }
             memberships: list[dict[str, object]] = []
             raw_memberships = entry.get("favorite_projects")
@@ -1122,12 +1140,15 @@ class LawDocumentCache(QObject):
                 None,
             )
             if selected is None:
+                law_name = str(row.get("name") or row.get("title") or "")
                 selected = {
                     "jo": jo,
                     "hang": hang,
                     "ho": ho,
                     "mok": mok,
-                    "label": label or f"제{jo}조",
+                    "label": self.article_favorite_label(
+                        law_name, label or f"제{jo}조"
+                    ),
                     "favorite_projects": [],
                 }
                 entries.append(selected)

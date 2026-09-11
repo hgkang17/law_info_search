@@ -7419,7 +7419,7 @@ class ResourceSearchTab(QWidget):
         mok = str(request.get("mok") or "")
         law_name = str(request.get("law_name") or "")
         unit_label = self._law_reference_label(jo, hang, ho, mok)
-        label = f"{law_name} {unit_label}".strip()
+        spoken_label = f"{law_name} {unit_label}".strip()
         row = self._law_row(law_id, law_name)
         if row is None:
             return
@@ -7430,13 +7430,15 @@ class ResourceSearchTab(QWidget):
             if self.law_cache.set_article_favorite(
                 row,
                 jo,
-                label,
+                unit_label,
                 False,
                 hang=hang,
                 ho=ho,
                 mok=mok,
             ):
-                self.status_label.setText(f"{label} 즐겨찾기를 해제했습니다.")
+                self.status_label.setText(
+                    f"{spoken_label} 즐겨찾기를 해제했습니다."
+                )
             else:
                 self.status_label.setText(
                     f"즐겨찾기 해제에 실패했습니다: {self.law_cache.last_error}"
@@ -7446,7 +7448,7 @@ class ResourceSearchTab(QWidget):
         self.add_article_favorite_by_id(
             law_id,
             jo,
-            label,
+            unit_label,
             law_name,
             hang=hang,
             ho=ho,

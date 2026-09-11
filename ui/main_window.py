@@ -1867,20 +1867,11 @@ class LawSearchWindow(QMainWindow):
             row = record.get("row")
             if not isinstance(row, dict):
                 raise ValueError("저장 파일에 항목 정보가 없습니다.")
-            # 같은 항목의 상단 열린본문 탭이 살아 있으면 저장 파일을 다시
-            # 렌더링하지 않는다. 그래야 읽던 위치뿐 아니라 사용자가 고른
-            # 글꼴ㆍ크기와 임시 화면 상태도 그대로 남는다.
-            open_token = self._open_token_for_saved_row(row)
-            if open_token:
-                self._activate_open_document(open_token)
-                return self._tab_for_open_token(open_token)
             article_jo = str(record.get("favorite_article_jo") or "").strip()
             article_unit = record.get("favorite_article_unit")
             if article_jo:
-                # 조항호목 즐겨찾기는 조항호목 API로 그 조문만 연다. 저장
-                # 방식(전문 원문인지 화면 저장본인지)과는 상관이 없다.
-                # 예전에는 저장 종류가 ``detail_snapshot``이면 이 갈래를
-                # 건너뛰어 법령 전문이 열렸다.
+                # 같은 법령 전문 탭이 이미 열려 있어도 조문 즐겨찾기의 위치가
+                # 우선이다. 전문 탭 재사용을 먼저 하면 이 요청이 사라진다.
                 self.navigation.setCurrentRow(1)
                 self.resource_tab.ensure_body_page_for_target(
                     str(row.get("target") or "law")
@@ -1893,6 +1884,13 @@ class LawSearchWindow(QMainWindow):
                     else {"jo": article_jo},
                 )
                 return tab
+            # 같은 항목의 상단 열린본문 탭이 살아 있으면 저장 파일을 다시
+            # 렌더링하지 않는다. 그래야 읽던 위치뿐 아니라 사용자가 고른
+            # 글꼴ㆍ크기와 임시 화면 상태도 그대로 남는다.
+            open_token = self._open_token_for_saved_row(row)
+            if open_token:
+                self._activate_open_document(open_token)
+                return self._tab_for_open_token(open_token)
             if record.get("kind") != "detail_snapshot":
                 self.navigation.setCurrentRow(1)
                 self.resource_tab.ensure_body_page_for_target(
