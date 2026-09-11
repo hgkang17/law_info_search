@@ -634,6 +634,9 @@ class ResourceSearchTab(QWidget):
         self.detail_view.document().contentsChanged.connect(
             self._schedule_three_stage_button_positions
         )
+        self.detail_view.layoutSettled.connect(
+            self._schedule_three_stage_button_positions
+        )
         self.detail_view.viewport().installEventFilter(self)
 
     @property
@@ -10361,8 +10364,28 @@ class ResourceSearchTab(QWidget):
         row = self.result_table.currentRow()
         if row < 0 or row >= len(self.result_rows):
             return
-        self.open_selected_detail()
-        self._set_reading_mode(True)
+        window = self.window()
+        updates_were_enabled = window.updatesEnabled()
+        if updates_were_enabled:
+            window.setUpdatesEnabled(False)
+        try:
+            # 저장 본문은 숨은 목록 화면의 좁은 폭으로 먼저 만들지 않는다.
+            # 크게 보기의 최종 폭을 잡은 뒤 HTML을 넣어 중간 줄바꿈을 감춘다.
+            self._set_reading_mode(True)
+            settle = getattr(window, "_settle_reading_layout", None)
+            if callable(settle):
+                settle(self)
+            else:
+                QApplication.sendPostedEvents(None, QEvent.Type.LayoutRequest)
+                self.root_layout.activate()
+            self.detail_view.settle_wrap_now()
+            self.open_selected_detail()
+            self.detail_view.document().size()
+            self._schedule_three_stage_button_positions()
+        finally:
+            if updates_were_enabled:
+                window.setUpdatesEnabled(True)
+                window.update()
 
     def open_selected_detail(self, *_args: object) -> None:
         row_index = self.result_table.currentRow()

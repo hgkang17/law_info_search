@@ -1298,6 +1298,39 @@ class LawSearchWindow(QMainWindow):
                 status.setText(f"열린 본문 {closed}개를 닫았습니다.")
 
     def _activate_open_document(self, token: str) -> None:
+        """열린 본문 탭 전환의 중간 폭을 그리지 않고 최종 배치만 보인다."""
+        if token not in self._open_document_descriptors:
+            return
+        updates_were_enabled = self.updatesEnabled()
+        if updates_were_enabled:
+            self.setUpdatesEnabled(False)
+        try:
+            self._activate_open_document_now(token)
+            active_tab = self._tab_for_open_token(token)
+            if active_tab is not None:
+                self._settle_reading_layout(active_tab)
+                detail_view = getattr(active_tab, "detail_view", None)
+                if detail_view is not None:
+                    settle_wrap = getattr(detail_view, "settle_wrap_now", None)
+                    if callable(settle_wrap):
+                        settle_wrap()
+                    detail_view.document().size()
+                position_controls = getattr(
+                    active_tab, "_position_inline_three_stage_button", None
+                )
+                if callable(position_controls):
+                    position_controls()
+                schedule_controls = getattr(
+                    active_tab, "_schedule_three_stage_button_positions", None
+                )
+                if callable(schedule_controls):
+                    schedule_controls()
+        finally:
+            if updates_were_enabled:
+                self.setUpdatesEnabled(True)
+                self.update()
+
+    def _activate_open_document_now(self, token: str) -> None:
         document = self._open_document_descriptors.get(token)
         if document is None:
             return

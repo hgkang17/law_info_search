@@ -2027,6 +2027,7 @@ class StableHorizontalTableWidget(QTableWidget):
 class DeferredWrapTextBrowser(QTextBrowser):
     """창ㆍ패널 폭 변경 중 줄바꿈을 미루고 상단 글자의 높이를 보존한다."""
 
+    layoutSettled = Signal()
     WRAP_SETTLE_MS = 140
 
     def __init__(self, parent=None) -> None:
@@ -2201,8 +2202,10 @@ class DeferredWrapTextBrowser(QTextBrowser):
                 - self._resize_anchor_viewport_y
             )
             self._resize_anchor_position = -1
+            self.layoutSettled.emit()
             return
         # 문서 전환ㆍ재렌더링으로 취소한 복원을 새 본문에 적용하지 않는다.
+        self.layoutSettled.emit()
 
 
 class SearchHighlightDelegate(QStyledItemDelegate):

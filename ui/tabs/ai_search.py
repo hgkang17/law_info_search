@@ -457,6 +457,9 @@ class AiLawSearchTab(QWidget):
         self.detail_view.verticalScrollBar().valueChanged.connect(
             self._position_inline_three_stage_button
         )
+        self.detail_view.layoutSettled.connect(
+            self._position_inline_three_stage_button
+        )
         # 찾기 줄은 본문 위에 뜨는 창이라 레이아웃에 넣지 않는다.
         self.detail_search = DetailSearchBar(self.detail_view, self)
         detail_view_row = QWidget()
@@ -826,6 +829,9 @@ class AiLawSearchTab(QWidget):
         previous_base_foregrounds = capture_base_foreground_spans(
             self.detail_view.document()
         )
+        updates_were_enabled = self.detail_view.updatesEnabled()
+        if updates_were_enabled:
+            self.detail_view.setUpdatesEnabled(False)
         self.detail_search.begin_document_change()
         try:
             font = make_detail_font(
@@ -858,6 +864,10 @@ class AiLawSearchTab(QWidget):
                 pass
         finally:
             self.detail_search.end_document_change()
+            self.detail_view.document().size()
+            if updates_were_enabled:
+                self.detail_view.setUpdatesEnabled(True)
+                self.detail_view.viewport().update()
 
     def _selected_detail_cursor(self) -> QTextCursor | None:
         """본문에서 드래그해 둔 구간을 돌려준다. 없으면 아무 일도 하지 않는다.
@@ -2119,8 +2129,29 @@ class AiLawSearchTab(QWidget):
         row = self.result_table.currentRow()
         if row < 0 or row >= len(self.result_rows):
             return
-        self._show_selected_result()
-        self._set_reading_mode(True)
+        window = self.window()
+        updates_were_enabled = window.updatesEnabled()
+        if updates_were_enabled:
+            window.setUpdatesEnabled(False)
+        try:
+            # 숨은 본문 칸의 좁은 폭으로 HTML과 버튼 좌표를 먼저 만들면
+            # 크게 보기에서 세로로 찌그러진 중간 배치가 한 프레임 보인다.
+            # 최종 읽기 폭부터 확정하고 그 폭으로 본문을 한 번만 만든다.
+            self._set_reading_mode(True)
+            settle = getattr(window, "_settle_reading_layout", None)
+            if callable(settle):
+                settle(self)
+            else:
+                QApplication.sendPostedEvents(None, QEvent.Type.LayoutRequest)
+                self.root_layout.activate()
+            self.detail_view.settle_wrap_now()
+            self._show_selected_result()
+            self.detail_view.document().size()
+            self._position_inline_three_stage_button()
+        finally:
+            if updates_were_enabled:
+                window.setUpdatesEnabled(True)
+                window.update()
 
     def _selection_changed(self) -> None:
         """목록 화면에서는 선택만, 분할 본문이 열린 뒤에는 내용을 바꾼다."""

@@ -6,6 +6,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QSettings, QUrl, QUrlQuery
 from PySide6.QtGui import QTextCursor
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from storage.cache import LawDocumentCache
@@ -260,3 +261,70 @@ def test_three_stage_button_is_aligned_beside_keyword_article(tmp_path) -> None:
     assert tab.reference_tab.favorite_units == [
         {"hang": "1", "ho": "", "mok": ""}
     ]
+
+
+def test_keyword_article_open_positions_controls_after_final_reader_layout(tmp_path) -> None:
+    """숨은 본문을 크게 열어도 별과 3단은 최종 조문 줄에 붙는다."""
+    app = _application()
+    tab = _tab(tmp_path)
+    tab.reference_tab = _ReferenceTabSpy()
+    tab.resize(1400, 820)
+    tab.show()
+    app.processEvents()
+    row = {
+        "kind": "법령",
+        "name": "국토의 계획 및 이용에 관한 법률",
+        "provision": "제30조(도시·군관리계획의 결정)",
+        "source_id": "009294",
+        "jo_code": "003000",
+        "hang": "",
+        "ho": "",
+        "mok": "",
+        "agency": "국토교통부",
+        "date": "20260701",
+        "publication_date": "",
+        "publication_number": "",
+        "short_name": "국토계획법",
+        "content": (
+            "제30조(도시·군관리계획의 결정) ① 시·도지사는 도시·군관리계획을 "
+            "결정하려면 관계 행정기관의 장과 미리 협의하여야 한다. " * 8
+        ),
+        "article_api_loaded": "1",
+        "article_loading": "",
+        "article_error": "",
+    }
+    tab.result_rows = [row]
+    tab.result_table.setRowCount(1)
+    tab.result_table.setCurrentCell(0, 0)
+    rendered_widths = []
+    rendered_while_updates_enabled = []
+    replace_detail_content = tab._replace_detail_content
+
+    def record_render_width(**kwargs):
+        rendered_widths.append(tab.detail_view.viewport().width())
+        rendered_while_updates_enabled.append(tab.updatesEnabled())
+        return replace_detail_content(**kwargs)
+
+    tab._replace_detail_content = record_render_width
+
+    tab._open_detail_expanded()
+    QTest.qWait(tab.detail_view.WRAP_SETTLE_MS + 80)
+    app.processEvents()
+
+    cursor = QTextCursor(tab.detail_view.document())
+    cursor.setPosition(tab._three_stage_position)
+    article_rect = tab.detail_view.cursorRect(cursor)
+    expected_star_y = article_rect.top() + (
+        article_rect.height() - tab.article_favorite_button.height()
+    ) // 2
+    expected_three_stage_y = article_rect.top() + (
+        article_rect.height() - tab.three_stage_button.height()
+    ) // 2
+    assert tab.article_favorite_button.isVisible()
+    assert tab.three_stage_button.isVisible()
+    assert tab.article_favorite_button.y() == expected_star_y
+    assert tab.three_stage_button.y() == expected_three_stage_y
+    assert article_rect.top() < tab.detail_view.viewport().height() // 2
+    assert rendered_widths == [tab.detail_view.viewport().width()]
+    assert rendered_while_updates_enabled == [False]
+    tab.close()
