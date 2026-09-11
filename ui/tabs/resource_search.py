@@ -10415,7 +10415,13 @@ class ResourceSearchTab(QWidget):
                 # 구버전 저장본은 법령 img 태그를 텍스트로만 바꿔 저장했다.
                 # 이미지가 실제로 있는 문서만 최초 재열람 때 백그라운드에서
                 # 한 번 새로 받아 이후에는 내장 이미지까지 로컬에서 연다.
-                if not law_payload_images_need_refresh(cached_payload):
+                # 조문 즐겨찾기만 담은 article_favorites 기록도 같은
+                # 법령 키로 반환된다. 파일이 있다는 이유만으로 전문을
+                # 열면 payload가 없어 예외가 반복되므로 API 조회로 넘긴다.
+                if (
+                    isinstance(cached_payload, dict)
+                    and not law_payload_images_need_refresh(cached_payload)
+                ):
                     # AI추천 줄은 저장본에서 열 때도 전문이 아니라 그
                     # 조항호목만 연다. API로 받아 열 때(_show_detail)와
                     # 같은 화면이 되어야 저장 여부에 따라 결과가 달라지지
@@ -11316,9 +11322,19 @@ class ResourceSearchTab(QWidget):
         *,
         clear_highlights: bool = True,
     ) -> None:
-        """열람내역의 로컬 JSON을 연다. 구버전 이미지 문서만 한 번 갱신."""
+        """로컬 전문을 열고, 조문 즐겨찾기만 있는 기록은 전문을 조회한다."""
         row = record.get("row")
         payload = record.get("payload")
+        if (
+            isinstance(row, dict)
+            and str(row.get("target") or "") == "law"
+            and record.get("kind") == "article_favorites"
+            and not isinstance(payload, dict)
+        ):
+            # 저장내역에서 부모 법령을 직접 열 때도 검색 결과와 같은
+            # 경로를 쓴다. 기존 즐겨찾기는 API 성공 후 save()가 보존한다.
+            self._request_resource_detail(dict(row))
+            return
         if not isinstance(row, dict) or not isinstance(payload, dict):
             raise ValueError("저장된 법령 파일에 본문 정보가 없습니다.")
         if (
