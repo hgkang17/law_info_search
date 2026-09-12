@@ -19,7 +19,7 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QCursor, QPixmap, QTextCursor, QTextBlockFormat
+from PySide6.QtGui import QCursor, QMouseEvent, QPixmap, QTextCursor, QTextBlockFormat
 from PySide6.QtPdf import QPdfDocument
 from PySide6.QtPdfWidgets import QPdfView
 from PySide6.QtWidgets import (
@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
     QSizeGrip,
     QSplitter,
     QStackedWidget,
+    QTabBar,
     QSpinBox,
     QTextBrowser,
     QTreeWidget,
@@ -914,7 +915,11 @@ class MemoNoteDialog(QDialog):
 # 꺼낸 창은 본 창의 자식이 아니라 스타일시트를 물려받지 못한다. 창이
 # 본문 화면과 같은 결로 보이도록 최소한의 규칙을 직접 건다.
 _DETACHED_WINDOW_STYLE = """
-QWidget#detachedDocumentWindow { background: #ffffff; }
+QWidget#detachedDocumentWindow {
+    background: #ffffff;
+    border: 1px solid #91a0b5;
+}
+QWidget#detachedDocumentPage { background: #ffffff; border: none; }
 QFrame#detachedDocumentHeader {
     background: #f5f6f8;
     border: none;
@@ -1034,7 +1039,7 @@ class DetachedDocumentPage(QWidget):
         parent=None,
     ) -> None:
         super().__init__(None, Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
-        self.setObjectName("detachedDocumentWindow")
+        self.setObjectName("detachedDocumentPage")
         self.setWindowTitle(title)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self.resize(980, 720)
@@ -1461,6 +1466,105 @@ class DetachedDocumentPage(QWidget):
         self._schedule_article_layout()
 
 
+class DetachedDocumentTabBar(CornerCloseTabBar):
+    """탭 정렬과 실제 창 끌기를 구분한다. 마지막 탭은 곧 창 손잡이다."""
+
+    def __init__(self, owner):
+        super().__init__(owner)
+        self.owner = owner
+        self._press_global = None
+        self._press_page = None
+        self._moving_window = None
+        self._window_drag = False
+        self._window_offset = QPoint()
+        self._moved = False
+
+    def mousePressEvent(self, event):  # noqa: N802
+        self._press_global = None
+        self._moving_window = None
+        self._moved = False
+        spot = event.position().toPoint()
+        if event.button() != Qt.MouseButton.LeftButton or self.close_spot_at(spot) >= 0:
+            super().mousePressEvent(event)
+            return
+        self._press_global = event.globalPosition().toPoint()
+        index = self.tabAt(spot)
+        self._press_page = self.tabData(index) if index >= 0 else None
+        self._window_drag = self.count() == 1 or index < 0
+        self._window_offset = self._press_global - self.owner.pos()
+        if self._window_drag:
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):  # noqa: N802
+        if self._press_global is None or not event.buttons() & Qt.MouseButton.LeftButton:
+            super().mouseMoveEvent(event)
+            return
+        point = event.globalPosition().toPoint()
+        if not self._moved:
+            if (point - self._press_global).manhattanLength() < QApplication.startDragDistance():
+                event.accept()
+                return
+            self._moved = True
+        if self._moving_window is None:
+            if self._window_drag:
+                self._moving_window = self.owner
+            elif not self.rect().adjusted(-12, -12, 12, 12).contains(event.position().toPoint()):
+                # Qt의 정렬 드래그만 먼저 끝낸다. 공용 release의 detach 신호는
+                # 호출하지 않아 놓기 전에 복귀/이중 분리가 일어나지 않게 한다.
+                release = QMouseEvent(
+                    QEvent.Type.MouseButtonRelease, event.position(), event.globalPosition(),
+                    Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton, event.modifiers(),
+                )
+                QTabBar.mouseReleaseEvent(self, release)
+                self._pressed_data = None
+                self._hide_preview()
+                self._moving_window = self.owner.split_page(self._press_page, point)
+                self._window_offset = QPoint(self._moving_window.width() // 2, 20)
+                # 새 창이 떠도 현재 누름을 시작한 탭바가 놓기까지 받는다.
+                self.grabMouse()
+            else:
+                super().mouseMoveEvent(event)
+                return
+        window = self._moving_window
+        if window.isMaximized():
+            window.showNormal()
+            self._window_offset = QPoint(window.width() // 2, 20)
+        window.move(point - self._window_offset)
+        window.probe_reattach(point)
+        event.accept()
+
+    def mouseReleaseEvent(self, event):  # noqa: N802
+        if event.button() != Qt.MouseButton.LeftButton:
+            super().mouseReleaseEvent(event)
+            return
+        moving = self._moving_window
+        window_drag = self._window_drag and self._press_global is not None
+        self._press_global = None
+        self._moving_window = None
+        self._press_page = None
+        self._window_drag = False
+        if moving is not None:
+            if QWidget.mouseGrabber() is self:
+                self.releaseMouse()
+            event.accept()
+            moving.drop_reattach(event.globalPosition().toPoint())
+            return
+        if window_drag:
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event):  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton and self.count() == 1:
+            self._press_global = None
+            self.owner.toggle_maximized()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+
 class DetachedDocumentWindow(QWidget):
     """독립된 본문 페이지를 탭으로 소유하는 창. 이동 시 페이지를 재생성하지 않는다."""
 
@@ -1469,6 +1573,7 @@ class DetachedDocumentWindow(QWidget):
     def __init__(self, title="", html="", link_handler=None, font=None, parent=None, *, page=None):
         super().__init__(None, Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
         self.setObjectName("detachedDocumentWindow")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self.resize(980, 720)
         self.setMinimumSize(420, 280)
@@ -1477,14 +1582,14 @@ class DetachedDocumentWindow(QWidget):
         self._pages = []
         self._last_page = None
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(1, 1, 1, 1)
+        layout.setContentsMargins(2, 2, 2, 2)
         layout.setSpacing(0)
         self.header = ReattachDragBar(self)
         self.header.setFixedHeight(44)
         row = QHBoxLayout(self.header)
         row.setContentsMargins(8, 4, 0, 0)
         row.setSpacing(0)
-        self.document_tabs = CornerCloseTabBar()
+        self.document_tabs = DetachedDocumentTabBar(self)
         self.document_tabs.setObjectName("openDocumentTabs")
         self.document_tabs.setDrawBase(False)
         self.document_tabs.setExpanding(False)
@@ -1661,6 +1766,10 @@ class DetachedDocumentWindow(QWidget):
         if len(self._pages) == 1:
             self.move(point - QPoint(self.width() // 2, 20))
             return
+        self.split_page(page, point)
+
+    def split_page(self, page, point):
+        """페이지를 새 창으로 옮기고 진행 중인 마우스 끌기에 넘긴다."""
         moved = self._take_page(page)
         window = DetachedDocumentWindow(parent=self.owner, page=moved)
         register = getattr(self.owner, "register_detached_window", None)
@@ -1668,6 +1777,7 @@ class DetachedDocumentWindow(QWidget):
             register(window, moved.reattach_payload)
         window.move(point - QPoint(window.width() // 2, 20))
         window.show()
+        return window
 
     def animate_open_from(self, rect):
         if rect is not None and rect.isValid():

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, Qt
 from PySide6.QtGui import QMouseEvent
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 
 from ui.dialogs import DetachedDocumentWindow
 from ui.main_window import LawSearchWindow
@@ -535,3 +535,94 @@ def test_drag_preview_is_cached_until_release_without_a_fade(qt_app):
     finally:
         bar._hide_preview()
         bar.close()
+
+
+def test_single_detached_tab_moves_the_window_before_mouse_release(qt_app):
+    window = DetachedDocumentWindow("본문", "<p>본문</p>", None, qt_app.font())
+    window.move(200, 200)
+    window.show()
+    qt_app.processEvents()
+    try:
+        bar = window.document_tabs
+        spot = bar.tabRect(0).center()
+        start = window.pos()
+        bar.mousePressEvent(_mouse_event(bar, QEvent.Type.MouseButtonPress, spot, Qt.MouseButton.LeftButton))
+        _move(bar, spot + QPoint(120, 0))
+        assert window.pos() == start + QPoint(120, 0)
+        assert bar._preview is None
+        bar.mouseReleaseEvent(_mouse_event(bar, QEvent.Type.MouseButtonRelease, spot, Qt.MouseButton.NoButton))
+        assert window.isVisible()
+        assert bar.count() == 1
+    finally:
+        window.close()
+        qt_app.processEvents()
+
+
+def test_dragging_one_of_many_tabs_out_creates_a_live_window_before_release(qt_app):
+    window = DetachedDocumentWindow("첫 본문", "<p>첫 본문</p>", None, qt_app.font())
+    other = DetachedDocumentWindow("둘째 본문", "<p>둘째 본문</p>", None, qt_app.font())
+    page = other.current_page()
+    window.add_page(other._take_page(page))
+    window.move(200, 200)
+    window.show()
+    qt_app.processEvents()
+    try:
+        bar = window.document_tabs
+        spot = bar.tabRect(1).center()
+        bar.mousePressEvent(_mouse_event(bar, QEvent.Type.MouseButtonPress, spot, Qt.MouseButton.LeftButton))
+        _move(bar, spot + QPoint(30, 0))
+        assert bar.count() == 2
+        assert bar._moving_window is None
+        _move(bar, QPoint(spot.x(), bar.height() + 50))
+        moving = bar._moving_window
+        assert moving is not None and moving is not window
+        assert moving.isVisible()
+        assert moving.current_page() is page
+        assert bar.count() == 1
+        old = moving.pos()
+        _move(bar, QPoint(spot.x() + 70, bar.height() + 90))
+        assert moving.pos() == old + QPoint(70, 40)
+        bar.mouseReleaseEvent(_mouse_event(
+            bar, QEvent.Type.MouseButtonRelease,
+            QPoint(spot.x() + 70, bar.height() + 90), Qt.MouseButton.NoButton,
+        ))
+        assert moving.isVisible()
+        assert QWidget.mouseGrabber() is not bar
+    finally:
+        for detached in tuple(DetachedDocumentWindow._windows):
+            detached.close()
+        qt_app.processEvents()
+
+
+def test_dragging_a_single_tab_onto_another_window_joins_on_release(qt_app):
+    source = DetachedDocumentWindow("첫 본문", "<p>첫 본문</p>", None, qt_app.font())
+    target = DetachedDocumentWindow("둘째 본문", "<p>둘째 본문</p>", None, qt_app.font())
+    source.move(100, 100)
+    target.move(600, 500)
+    source.show()
+    target.show()
+    qt_app.processEvents()
+    try:
+        bar = source.document_tabs
+        spot = bar.tabRect(0).center()
+        page = source.current_page()
+        QApplication.sendEvent(bar, _mouse_event(
+            bar, QEvent.Type.MouseButtonPress, spot, Qt.MouseButton.LeftButton,
+        ))
+        destination = target.drop_rect().center()
+        QApplication.sendEvent(bar, _mouse_event(
+            bar, QEvent.Type.MouseMove, bar.mapFromGlobal(destination), Qt.MouseButton.LeftButton,
+        ))
+        assert target.header.property("dropReady") == "true"
+        assert target.document_tabs.count() == 1
+        QApplication.sendEvent(bar, _mouse_event(
+            bar, QEvent.Type.MouseButtonRelease, bar.mapFromGlobal(destination), Qt.MouseButton.NoButton,
+        ))
+        qt_app.processEvents()
+        assert target.document_tabs.count() == 2
+        assert target.current_page() is page
+        assert source not in DetachedDocumentWindow._windows
+    finally:
+        for detached in tuple(DetachedDocumentWindow._windows):
+            detached.close()
+        qt_app.processEvents()
