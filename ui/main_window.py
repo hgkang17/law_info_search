@@ -49,7 +49,9 @@ from ui.assets import (
     LOGO_PATH,
     SPIN_DOWN_ICON_PATH,
     SPIN_UP_ICON_PATH,
+    normalize_inline_icon_sources,
 )
+from ui.dialogs import DetachedDocumentWindow
 from ui.tabs.ai_chat_panel import AiChatPanel, shutdown_ai_background_services
 from ui.tabs.ai_search import AiLawSearchTab
 from ui.tabs.home import HomeSearchPage
@@ -59,6 +61,7 @@ from ui.tabs.viewed_laws import ViewedLawsTab
 from ui.theme import (
     apply_light_title_bar,
     apply_workbench_color_tokens,
+    detail_font as make_detail_font,
     register_bundled_pretendard_fonts,
     ui_font,
 )
@@ -124,6 +127,8 @@ class LawSearchWindow(QMainWindow):
         # 메인 화면을 떠나며 본문 위젯이 숨으면 Qt 스크롤바가 잠시 0이
         # 된다. 열린 탭별 실제 위치를 위젯 밖에도 보관한다.
         self._open_document_scrolls: dict[str, int] = {}
+        # 띠에서 끌어내 따로 띄운 본문 창. 닫힐 때까지 붙들어 둔다.
+        self._detached_document_windows: list[DetachedDocumentWindow] = []
         self._update_check_worker: UpdateCheckWorker | None = None
         self._update_download_worker: UpdateDownloadWorker | None = None
         self._update_progress_dialog: QProgressDialog | None = None
@@ -400,7 +405,12 @@ class LawSearchWindow(QMainWindow):
         self.open_document_tabs.setElideMode(Qt.TextElideMode.ElideNone)
         self.open_document_tabs.setToolTip(
             "탭을 클릭하면 해당 본문으로 이동하고, 왼쪽 버튼으로 끌면 순서를 "
-            "바꿀 수 있습니다. 휠 또는 가운데 버튼 끌기로 좌우 이동합니다."
+            "바꿀 수 있습니다. 휠 또는 가운데 버튼 끌기로 좌우 이동합니다. "
+            "위아래로 끌어내 놓으면 별도 창으로 꺼냅니다."
+        )
+        # 본문 화면 안쪽 탭과 같은 몸짓으로 띠에서도 창을 꺼낸다.
+        self.open_document_tabs.detachRequested.connect(
+            self._detach_open_document_tab
         )
         # 누르는 순간이 아니라 뗄 때 연다. QTabBar는 누르자마자 현재
         # 탭을 바꿔서, 순서를 바꾸려고 끌기만 해도 그 본문이 열렸다.
@@ -1298,6 +1308,88 @@ class LawSearchWindow(QMainWindow):
         # 본문 탭 쪽은 자기 화면이 알아서 갱신을 예약한다. 이쪽은
         # 표시줄만 바뀌므로 여기서 직접 예약한다.
         self._schedule_open_documents_refresh()
+
+    def _open_document_index_for_token(self, token: str) -> int:
+        """탭 자리는 끌기로 밀리므로 토큰으로 다시 찾는다."""
+        if not token:
+            return -1
+        for index in range(self.open_document_tabs.count()):
+            if str(self.open_document_tabs.tabData(index) or "") == token:
+                return index
+        return -1
+
+    def _detach_open_document_tab(self, token: object, global_position) -> None:
+        """띠에서 위아래로 끌어낸 탭을 별도 창으로 꺼낸다.
+
+        법령 본문은 본문 화면이 상태(HTML·스크롤·조문 별표)를 들고 있으므로
+        그 화면의 꺼내기를 그대로 부른다. 질의회신ㆍ해석례ㆍ판례ㆍ조문검색은
+        화면 하나에 본문 칸이 붙어 있는 구조라, 지금 그려 둔 본문을 그대로
+        옮겨 담는다. 원래 탭은 양쪽 모두 닫는다 — 같은 본문이 두 군데에
+        남으면 어느 쪽을 고쳤는지 알기 어렵다.
+        """
+        key = str(token or "")
+        document = self._open_document_descriptors.get(key)
+        if not isinstance(document, dict):
+            return
+        if str(document.get("source")) == "resource":
+            # 본문 화면이 탭 닫기까지 맡는다. 띠는 그 신호를 듣고 지워진다.
+            self._open_document_scrolls.pop(key, None)
+            self.resource_tab._detach_document_tab(
+                str(document.get("key") or ""), global_position
+            )
+            return
+
+        tab = self._tab_for_open_token(key)
+        detail_view = getattr(tab, "detail_view", None)
+        close = getattr(tab, "close_open_document", None)
+        if detail_view is None or close is None:
+            return
+        html = normalize_inline_icon_sources(detail_view.toHtml())
+        if not detail_view.toPlainText().strip():
+            return
+        title = str(document.get("full") or document.get("short") or "본문")
+        # 숨은 본문 칸의 스크롤바는 0으로 내려가 있을 수 있다. 그때는
+        # 띠가 따로 기억해 둔 위치를 쓴다.
+        position = int(detail_view.verticalScrollBar().value() or 0)
+        if not position:
+            position = int(self._open_document_scrolls.get(key, 0))
+        window = DetachedDocumentWindow(
+            title,
+            html,
+            getattr(tab, "_detail_link_clicked", None),
+            make_detail_font(
+                getattr(tab, "detail_font_size", 10),
+                getattr(tab, "detail_font_family", ""),
+            ),
+        )
+        self._detached_document_windows.append(window)
+        window.destroyed.connect(
+            lambda _obj=None, target=window: (
+                self._detached_document_windows.remove(target)
+                if target in self._detached_document_windows
+                else None
+            )
+        )
+        if global_position is not None:
+            window.move(
+                max(0, global_position.x() - window.width() // 2),
+                max(0, global_position.y() - 40),
+            )
+        window.show()
+        window.raise_()
+        window.activateWindow()
+        window.scroll_to(position)
+
+        index = self._open_document_index_for_token(key)
+        if index >= 0:
+            self._close_open_document_tab(index)
+        else:
+            self._open_document_scrolls.pop(key, None)
+            close()
+            self._schedule_open_documents_refresh()
+        status = getattr(tab, "status_label", None)
+        if status is not None:
+            status.setText(f"{title}을(를) 별도 창으로 꺼냈습니다.")
 
     def _close_all_open_documents(self) -> None:
         """열려 있는 본문을 모두 닫는다.
