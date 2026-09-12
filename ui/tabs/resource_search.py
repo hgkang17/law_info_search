@@ -58,6 +58,7 @@ from ui.widgets import (
     apply_body_font_family,
     build_detail_header_controls,
     select_detail_font_in_combo,
+    tab_preview_snapshot,
     load_detail_font_preferences,
     build_restore_view_button,
     build_search_result_head,
@@ -1185,6 +1186,7 @@ class ResourceSearchTab(QWidget):
         self.document_tabs.setElideMode(Qt.TextElideMode.ElideNone)
         # 탭을 띠 밖으로 끌어 놓으면 그 본문만 별도 창으로 꺼낸다.
         self.document_tabs.detachRequested.connect(self._detach_document_tab)
+        self.document_tabs.preview_provider = self._document_tab_preview
         self._detached_document_windows: list[DetachedDocumentWindow] = []
         self.document_tab_strip = TabStripScrollArea(self.document_tabs)
         self.document_tab_strip.setObjectName("documentTabStrip")
@@ -2468,6 +2470,25 @@ class ResourceSearchTab(QWidget):
             index, QTabBar.ButtonPosition.LeftSide, star
         )
 
+    def _document_tab_preview(self, key: object):
+        """탭을 끌어내는 동안 보여 줄 창 미리보기의 제목과 본문 그림."""
+        document_key = str(key or "")
+        row = self._document_tab_row(document_key)
+        state = self._document_states.get(document_key)
+        title = str(
+            (row or {}).get("name")
+            or (state or {}).get("headline")
+            or "본문"
+        )
+        # 지금 보고 있는 본문만 그림을 뜬다. 다른 탭 본문을 그리려면
+        # 문서를 새로 배치해야 해서 끌기가 끊긴다.
+        snapshot = (
+            tab_preview_snapshot(self.detail_view)
+            if document_key == self._active_document_key
+            else None
+        )
+        return title, snapshot
+
     def _detach_document_tab(self, key: object, global_position) -> None:
         """탭 하나를 별도 창으로 꺼낸다.
 
@@ -2540,17 +2561,70 @@ class ResourceSearchTab(QWidget):
                 else None
             )
         )
+        # 되돌릴 때 쓸 상태를 통째로 들려 보낸다. 그려 둔 QTextDocument는
+        # 이 화면의 본문 칸에 물려 있던 것이라 들고 가지 않는다.
+        carried = dict(state)
+        carried["document"] = None
+        carried["row"] = dict(row or {})
+        owner = self.window()
+        register = getattr(owner, "register_detached_window", None)
+        if callable(register):
+            register(
+                window,
+                {
+                    "source": "resource",
+                    "token": f"resource:{document_key}",
+                    "key": document_key,
+                    "row": dict(row or {}),
+                    "state": carried,
+                },
+            )
         if global_position is not None:
             window.move(
                 max(0, global_position.x() - window.width() // 2),
                 max(0, global_position.y() - 40),
             )
-        window.show()
+        # 끌던 미리보기 자리에서 창이 펼쳐지게 한다.
+        window.animate_open_from(self.document_tabs.detach_preview_rect)
         window.raise_()
         window.activateWindow()
         window.scroll_to(int(state.get("scroll") or 0))
         self._close_document_tab_by_key(document_key)
-        self.status_label.setText(f"{title}을(를) 별도 창으로 꺼냈습니다.")
+        self.status_label.setText(
+            f"{title}을(를) 별도 창으로 꺼냈습니다. 제목 줄을 끌어 "
+            "'열린 본문' 띠에 놓으면 되돌아옵니다."
+        )
+
+    def reattach_document(self, payload: dict[str, object], *, scroll: int = 0) -> bool:
+        """별도 창으로 꺼냈던 법령 본문을 본문 탭으로 되돌린다."""
+        key = str(payload.get("key") or "")
+        row = payload.get("row")
+        state = payload.get("state")
+        # 본문 탭은 행의 종류와 번호로 자리를 잡는다. 둘 중 하나라도 없으면
+        # 되돌릴 자리를 만들 수 없다.
+        if not key or not isinstance(row, dict) or not row.get("target"):
+            return False
+        if not (row.get("id") or row.get("name")):
+            return False
+        if self._document_tab_index(key) >= 0:
+            # 그 사이 같은 본문을 다시 열어 두었다. 그 탭으로 간다.
+            self._open_document_tab(dict(row))
+            return True
+        if not isinstance(state, dict):
+            return False
+        restored = dict(state)
+        restored["row"] = dict(row)
+        # 창이 그려 두었던 문서는 창과 함께 사라진다. HTML에서 다시 그린다.
+        restored["document"] = None
+        restored["scroll"] = int(scroll)
+        # 탭 자리를 먼저 만들고(빈 화면은 그리지 않는다) 상태를 얹는다.
+        self._open_document_tab(dict(row), defer_restore=True)
+        self._document_states[key] = restored
+        self._restore_document_state(key)
+        self._refresh_document_tab_favorites()
+        name = str(row.get("name") or "본문")
+        self.status_label.setText(f"{name}을(를) 본문 탭으로 되돌렸습니다.")
+        return True
 
     def _close_all_document_tabs(self) -> None:
         """열려 있는 본문 탭을 모두 닫는다.

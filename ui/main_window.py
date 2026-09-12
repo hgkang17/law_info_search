@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 import time
 
-from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, QUrl
+from PySide6.QtCore import QEvent, QPoint, QRect, QSettings, Qt, QTimer, QUrl
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -74,6 +74,7 @@ from ui.widgets import (
     TabClickActivator,
     TabStripScrollArea,
     close_hovered_reference_popup,
+    tab_preview_snapshot,
 )
 from utils.constants import APP_VERSION, UI_FONT_FAMILIES
 from utils.formatting import body_to_html, detail_document_header, law_short_name
@@ -412,6 +413,8 @@ class LawSearchWindow(QMainWindow):
         self.open_document_tabs.detachRequested.connect(
             self._detach_open_document_tab
         )
+        # 끌어내는 동안 보여 줄 창 미리보기의 제목과 본문 그림.
+        self.open_document_tabs.preview_provider = self._open_document_preview
         # 누르는 순간이 아니라 뗄 때 연다. QTabBar는 누르자마자 현재
         # 탭을 바꿔서, 순서를 바꾸려고 끌기만 해도 그 본문이 열렸다.
         # 같은 탭 위에서 뗐고 그동안 거의 안 움직였을 때만 연다.
@@ -1042,6 +1045,8 @@ class LawSearchWindow(QMainWindow):
                     "full": full,
                     "text": text,
                     "view": tab.detail_view,
+                    # 별도 창으로 꺼냈다가 되돌릴 때 이 행으로 다시 건다.
+                    "row": dict(row),
                 }
             )
         return documents
@@ -1309,6 +1314,116 @@ class LawSearchWindow(QMainWindow):
         # 표시줄만 바뀌므로 여기서 직접 예약한다.
         self._schedule_open_documents_refresh()
 
+    # ---- 꺼내기 미리보기와 되돌리기 ----------------------------------
+    def _open_document_preview(self, token: object):
+        """탭을 끌어내는 동안 보여 줄 창 미리보기의 제목과 본문 그림."""
+        document = self._open_document_descriptors.get(str(token or ""))
+        if not isinstance(document, dict):
+            return None
+        title = str(document.get("full") or document.get("short") or "본문")
+        view = document.get("view")
+        # 지금 보고 있지 않은 화면의 본문도 그림을 뜬다.
+        snapshot = (
+            tab_preview_snapshot(view) if isinstance(view, QWidget) else None
+        )
+        return title, snapshot
+
+    def register_detached_window(self, window, payload) -> None:
+        """꺼낸 창을 붙들어 두고 되돌아올 길을 알려 준다.
+
+        법령검색 화면 안쪽 탭에서 꺼낸 창도 여기에 등록한다. 되돌릴 곳은
+        어느 화면에서나 보이는 "열린 본문" 띠 하나로 모은다.
+        """
+        self._detached_document_windows.append(window)
+        window.enable_reattach(
+            payload, self._can_reattach_at, self._reattach_detached_window
+        )
+        window.destroyed.connect(
+            lambda _obj=None, target=window: (
+                self._detached_document_windows.remove(target)
+                if target in self._detached_document_windows
+                else None
+            )
+        )
+
+    def _open_documents_drop_rect(self) -> QRect:
+        """꺼낸 창을 놓으면 되돌아가는 자리(띠 둘레)의 전역 범위."""
+        bar = getattr(self, "open_documents_widget", None)
+        if bar is None or not bar.isVisible() or not self.isVisible():
+            return QRect()
+        rect = QRect(bar.mapToGlobal(QPoint(0, 0)), bar.size())
+        # 창 제목 줄을 띠에 정확히 겹치기는 어렵다. 위아래로 넉넉히 본다.
+        return rect.adjusted(-10, -22, 10, 22)
+
+    def _can_reattach_at(self, global_point) -> bool:
+        rect = self._open_documents_drop_rect()
+        inside = bool(rect.isValid() and rect.contains(global_point))
+        self._highlight_open_documents_drop(inside)
+        return inside
+
+    def _highlight_open_documents_drop(self, active: bool) -> None:
+        bar = getattr(self, "open_documents_widget", None)
+        if bar is None:
+            return
+        flag = "true" if active else "false"
+        if bar.property("dropTarget") == flag:
+            return
+        bar.setProperty("dropTarget", flag)
+        bar.style().unpolish(bar)
+        bar.style().polish(bar)
+
+    def _reattach_detached_window(self, window) -> None:
+        """꺼낸 창의 본문을 원래 자리로 되돌리고 창을 접는다."""
+        payload = dict(getattr(window, "reattach_payload", None) or {})
+        source = str(payload.get("source") or "")
+        token = str(payload.get("token") or "")
+        scroll = int(window.scroll_position())
+        self._highlight_open_documents_drop(False)
+
+        restored = False
+        if source == "resource":
+            restored = bool(
+                self.resource_tab.reattach_document(payload, scroll=scroll)
+            )
+        else:
+            tab = getattr(
+                self, self._CLOSABLE_DOCUMENT_TABS.get(source, ""), None
+            )
+            restore = getattr(tab, "restore_open_document", None)
+            row = payload.get("row")
+            if restore is not None and isinstance(row, dict) and row:
+                restore(
+                    row,
+                    html=str(payload.get("html") or ""),
+                    text=str(payload.get("text") or ""),
+                    scroll=scroll,
+                )
+                restored = True
+        if not restored:
+            # 되돌릴 자리를 잃었으면 창을 그대로 둔다. 닫으면 본문이
+            # 어느 쪽에도 남지 않는다.
+            window.reattach_handler = self._reattach_detached_window
+            window.reattach_button.setVisible(True)
+            return
+
+        self._refresh_open_documents()
+        if token:
+            self._open_document_scrolls[token] = scroll
+            self._activate_open_document(token)
+        window.animate_close_to(self._open_document_tab_rect(token))
+
+    def _open_document_tab_rect(self, token: str) -> QRect:
+        """되돌아간 본문 탭의 전역 자리. 창이 그리로 접히며 닫힌다."""
+        index = self._open_document_index_for_token(token)
+        if index < 0:
+            return QRect()
+        rect = self.open_document_tabs.tabRect(index)
+        if rect.isEmpty():
+            return QRect()
+        return QRect(
+            self.open_document_tabs.mapToGlobal(rect.topLeft()), rect.size()
+        )
+
     def _open_document_index_for_token(self, token: str) -> int:
         """탭 자리는 끌기로 밀리므로 토큰으로 다시 찾는다."""
         if not token:
@@ -1353,6 +1468,9 @@ class LawSearchWindow(QMainWindow):
         position = int(detail_view.verticalScrollBar().value() or 0)
         if not position:
             position = int(self._open_document_scrolls.get(key, 0))
+        row = document.get("row")
+        if not isinstance(row, dict):
+            row = dict(getattr(tab, "_active_detail_row", None) or {})
         window = DetachedDocumentWindow(
             title,
             html,
@@ -1362,20 +1480,23 @@ class LawSearchWindow(QMainWindow):
                 getattr(tab, "detail_font_family", ""),
             ),
         )
-        self._detached_document_windows.append(window)
-        window.destroyed.connect(
-            lambda _obj=None, target=window: (
-                self._detached_document_windows.remove(target)
-                if target in self._detached_document_windows
-                else None
-            )
+        self.register_detached_window(
+            window,
+            {
+                "source": str(document.get("source")),
+                "token": key,
+                "row": dict(row),
+                "html": html,
+                "text": str(document.get("text") or ""),
+            },
         )
         if global_position is not None:
             window.move(
                 max(0, global_position.x() - window.width() // 2),
                 max(0, global_position.y() - 40),
             )
-        window.show()
+        # 끌던 미리보기가 그대로 창이 되는 것처럼 펼친다.
+        window.animate_open_from(self.open_document_tabs.detach_preview_rect)
         window.raise_()
         window.activateWindow()
         window.scroll_to(position)
@@ -1389,7 +1510,10 @@ class LawSearchWindow(QMainWindow):
             self._schedule_open_documents_refresh()
         status = getattr(tab, "status_label", None)
         if status is not None:
-            status.setText(f"{title}을(를) 별도 창으로 꺼냈습니다.")
+            status.setText(
+                f"{title}을(를) 별도 창으로 꺼냈습니다. 제목 줄을 끌어 "
+                "'열린 본문' 띠에 놓으면 되돌아옵니다."
+            )
 
     def _close_all_open_documents(self) -> None:
         """열려 있는 본문을 모두 닫는다.
@@ -2316,6 +2440,12 @@ class LawSearchWindow(QMainWindow):
             QFrame#openDocumentsBar {
                 background: transparent;
                 border: none;
+            }
+            /* 꺼낸 창을 끌고 와 이 위에 놓으면 본문이 되돌아온다. */
+            QFrame#openDocumentsBar[dropTarget="true"] {
+                background: rgba(255, 255, 255, 0.16);
+                border: 1px dashed rgba(255, 255, 255, 0.65);
+                border-radius: 8px;
             }
             QLabel#openDocumentsLabel {
                 background: transparent;
@@ -4737,6 +4867,11 @@ class LawSearchWindow(QMainWindow):
                 background: transparent;
             }
             QFrame#openDocumentsBar { background: transparent; border: none; }
+            QFrame#openDocumentsBar[dropTarget="true"] {
+                background: rgba(31, 84, 143, 0.10);
+                border: 1px dashed #7aa7d8;
+                border-radius: 8px;
+            }
             QLabel#openDocumentsEmpty {
                 color: #8a8d93;
                 font-size: 9pt;

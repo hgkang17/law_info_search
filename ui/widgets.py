@@ -4109,6 +4109,165 @@ class PopupResizeHandle(QWidget):
         super().mouseReleaseEvent(event)
 
 
+class TabDragPreview(QWidget):
+    """탭을 띠 밖으로 끌 때 커서를 따라다니는 작은 창 그림.
+
+    인터넷 브라우저에서 탭을 떼어낼 때처럼, 놓으면 이런 창이 나온다는
+    것을 끌고 있는 동안 미리 보여 준다. 마우스 이벤트는 받지 않으므로
+    아래쪽 위젯의 끌기를 가로막지 않는다.
+    """
+
+    WIDTH = 248
+    HEIGHT = 168
+    HEADER = 26
+    RADIUS = 8
+
+    def __init__(self, title: str, snapshot: QPixmap | None = None) -> None:
+        super().__init__(
+            None,
+            Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint,
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self._title = " ".join(str(title or "본문").split())
+        self._snapshot = snapshot
+        self.resize(self.WIDTH, self.HEIGHT)
+        self.setWindowOpacity(0.0)
+        self._fade: QPropertyAnimation | None = None
+
+    def follow(self, global_point: QPoint) -> None:
+        """커서가 제목 줄을 쥐고 있는 것처럼 따라다닌다."""
+        self.move(
+            global_point.x() - self.width() // 2,
+            global_point.y() - self.HEADER // 2,
+        )
+
+    def fade_in(self) -> None:
+        animation = QPropertyAnimation(self, QByteArray(b"windowOpacity"), self)
+        animation.setDuration(110)
+        animation.setStartValue(0.0)
+        animation.setEndValue(0.92)
+        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        animation.start(QPropertyAnimation.DeletionPolicy.KeepWhenStopped)
+        self._fade = animation
+
+    def paintEvent(self, event) -> None:  # noqa: N802 (Qt 규약)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        body = QRectF(0.5, 0.5, self.width() - 1.0, self.height() - 1.0)
+        path = QPainterPath()
+        path.addRoundedRect(body, self.RADIUS, self.RADIUS)
+        painter.fillPath(path, QBrush(QColor("#ffffff")))
+
+        # 제목 줄은 진짜 창의 머리처럼 위쪽만 둥글게 채운다.
+        header = QPainterPath()
+        header.addRoundedRect(
+            QRectF(body.left(), body.top(), body.width(), self.HEADER + 4),
+            self.RADIUS,
+            self.RADIUS,
+        )
+        header.addRect(
+            QRectF(body.left(), body.top() + self.RADIUS, body.width(), 4.0)
+        )
+        painter.fillPath(header.simplified(), QBrush(QColor("#eef1f4")))
+
+        if self._snapshot is not None and not self._snapshot.isNull():
+            target = QRect(
+                1,
+                self.HEADER + 4,
+                self.width() - 2,
+                self.height() - self.HEADER - 5,
+            )
+            painter.save()
+            clip = QPainterPath()
+            clip.addRect(QRectF(target))
+            painter.setClipPath(clip.intersected(path))
+            painter.drawPixmap(target.topLeft(), self._snapshot)
+            painter.restore()
+
+        painter.setPen(QPen(QColor("#c9d2dc"), 1.0))
+        painter.drawPath(path)
+
+        painter.setPen(QPen(QColor("#41556a")))
+        font = painter.font()
+        font.setPointSizeF(max(7.5, font.pointSizeF() - 0.5))
+        painter.setFont(font)
+        text_rect = QRect(10, 0, self.width() - 20, self.HEADER + 3)
+        painter.drawText(
+            text_rect,
+            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+            QFontMetrics(font).elidedText(
+                self._title, Qt.TextElideMode.ElideRight, text_rect.width()
+            ),
+        )
+
+
+# 아직 펼쳐진 적 없는 본문 칸을 대신해 그릴 때 쓰는 종이 크기.
+_PREVIEW_PAGE_WIDTH = 720.0
+_PREVIEW_PAGE_HEIGHT = 520.0
+
+
+def _document_snapshot(widget) -> QPixmap | None:
+    """아직 펼쳐진 적 없는 본문 칸의 첫머리를 종이에 그리듯 그린다.
+
+    원본 문서를 그대로 그리려면 그 문서의 줄바꿈 폭을 건드려야 해서
+    보고 있던 화면의 배치가 흐트러진다. 미리보기는 "이런 글이 든 창"임을
+    알려 주면 되므로 첫머리만 평문으로 옮겨 그린다.
+    """
+    getter = getattr(widget, "toPlainText", None)
+    text = str(getter() if callable(getter) else "").strip()
+    if not text:
+        return None
+    head = "\n".join(text.splitlines()[:40])[:1200]
+    document = QTextDocument()
+    document.setDefaultFont(widget.font())
+    document.setPlainText(head)
+    document.setTextWidth(_PREVIEW_PAGE_WIDTH)
+    height = min(
+        max(float(document.size().height() or 0.0), 240.0),
+        _PREVIEW_PAGE_HEIGHT,
+    )
+    pixmap = QPixmap(int(_PREVIEW_PAGE_WIDTH), int(height))
+    pixmap.fill(QColor("#ffffff"))
+    painter = QPainter(pixmap)
+    try:
+        document.drawContents(
+            painter, QRectF(0.0, 0.0, _PREVIEW_PAGE_WIDTH, height)
+        )
+    finally:
+        painter.end()
+    return pixmap
+
+
+def tab_preview_snapshot(widget) -> QPixmap | None:
+    """끌기 미리보기 안에 넣을 본문 그림.
+
+    ``grab()``은 지금 화면에 떠 있는 위젯만 뜬다. 열린 본문 띠에서는 보고
+    있지 않은 화면의 본문도 꺼낼 수 있어야 하므로 숨어 있어도 그려 주는
+    ``render()``를 쓰고, 그 화면이 한 번도 펼쳐지지 않아 크기가 0인
+    경우에는 본문 문서를 직접 그린다.
+    """
+    if widget is None:
+        return None
+    size = widget.size()
+    if not size.isEmpty():
+        pixmap = QPixmap(size)
+        pixmap.fill(QColor("#ffffff"))
+        widget.render(pixmap)
+    else:
+        pixmap = _document_snapshot(widget)
+    if pixmap is None or pixmap.isNull():
+        return None
+    scaled = pixmap.scaledToWidth(
+        TabDragPreview.WIDTH - 2, Qt.TransformationMode.SmoothTransformation
+    )
+    visible_height = TabDragPreview.HEIGHT - TabDragPreview.HEADER - 5
+    return scaled.copy(
+        0, 0, scaled.width(), min(scaled.height(), visible_height)
+    )
+
+
 class CornerCloseTabBar(QTabBar):
     """닫기 × 를 탭 오른쪽 위 모서리에 겹쳐 그리는 탭 줄.
 
@@ -4137,8 +4296,15 @@ class CornerCloseTabBar(QTabBar):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.closable_check = None
+        # 끌어내는 동안 보여 줄 미리보기의 제목과 그림을 화면 쪽이 준다.
+        # 탭에 담아 둔 값을 받아 (제목, QPixmap)을 돌려주면 된다.
+        self.preview_provider = None
         self._hover_index = -1
         self._pressed_data = None
+        self._preview: TabDragPreview | None = None
+        # 놓는 순간의 미리보기 자리. 꺼낸 창이 여기서 펼쳐지면 끌던 그림이
+        # 그대로 창이 되는 것처럼 보인다.
+        self.detach_preview_rect = QRect()
         self.setMouseTracking(True)
 
     # --- 자리 계산 -------------------------------------------------
@@ -4222,7 +4388,59 @@ class CornerCloseTabBar(QTabBar):
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802 (Qt 규약)
         self._set_hover(self.close_hover_at(event.position().toPoint()))
+        if (
+            self._pressed_data is not None
+            and event.buttons() & Qt.MouseButton.LeftButton
+        ):
+            spot = event.position().toPoint()
+            if self._is_detach_spot(spot):
+                self._show_preview(event.globalPosition().toPoint())
+            else:
+                # 띠 안으로 되돌아오면 그냥 순서 바꾸기다.
+                self._hide_preview()
         super().mouseMoveEvent(event)
+
+    # --- 끌어내기 미리보기 ------------------------------------------
+    def _preview_content(self) -> tuple[str, QPixmap | None]:
+        index = self._index_for_data(self._pressed_data)
+        title = " ".join(self.tabText(index).split()) if index >= 0 else "본문"
+        if self.preview_provider is None:
+            return title, None
+        try:
+            given = self.preview_provider(self._pressed_data)
+        except Exception:  # noqa: BLE001 - 미리보기가 끌기를 막으면 안 된다.
+            return title, None
+        if not given:
+            return title, None
+        given_title, snapshot = given
+        return str(given_title or title), snapshot
+
+    def _index_for_data(self, data) -> int:
+        for index in range(self.count()):
+            if self.tabData(index) == data:
+                return index
+        return -1
+
+    def _show_preview(self, global_point: QPoint) -> None:
+        if self._preview is None:
+            title, snapshot = self._preview_content()
+            self._preview = TabDragPreview(title, snapshot)
+            self._preview.follow(global_point)
+            self._preview.show()
+            self._preview.fade_in()
+            return
+        self._preview.follow(global_point)
+
+    def _hide_preview(self) -> QRect:
+        """미리보기를 거두고 마지막으로 있던 자리를 알려 준다."""
+        preview = self._preview
+        self._preview = None
+        if preview is None:
+            return QRect()
+        rect = preview.geometry()
+        preview.hide()
+        preview.deleteLater()
+        return rect
 
     def leaveEvent(self, event) -> None:  # noqa: N802 (Qt 규약)
         self._set_hover(-1)
@@ -4230,6 +4448,7 @@ class CornerCloseTabBar(QTabBar):
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt 규약)
         self._pressed_data = None
+        self._hide_preview()
         if event.button() == Qt.MouseButton.LeftButton:
             index = self.close_spot_at(event.position().toPoint())
             if index >= 0:
@@ -4259,6 +4478,8 @@ class CornerCloseTabBar(QTabBar):
             and event.button() == Qt.MouseButton.LeftButton
             and self._is_detach_spot(event.position().toPoint())
         )
+        # 끌던 그림이 있던 자리에서 창이 펼쳐지게 알려 준다.
+        self.detach_preview_rect = self._hide_preview()
         global_point = event.globalPosition().toPoint()
         # 먼저 Qt가 들고 있던 끌기를 정상으로 끝낸 뒤에 알린다. 여기서
         # 바로 탭을 없애면 끌기 상태가 남아 다음 누르기가 어긋난다.

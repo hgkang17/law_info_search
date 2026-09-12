@@ -2594,6 +2594,38 @@ class AiLawSearchTab(QWidget):
                 self, "링크 열기 실패", "법령 링크를 열지 못했습니다."
             )
 
+    def restore_open_document(
+        self,
+        row: dict[str, object],
+        *,
+        html: str = "",
+        text: str = "",
+        scroll: int = 0,
+    ) -> None:
+        """별도 창으로 꺼냈던 본문을 이 화면에 다시 건다.
+
+        꺼낼 때 그려 둔 HTML을 그대로 되돌려 놓는다. 다시 조회하면 같은
+        본문을 API에서 또 받아 오게 되고, 창에서 바꾼 글자색ㆍ메모 자리도
+        어긋난다.
+        """
+        self._active_detail_row = dict(row)
+        self.current_detail_text = str(text)
+        if html:
+            self._replace_detail_content(
+                html=html, source_font_size=self.detail_font_size
+            )
+        else:
+            self._replace_detail_content(text=text)
+        self.copy_button.setEnabled(bool(text))
+        self._set_visible_memos([])
+        scroll_bar = self.detail_view.verticalScrollBar()
+        QTimer.singleShot(
+            0,
+            lambda: scroll_bar.setValue(
+                max(0, min(int(scroll), scroll_bar.maximum()))
+            ),
+        )
+
     def close_open_document(self) -> None:
         """열린 본문 표시줄에서 이 화면의 본문을 닫는다.
 

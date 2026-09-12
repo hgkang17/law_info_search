@@ -6,9 +6,13 @@ from html import escape
 
 from PySide6.QtCore import (
     QBuffer,
+    QByteArray,
+    QEasingCurve,
     QEvent,
     QIODevice,
+    QPoint,
     QPointF,
+    QPropertyAnimation,
     QRect,
     QSize,
     Qt,
@@ -899,6 +903,96 @@ class MemoNoteDialog(QDialog):
         return self.editor.toPlainText().strip()
 
 
+# 꺼낸 창은 본 창의 자식이 아니라 스타일시트를 물려받지 못한다. 창이
+# 본문 화면과 같은 결로 보이도록 최소한의 규칙을 직접 건다.
+_DETACHED_WINDOW_STYLE = """
+QWidget#detachedDocumentWindow { background: #ffffff; }
+QFrame#detachedDocumentHeader {
+    background: #eef2f7;
+    border: 1px solid #dbe3ec;
+    border-radius: 8px;
+}
+QFrame#detachedDocumentHeader[dropReady="true"] {
+    background: #dbeafe;
+    border: 1px solid #6fa8e8;
+}
+QLabel#detachedDocumentTitle {
+    background: transparent;
+    color: #173b63;
+    font-size: 11pt;
+    font-weight: 700;
+}
+QPushButton#detachedDocumentReattach {
+    background: #ffffff;
+    color: #3c6ea5;
+    border: 1px solid #c3d4e6;
+    border-radius: 5px;
+    padding: 3px 10px;
+}
+QPushButton#detachedDocumentReattach:hover {
+    background: #f2f7fd;
+    color: #22558c;
+}
+QTextBrowser#detachedDocumentBrowser {
+    background: #ffffff;
+    border: 1px solid #dbe3ec;
+    border-radius: 6px;
+    padding: 8px;
+}
+"""
+
+
+class ReattachDragBar(QFrame):
+    """꺼낸 창의 제목 줄. 끌어서 옮기고, 띠 위에 놓으면 되돌아간다.
+
+    창틀 대신 이 줄을 쥐고 끄는 이유는 놓는 순간을 알아야 하기 때문이다.
+    운영체제가 그리는 창틀을 끌 때는 어디에서 손을 뗐는지 알 수 없어
+    "열린 본문 띠 위에 떨어뜨리면 다시 넣기"를 만들 수 없다.
+    """
+
+    def __init__(self, window: DetachedDocumentWindow) -> None:
+        super().__init__(window)
+        self.window_ref = window
+        self.setObjectName("detachedDocumentHeader")
+        self.setCursor(Qt.CursorShape.SizeAllCursor)
+        self.setToolTip(
+            "이 줄을 끌어 창을 옮깁니다. 본 창의 '열린 본문' 띠 위에 "
+            "놓으면 본문이 원래 자리로 돌아갑니다."
+        )
+        self._drag_offset: QPoint | None = None
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt 규약)
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_offset = (
+                event.globalPosition().toPoint()
+                - self.window_ref.frameGeometry().topLeft()
+            )
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802 (Qt 규약)
+        if (
+            self._drag_offset is not None
+            and event.buttons() & Qt.MouseButton.LeftButton
+        ):
+            point = event.globalPosition().toPoint()
+            self.window_ref.move(point - self._drag_offset)
+            self.window_ref.probe_reattach(point)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 (Qt 규약)
+        dragging = self._drag_offset is not None
+        self._drag_offset = None
+        if dragging and event.button() == Qt.MouseButton.LeftButton:
+            self.window_ref.drop_reattach(event.globalPosition().toPoint())
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+
 class DetachedDocumentWindow(QWidget):
     """열린 본문 탭을 창 밖으로 꺼내 따로 띄우는 크게 보기 창.
 
@@ -924,10 +1018,34 @@ class DetachedDocumentWindow(QWidget):
         layout.setContentsMargins(10, 8, 10, 10)
         layout.setSpacing(6)
 
+        # 본문을 어디로 되돌릴지 아는 쪽(본 창)이 채워 넣는다.
+        self.reattach_payload: dict[str, object] = {}
+        self.reattach_probe = None
+        self.reattach_handler = None
+        self._geometry_animation: QPropertyAnimation | None = None
+        self._drop_ready = False
+
+        self.header = ReattachDragBar(self)
+        header_layout = QHBoxLayout(self.header)
+        header_layout.setContentsMargins(10, 6, 8, 6)
+        header_layout.setSpacing(8)
         self.title_label = QLabel(title)
         self.title_label.setObjectName("detachedDocumentTitle")
         self.title_label.setWordWrap(True)
-        layout.addWidget(self.title_label)
+        header_layout.addWidget(self.title_label, 1)
+        self.reattach_button = QPushButton("본문으로 되돌리기")
+        self.reattach_button.setObjectName("detachedDocumentReattach")
+        self.reattach_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.reattach_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.reattach_button.setToolTip(
+            "이 본문을 본 창의 '열린 본문' 자리로 되돌립니다. 제목 줄을 "
+            "끌어 띠 위에 놓아도 됩니다."
+        )
+        self.reattach_button.clicked.connect(self._reattach_now)
+        self.reattach_button.hide()
+        header_layout.addWidget(self.reattach_button, 0)
+        layout.addWidget(self.header)
+        self.setStyleSheet(_DETACHED_WINDOW_STYLE)
 
         self.browser = QTextBrowser()
         self.browser.setObjectName("detachedDocumentBrowser")
@@ -966,6 +1084,91 @@ class DetachedDocumentWindow(QWidget):
     def scroll_to(self, position: int) -> None:
         scroll_bar = self.browser.verticalScrollBar()
         scroll_bar.setValue(max(0, min(int(position), scroll_bar.maximum())))
+
+    def scroll_position(self) -> int:
+        return int(self.browser.verticalScrollBar().value())
+
+    # ---- 다시 넣기 ---------------------------------------------------
+    def enable_reattach(self, payload, probe, handler) -> None:
+        """이 창을 어디로 되돌릴지 본 창이 알려 준다.
+
+        ``probe(전역좌표)``는 지금 놓으면 되돌아갈 자리인지 알려 주고,
+        ``handler(창)``이 실제로 본문을 제자리에 돌려놓는다.
+        """
+        self.reattach_payload = dict(payload or {})
+        self.reattach_probe = probe
+        self.reattach_handler = handler
+        self.reattach_button.setVisible(handler is not None)
+
+    def probe_reattach(self, global_point: QPoint) -> bool:
+        """끌고 가는 동안 되돌아갈 자리인지 제목 줄 색으로 알려 준다."""
+        ready = False
+        if self.reattach_probe is not None:
+            try:
+                ready = bool(self.reattach_probe(global_point))
+            except Exception:  # noqa: BLE001 - 끌기를 막지 않는다.
+                ready = False
+        self._set_drop_ready(ready)
+        return ready
+
+    def _set_drop_ready(self, ready: bool) -> None:
+        if ready == self._drop_ready:
+            return
+        self._drop_ready = ready
+        self.header.setProperty("dropReady", "true" if ready else "false")
+        self.header.style().unpolish(self.header)
+        self.header.style().polish(self.header)
+
+    def drop_reattach(self, global_point: QPoint) -> None:
+        """제목 줄을 놓았다. 띠 위였으면 본문을 제자리로 돌려보낸다."""
+        ready = self.probe_reattach(global_point)
+        # 놓았으니 강조는 거둔다. 본 창 쪽 띠 강조도 함께 꺼진다.
+        if self.reattach_probe is not None:
+            try:
+                self.reattach_probe(QPoint(-1, -1))
+            except Exception:  # noqa: BLE001 - 끌기를 막지 않는다.
+                pass
+        self._set_drop_ready(False)
+        if ready:
+            self._reattach_now()
+
+    def _reattach_now(self) -> None:
+        if self.reattach_handler is None:
+            return
+        handler = self.reattach_handler
+        # 두 번 불리지 않게 먼저 끊는다. 본문이 두 군데 열릴 수 있다.
+        self.reattach_handler = None
+        self.reattach_button.hide()
+        handler(self)
+
+    # ---- 열리고 닫히는 모습 ------------------------------------------
+    def animate_open_from(self, rect: QRect) -> None:
+        """끌던 미리보기 자리에서 창이 펼쳐지게 보여 준다."""
+        target = self.geometry()
+        if rect is None or rect.isNull() or rect.isEmpty():
+            self.show()
+            return
+        self.setGeometry(rect)
+        self.show()
+        self._animate_geometry(rect, target)
+
+    def animate_close_to(self, rect: QRect) -> None:
+        """탭 자리로 빨려 들어가듯 줄어든 뒤 닫힌다."""
+        if rect is None or rect.isNull() or rect.isEmpty():
+            self.close()
+            return
+        animation = self._animate_geometry(self.geometry(), rect)
+        animation.finished.connect(self.close)
+
+    def _animate_geometry(self, start: QRect, end: QRect) -> QPropertyAnimation:
+        animation = QPropertyAnimation(self, QByteArray(b"geometry"), self)
+        animation.setDuration(170)
+        animation.setStartValue(QRect(start))
+        animation.setEndValue(QRect(end))
+        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        animation.start(QPropertyAnimation.DeletionPolicy.KeepWhenStopped)
+        self._geometry_animation = animation
+        return animation
 
     # ---- 조문 별표ㆍ3단비교 단추 -------------------------------------
     def attach_article_controls(
