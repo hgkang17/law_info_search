@@ -4301,6 +4301,8 @@ class CornerCloseTabBar(QTabBar):
         # 끌어내는 동안 보여 줄 미리보기의 제목과 그림을 화면 쪽이 준다.
         # 탭에 담아 둔 값을 받아 (제목, QPixmap)을 돌려주면 된다.
         self.preview_provider = None
+        self.drop_probe = None
+        self._preview_cache = None
         self._hover_index = -1
         self._pressed_data = None
         self._preview: TabDragPreview | None = None
@@ -4395,11 +4397,18 @@ class CornerCloseTabBar(QTabBar):
             and event.buttons() & Qt.MouseButton.LeftButton
         ):
             spot = event.position().toPoint()
-            if self._is_detach_spot(spot):
+            external = bool(
+                self.drop_probe is not None
+                and not self.rect().contains(spot)
+                and self.drop_probe(event.globalPosition().toPoint())
+            )
+            if self._is_detach_spot(spot) or external:
                 self._show_preview(event.globalPosition().toPoint())
             else:
                 # 띠 안으로 되돌아오면 그냥 순서 바꾸기다.
                 self._hide_preview()
+            if self.drop_probe is not None:
+                self.drop_probe(event.globalPosition().toPoint())
         super().mouseMoveEvent(event)
 
     # --- 끌어내기 미리보기 ------------------------------------------
@@ -4425,11 +4434,13 @@ class CornerCloseTabBar(QTabBar):
 
     def _show_preview(self, global_point: QPoint) -> None:
         if self._preview is None:
-            title, snapshot = self._preview_content()
+            if self._preview_cache is None:
+                self._preview_cache = self._preview_content()
+            title, snapshot = self._preview_cache
             self._preview = TabDragPreview(title, snapshot)
             self._preview.follow(global_point)
             self._preview.show()
-            self._preview.fade_in()
+            self._preview.setWindowOpacity(0.92)
             return
         self._preview.follow(global_point)
 
@@ -4450,6 +4461,7 @@ class CornerCloseTabBar(QTabBar):
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt 규약)
         self._pressed_data = None
+        self._preview_cache = None
         self._hide_preview()
         if event.button() == Qt.MouseButton.LeftButton:
             index = self.close_spot_at(event.position().toPoint())
@@ -4478,7 +4490,14 @@ class CornerCloseTabBar(QTabBar):
         detaching = (
             data is not None
             and event.button() == Qt.MouseButton.LeftButton
-            and self._is_detach_spot(event.position().toPoint())
+            and (
+                self._is_detach_spot(event.position().toPoint())
+                or (
+                    self.drop_probe is not None
+                    and not self.rect().contains(event.position().toPoint())
+                    and self.drop_probe(event.globalPosition().toPoint())
+                )
+            )
         )
         # 끌던 그림이 있던 자리에서 창이 펼쳐지게 알려 준다.
         self.detach_preview_rect = self._hide_preview()
@@ -4488,6 +4507,9 @@ class CornerCloseTabBar(QTabBar):
         super().mouseReleaseEvent(event)
         if detaching:
             self.detachRequested.emit(data, global_point)
+        if self.drop_probe is not None:
+            self.drop_probe(QPoint(-100000, -100000))
+        self._preview_cache = None
 
 
 class TabClickActivator(QObject):

@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSizeGrip,
     QSplitter,
+    QStackedWidget,
     QSpinBox,
     QTextBrowser,
     QTreeWidget,
@@ -48,6 +49,8 @@ from ui.theme import detail_font, scale_document_font_sizes
 from ui.widgets import (
     DETAIL_FONT_SIZE_STEP,
     DetailSearchBar,
+    CornerCloseTabBar,
+    tab_preview_snapshot,
     PopupDragBar,
     PopupResizeHandle,
     apply_close_icon,
@@ -917,6 +920,9 @@ QFrame#detachedDocumentHeader {
     border: none;
     border-bottom: 1px solid #dbe3ec;
 }
+QFrame#detachedDocumentHeader[dropReady="true"] {
+    background: #dceafb;
+}
 QLabel#detachedDocumentTitle {
     background: transparent;
     color: #34465a;
@@ -1012,7 +1018,7 @@ class ReattachDragBar(QFrame):
         super().mouseDoubleClickEvent(event)
 
 
-class DetachedDocumentWindow(QWidget):
+class DetachedDocumentPage(QWidget):
     """열린 본문 탭을 창 밖으로 꺼내 따로 띄우는 크게 보기 창.
 
     본문 화면과 같은 HTML을 그대로 보여 주고, 인용 링크는 원래 화면이
@@ -1453,6 +1459,227 @@ class DetachedDocumentWindow(QWidget):
     def resizeEvent(self, event) -> None:  # noqa: N802 (Qt 이름)
         super().resizeEvent(event)
         self._schedule_article_layout()
+
+
+class DetachedDocumentWindow(QWidget):
+    """독립된 본문 페이지를 탭으로 소유하는 창. 이동 시 페이지를 재생성하지 않는다."""
+
+    _windows = set()
+
+    def __init__(self, title="", html="", link_handler=None, font=None, parent=None, *, page=None):
+        super().__init__(None, Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
+        self.setObjectName("detachedDocumentWindow")
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        self.resize(980, 720)
+        self.setMinimumSize(420, 280)
+        self.owner = parent
+        self.setStyleSheet((parent.styleSheet() if parent is not None else "") + _DETACHED_WINDOW_STYLE)
+        self._pages = []
+        self._last_page = None
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(1, 1, 1, 1)
+        layout.setSpacing(0)
+        self.header = ReattachDragBar(self)
+        self.header.setFixedHeight(44)
+        row = QHBoxLayout(self.header)
+        row.setContentsMargins(8, 4, 0, 0)
+        row.setSpacing(0)
+        self.document_tabs = CornerCloseTabBar()
+        self.document_tabs.setObjectName("openDocumentTabs")
+        self.document_tabs.setDrawBase(False)
+        self.document_tabs.setExpanding(False)
+        self.document_tabs.setMovable(True)
+        self.document_tabs.setTabsClosable(False)
+        self.document_tabs.setElideMode(Qt.TextElideMode.ElideRight)
+        self.document_tabs.currentChanged.connect(self._select_page)
+        self.document_tabs.tabCloseRequested.connect(self._close_tab)
+        self.document_tabs.detachRequested.connect(self._detach_tab)
+        self.document_tabs.preview_provider = lambda page: (page.windowTitle(), tab_preview_snapshot(page.reader_splitter))
+        self.document_tabs.drop_probe = lambda point: self.probe_reattach(point)
+        row.addWidget(self.document_tabs, 1)
+        row.addSpacing(24)
+        for text, tip, callback in (("−", "최소화", self.showMinimized),
+                                    ("□", "최대화 / 복원", self.toggle_maximized),
+                                    ("×", "닫기", self.close)):
+            button = QPushButton(text)
+            button.setProperty("windowControl", "true")
+            button.setFixedSize(44, 38)
+            button.setToolTip(tip)
+            button.setAccessibleName(tip)
+            if text == "×":
+                button.setObjectName("detachedWindowClose")
+            button.clicked.connect(callback)
+            row.addWidget(button)
+        layout.addWidget(self.header)
+        self.stack = QStackedWidget()
+        layout.addWidget(self.stack, 1)
+        self.size_grip = QSizeGrip(self)
+        self.size_grip.setFixedSize(16, 16)
+        layout.addWidget(self.size_grip, 0, Qt.AlignmentFlag.AlignRight)
+        if page is None:
+            page = DetachedDocumentPage(title, html, link_handler, font or self.font(), parent=parent)
+        self.add_page(page)
+        self._windows.add(self)
+
+    def current_page(self):
+        return self.stack.currentWidget() if self._pages else self._last_page
+
+    def closeEvent(self, event):  # noqa: N802
+        self._windows.discard(self)
+        super().closeEvent(event)
+
+    def __getattr__(self, name):
+        # 기존 호출부의 본문 조작 API는 현재 페이지로 전달한다.
+        if name.startswith("__") or "stack" not in self.__dict__:
+            raise AttributeError(name)
+        page = self.current_page()
+        if page is None:
+            raise AttributeError(name)
+        return getattr(page, name)
+
+    @property
+    def reattach_handler(self):
+        return self.current_page().reattach_handler
+
+    @reattach_handler.setter
+    def reattach_handler(self, handler):
+        self.current_page().reattach_handler = handler
+
+    @property
+    def reattach_position(self):
+        return self.current_page().reattach_position
+
+    @reattach_position.setter
+    def reattach_position(self, position):
+        self.current_page().reattach_position = position
+
+    def add_page(self, page, position=None):
+        page.hide()
+        page.setParent(self.stack, Qt.WindowType.Widget)
+        page.setMinimumSize(0, 0)
+        page.header.hide()
+        page.size_grip.hide()
+        page.layout().setContentsMargins(0, 0, 0, 0)
+        self._pages.append(page)
+        self.stack.addWidget(page)
+        index = self.document_tabs.count()
+        if position is not None:
+            x = self.document_tabs.mapFromGlobal(position).x()
+            index = next((i for i in range(index) if x < self.document_tabs.tabRect(i).center().x()), index)
+        self.document_tabs.blockSignals(True)
+        self.document_tabs.insertTab(index, page.windowTitle())
+        self.document_tabs.setTabData(index, page)
+        self.document_tabs.setTabToolTip(index, page.windowTitle())
+        self.document_tabs.setCurrentIndex(index)
+        self.document_tabs.blockSignals(False)
+        self._select_page(index)
+
+    def _select_page(self, index):
+        if index >= 0:
+            page = self.document_tabs.tabData(index)
+            if page is not None:
+                self.stack.setCurrentWidget(page)
+                self.setWindowTitle(page.windowTitle())
+
+    def _take_page(self, page):
+        index = next(i for i in range(self.document_tabs.count()) if self.document_tabs.tabData(i) is page)
+        self._last_page = page
+        self.document_tabs.removeTab(index)
+        self.stack.removeWidget(page)
+        self._pages.remove(page)
+        page.hide()
+        page.setParent(None)
+        if not self._pages:
+            self.close()
+        return page
+
+    def _close_tab(self, index):
+        page = self.document_tabs.tabData(index)
+        self._take_page(page)
+        page.deleteLater()
+
+    def toggle_maximized(self):
+        self.showNormal() if self.isMaximized() else self.showMaximized()
+
+    def drop_rect(self):
+        if not self.isVisible() or self.isMinimized():
+            return QRect()
+        return QRect(self.document_tabs.mapToGlobal(QPoint()), self.document_tabs.size()).adjusted(-8, -16, 8, 16)
+
+    def highlight_drop(self, active):
+        value = "true" if active else "false"
+        if self.header.property("dropReady") != value:
+            self.header.setProperty("dropReady", value)
+            self.header.style().unpolish(self.header)
+            self.header.style().polish(self.header)
+
+    @classmethod
+    def target_at(cls, point, exclude=None):
+        target = None
+        for window in tuple(cls._windows):
+            inside = window is not exclude and window.drop_rect().contains(point)
+            window.highlight_drop(inside)
+            if inside:
+                target = window
+        return target
+
+    def probe_reattach(self, point):
+        target = self.target_at(point, self)
+        probe = self.current_page().reattach_probe
+        main_ready = bool(probe(point)) if probe else False
+        return target is not None or main_ready
+
+    def drop_reattach(self, point):
+        target = self.target_at(point, self)
+        if target is not None:
+            target.add_page(self._take_page(self.current_page()), point)
+            target.raise_()
+            target.activateWindow()
+        elif self.current_page().reattach_probe and self.current_page().reattach_probe(point):
+            self.reattach_position = QPoint(point)
+            self._reattach_now()
+        self.target_at(QPoint(-100000, -100000))
+        page = self.current_page()
+        if page and page.reattach_probe:
+            page.reattach_probe(QPoint(-100000, -100000))
+
+    def _reattach_now(self):
+        page = self.current_page()
+        handler = page.reattach_handler
+        if handler:
+            state = page.reattach_payload.get("state")
+            if isinstance(state, dict):
+                state["toc_scroll"] = page.toc_tree.verticalScrollBar().value()
+            page.reattach_handler = None
+            handler(self)
+
+    def _detach_tab(self, page, point):
+        self.document_tabs.setCurrentIndex(next(i for i in range(self.document_tabs.count()) if self.document_tabs.tabData(i) is page))
+        if self.probe_reattach(point):
+            self.drop_reattach(point)
+            return
+        if len(self._pages) == 1:
+            self.move(point - QPoint(self.width() // 2, 20))
+            return
+        moved = self._take_page(page)
+        window = DetachedDocumentWindow(parent=self.owner, page=moved)
+        register = getattr(self.owner, "register_detached_window", None)
+        if register:
+            register(window, moved.reattach_payload)
+        window.move(point - QPoint(window.width() // 2, 20))
+        window.show()
+
+    def animate_open_from(self, rect):
+        if rect is not None and rect.isValid():
+            self.setGeometry(rect)
+        self.show()
+
+    def animate_close_to(self, rect):
+        self._close_tab(self.document_tabs.currentIndex())
+
+    def finish_detach(self, point):
+        if point is not None and self.target_at(point, self) is not None:
+            self.drop_reattach(point)
 
 
 class LawReferencePopup(QFrame):

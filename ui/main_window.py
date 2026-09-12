@@ -415,6 +415,7 @@ class LawSearchWindow(QMainWindow):
         )
         # 끌어내는 동안 보여 줄 창 미리보기의 제목과 본문 그림.
         self.open_document_tabs.preview_provider = self._open_document_preview
+        self.open_document_tabs.drop_probe = DetachedDocumentWindow.target_at
         # 누르는 순간이 아니라 뗄 때 연다. QTabBar는 누르자마자 현재
         # 탭을 바꿔서, 순서를 바꾸려고 끌기만 해도 그 본문이 열렸다.
         # 같은 탭 위에서 뗐고 그동안 거의 안 움직였을 때만 연다.
@@ -1521,6 +1522,7 @@ class LawSearchWindow(QMainWindow):
             self._open_document_scrolls.pop(key, None)
             close()
             self._schedule_open_documents_refresh()
+        window.finish_detach(global_position)
         status = getattr(tab, "status_label", None)
         if status is not None:
             status.setText(
@@ -2456,7 +2458,7 @@ class LawSearchWindow(QMainWindow):
             }
             /* 꺼낸 창을 끌고 와 이 위에 놓으면 본문이 되돌아온다. */
             QFrame#openDocumentsBar[dropTarget="true"] {
-                background: transparent;
+                background: rgba(255, 255, 255, 0.16);
                 border: none;
             }
             QLabel#openDocumentsLabel {
@@ -4880,7 +4882,7 @@ class LawSearchWindow(QMainWindow):
             }
             QFrame#openDocumentsBar { background: transparent; border: none; }
             QFrame#openDocumentsBar[dropTarget="true"] {
-                background: transparent;
+                background: rgba(31, 84, 143, 0.10);
                 border: none;
             }
             QLabel#openDocumentsEmpty {

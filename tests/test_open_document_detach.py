@@ -438,3 +438,100 @@ def test_reattached_document_is_inserted_at_the_drop_position(qt_app):
             detached.close()
         window.close()
         qt_app.processEvents()
+
+
+def test_detached_windows_merge_split_and_keep_reader_instances(qt_app):
+    first = DetachedDocumentWindow("첫 본문", "<p>첫 본문</p>" * 300, None, qt_app.font())
+    second = DetachedDocumentWindow("다른 본문", "<p>다른 본문</p>", None, qt_app.font())
+    first.move(50, 50)
+    second.move(1100, 200)
+    first.show()
+    second.show()
+    qt_app.processEvents()
+    try:
+        page = second.current_page()
+        document = page.browser.document()
+        first.scroll_to(240)
+        saved_scroll = first.scroll_position()
+        first_page = first.current_page()
+        second.drop_reattach(first.drop_rect().center())
+        qt_app.processEvents()
+        assert first.document_tabs.count() == 2
+        assert first.current_page() is page
+        assert first.browser.document() is document
+        assert second not in DetachedDocumentWindow._windows
+        first.document_tabs.setCurrentIndex(0)
+        assert first.current_page() is first_page
+        assert first.scroll_position() == saved_scroll
+        assert first.document_tabs.objectName() == "openDocumentTabs"
+        first.document_tabs.moveTab(1, 0)
+        first.document_tabs.setCurrentIndex(0)
+        assert first.current_page() is page
+        first._detach_tab(page, QPoint(2200, 900))
+        qt_app.processEvents()
+        split = next(w for w in DetachedDocumentWindow._windows if w is not first and w.current_page() is page)
+        assert first.document_tabs.count() == 1
+        assert split.browser.document() is document
+        split.close()
+    finally:
+        first.close()
+        for other in tuple(DetachedDocumentWindow._windows):
+            other.close()
+        qt_app.processEvents()
+
+
+def test_main_tab_can_join_a_detached_window_and_return_alone(qt_app):
+    main = LawSearchWindow()
+    main.show()
+    qt_app.processEvents()
+    try:
+        token = _fill_expc_document(main)
+        main._detach_open_document_tab(token, QPoint(700, 500))
+        qt_app.processEvents()
+        group = main._detached_document_windows[0]
+        group.move(800, 600)
+        tab = main.prec_tab
+        tab._active_detail_row = {"id": "123", "name": "판례 사례"}
+        tab.current_detail_text = "판례 본문"
+        tab.detail_view.setHtml("<p>판례 본문</p>")
+        main._refresh_open_documents()
+        main._detach_open_document_tab("prec:123", group.drop_rect().center())
+        qt_app.processEvents()
+        assert group.document_tabs.count() == 2
+        assert "판례 본문" in group.browser.toPlainText()
+        group.drop_reattach(main._open_documents_drop_rect().center())
+        qt_app.processEvents()
+        assert group.document_tabs.count() == 1
+        assert group.isVisible()
+        assert "질의요지" in group.browser.toPlainText()
+        assert main._open_document_index_for_token("prec:123") >= 0
+    finally:
+        for other in tuple(DetachedDocumentWindow._windows):
+            other.close()
+        main.close()
+        qt_app.processEvents()
+
+
+def test_drag_preview_is_cached_until_release_without_a_fade(qt_app):
+    from ui.widgets import CornerCloseTabBar
+
+    bar = CornerCloseTabBar()
+    index = bar.addTab("본문")
+    bar.setTabData(index, "document")
+    calls = []
+
+    def preview(data):
+        calls.append(data)
+        return "본문", None
+
+    bar.preview_provider = preview
+    bar._pressed_data = "document"
+    try:
+        bar._show_preview(QPoint(200, 200))
+        assert bar._preview._fade is None
+        bar._hide_preview()
+        bar._show_preview(QPoint(250, 250))
+        assert calls == ["document"]
+    finally:
+        bar._hide_preview()
+        bar.close()

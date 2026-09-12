@@ -1186,6 +1186,7 @@ class ResourceSearchTab(QWidget):
         self.document_tabs.setElideMode(Qt.TextElideMode.ElideNone)
         # 탭을 띠 밖으로 끌어 놓으면 그 본문만 별도 창으로 꺼낸다.
         self.document_tabs.detachRequested.connect(self._detach_document_tab)
+        self.document_tabs.drop_probe = DetachedDocumentWindow.target_at
         self.document_tabs.preview_provider = self._document_tab_preview
         self._detached_document_windows: list[DetachedDocumentWindow] = []
         self.document_tab_strip = TabStripScrollArea(self.document_tabs)
@@ -2595,6 +2596,7 @@ class ResourceSearchTab(QWidget):
         window.activateWindow()
         window.scroll_to(int(state.get("scroll") or 0))
         self._close_document_tab_by_key(document_key)
+        window.finish_detach(global_position)
         self.status_label.setText(
             f"{title}을(를) 별도 창으로 꺼냈습니다. 제목 줄을 끌어 "
             "'열린 본문' 띠에 놓으면 되돌아옵니다."
