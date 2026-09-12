@@ -28,13 +28,17 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QSizePolicy,
     QSizeGrip,
+    QSplitter,
     QSpinBox,
     QTextBrowser,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -909,21 +913,15 @@ class MemoNoteDialog(QDialog):
 _DETACHED_WINDOW_STYLE = """
 QWidget#detachedDocumentWindow { background: #ffffff; }
 QFrame#detachedDocumentHeader {
-    background: #eef2f7;
+    background: #f5f6f8;
     border: none;
     border-bottom: 1px solid #dbe3ec;
 }
-QFrame#detachedDocumentHeader[dropReady="true"] {
-    background: #dbeafe;
-    border: 1px solid #6fa8e8;
-}
 QLabel#detachedDocumentTitle {
-    background: #ffffff;
-    color: #173b63;
+    background: transparent;
+    color: #34465a;
     font-size: 10pt;
     font-weight: 500;
-    border-top-left-radius: 8px;
-    border-top-right-radius: 8px;
     padding: 8px 16px;
 }
 QPushButton[windowControl="true"] {
@@ -1076,7 +1074,38 @@ class DetachedDocumentWindow(QWidget):
                 button.setObjectName("detachedWindowClose")
             header_layout.addWidget(button)
         layout.addWidget(self.header)
-        self.setStyleSheet(_DETACHED_WINDOW_STYLE)
+        # 독립 창으로 유지하되 본체의 스크롤바·목차 스타일을 그대로 쓴다.
+        self.setStyleSheet(
+            (parent.styleSheet() if parent is not None else "")
+            + _DETACHED_WINDOW_STYLE
+        )
+
+        self.reader_splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self.reader_splitter.setChildrenCollapsible(False)
+        self.reader_splitter.setHandleWidth(5)
+        self.toc_panel = QWidget()
+        self.toc_panel.setObjectName("articleTocPanel")
+        toc_layout = QVBoxLayout(self.toc_panel)
+        toc_layout.setContentsMargins(10, 10, 4, 8)
+        toc_layout.setSpacing(6)
+        toc_layout.addWidget(QLabel("조문목차"))
+        self.toc_search_input = QLineEdit()
+        self.toc_search_input.setObjectName("tocSearchInput")
+        self.toc_search_input.setPlaceholderText("목차 검색")
+        self.toc_search_input.setClearButtonEnabled(True)
+        toc_layout.addWidget(self.toc_search_input)
+        self.toc_tree = QTreeWidget()
+        self.toc_tree.setObjectName("articleToc")
+        self.toc_tree.setHeaderHidden(True)
+        self.toc_tree.setIndentation(12)
+        self.toc_tree.setMinimumWidth(160)
+        self.toc_tree.setWordWrap(True)
+        toc_layout.addWidget(self.toc_tree, 1)
+        self.reader_splitter.addWidget(self.toc_panel)
+        self.toc_panel.hide()
+        self.toc_tree.itemClicked.connect(self._toc_item_clicked)
+        self.toc_tree.itemActivated.connect(self._toc_item_clicked)
+        self.toc_search_input.textChanged.connect(self._filter_toc)
 
         self.browser = QTextBrowser()
         self.browser.setObjectName("detachedDocumentBrowser")
@@ -1092,7 +1121,10 @@ class DetachedDocumentWindow(QWidget):
         if link_handler is not None:
             self.browser.anchorClicked.connect(link_handler)
         self.browser.setHtml(html)
-        layout.addWidget(self.browser, 1)
+        self.reader_splitter.addWidget(self.browser)
+        self.reader_splitter.setStretchFactor(0, 0)
+        self.reader_splitter.setStretchFactor(1, 1)
+        layout.addWidget(self.reader_splitter, 1)
         grip_row = QHBoxLayout()
         grip_row.setContentsMargins(0, 0, 0, 0)
         grip_row.addStretch(1)
@@ -1124,6 +1156,43 @@ class DetachedDocumentWindow(QWidget):
             self.showNormal()
         else:
             self.showMaximized()
+
+    def attach_toc(self, entries, *, scroll: int = 0) -> None:
+        """꺼낸 문서 자신의 편·장·절·조문·별표 목차를 전달받는다."""
+        self.toc_tree.clear()
+        parents = {}
+        for depth, label, anchor in entries:
+            parents = {level: item for level, item in parents.items() if level < depth}
+            parent = parents[max(parents)] if parents else self.toc_tree
+            item = QTreeWidgetItem(parent, [str(label)])
+            item.setData(0, Qt.ItemDataRole.UserRole, str(anchor))
+            item.setToolTip(0, str(label))
+            if depth < 4:
+                parents[depth] = item
+        self.toc_tree.expandAll()
+        self.toc_panel.setVisible(bool(entries))
+        if entries:
+            self.reader_splitter.setSizes([240, 740])
+            QTimer.singleShot(0, self, lambda: self.toc_tree.verticalScrollBar().setValue(scroll))
+
+    def _toc_item_clicked(self, item, _column=0) -> None:
+        anchor = str(item.data(0, Qt.ItemDataRole.UserRole) or "")
+        if anchor:
+            self.browser.scrollToAnchor(anchor)
+
+    def _filter_toc(self, query: str) -> None:
+        query = query.strip().casefold()
+
+        def visit(item):
+            children = [visit(item.child(i)) for i in range(item.childCount())]
+            visible = not query or query in item.text(0).casefold() or any(children)
+            item.setHidden(not visible)
+            if query and any(children):
+                item.setExpanded(True)
+            return visible
+
+        for index in range(self.toc_tree.topLevelItemCount()):
+            visit(self.toc_tree.topLevelItem(index))
 
     def scroll_to(self, position: int) -> None:
         scroll_bar = self.browser.verticalScrollBar()
@@ -1180,6 +1249,9 @@ class DetachedDocumentWindow(QWidget):
         if self.reattach_handler is None:
             return
         handler = self.reattach_handler
+        state = self.reattach_payload.get("state")
+        if isinstance(state, dict):
+            state["toc_scroll"] = self.toc_tree.verticalScrollBar().value()
         # 두 번 불리지 않게 먼저 끊는다. 본문이 두 군데 열릴 수 있다.
         self.reattach_handler = None
         handler(self)

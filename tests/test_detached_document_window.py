@@ -82,7 +82,38 @@ def test_detaching_opens_a_window_and_closes_the_tab(tmp_path) -> None:
     assert isinstance(window, DetachedDocumentWindow)
     assert "제1조(목적) 본문이다." in window.browser.toPlainText()
     assert ROW["name"] in window.windowTitle()
+    assert window.toc_panel.isVisible()
+    assert window.toc_tree.topLevelItemCount() == 2
+    assert "제1조" in window.toc_tree.topLevelItem(0).text(0)
     window.close()
+
+
+def test_detached_toc_navigates_its_own_document_and_filters(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    window = DetachedDocumentWindow(
+        "목차 검증", '<a name="first"></a><p>제1조</p>'
+        + '<p>긴 본문</p>' * 150 + '<a name="last"></a><p>제2조</p>',
+        None, app.font(),
+    )
+    try:
+        window.attach_toc([(1, "제1장 총칙", "first"),
+                           (4, "제1조 목적", "first"), (4, "제2조 정의", "last")])
+        window.show()
+        app.processEvents()
+        chapter = window.toc_tree.topLevelItem(0)
+        window._toc_item_clicked(chapter.child(1))
+        assert window.scroll_position() > 0
+        window.toc_search_input.setText("정의")
+        assert not chapter.isHidden()
+        assert chapter.child(0).isHidden()
+        assert not chapter.child(1).isHidden()
+        window.toc_search_input.clear()
+        assert not chapter.child(0).isHidden()
+        window._toc_item_clicked(chapter.child(0))
+        assert window.scroll_position() <= window.browser.document().documentMargin()
+    finally:
+        window.close()
+        app.processEvents()
 
 
 def test_detaching_an_unknown_tab_is_ignored(tmp_path) -> None:

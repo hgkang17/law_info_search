@@ -1491,6 +1491,7 @@ class LawSearchWindow(QMainWindow):
                 getattr(tab, "detail_font_size", 10),
                 getattr(tab, "detail_font_family", ""),
             ),
+            parent=self,
         )
         self.register_detached_window(
             window,
@@ -2455,9 +2456,8 @@ class LawSearchWindow(QMainWindow):
             }
             /* 꺼낸 창을 끌고 와 이 위에 놓으면 본문이 되돌아온다. */
             QFrame#openDocumentsBar[dropTarget="true"] {
-                background: rgba(255, 255, 255, 0.16);
-                border: 1px dashed rgba(255, 255, 255, 0.65);
-                border-radius: 8px;
+                background: transparent;
+                border: none;
             }
             QLabel#openDocumentsLabel {
                 background: transparent;
@@ -4880,9 +4880,8 @@ class LawSearchWindow(QMainWindow):
             }
             QFrame#openDocumentsBar { background: transparent; border: none; }
             QFrame#openDocumentsBar[dropTarget="true"] {
-                background: rgba(31, 84, 143, 0.10);
-                border: 1px dashed #7aa7d8;
-                border-radius: 8px;
+                background: transparent;
+                border: none;
             }
             QLabel#openDocumentsEmpty {
                 color: #8a8d93;

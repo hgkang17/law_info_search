@@ -39,6 +39,9 @@ def test_dragging_the_strip_tab_out_detaches_that_document(qt_app) -> None:
         assert len(window._detached_document_windows) == 1
         detached = window._detached_document_windows[0]
         assert isinstance(detached, DetachedDocumentWindow)
+        assert window.styleSheet() in detached.styleSheet()
+        assert detached.browser.verticalScrollBar().sizeHint().width() == 12
+        assert not detached.toc_panel.isVisible()
         assert "질의요지와 회답 본문이다." in detached.browser.toPlainText()
         assert "법령해석례 사례" in detached.windowTitle()
 

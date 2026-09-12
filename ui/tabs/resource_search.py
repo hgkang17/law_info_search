@@ -2532,6 +2532,11 @@ class ResourceSearchTab(QWidget):
             ),
             self._detail_link_clicked,
             make_detail_font(self.detail_font_size, self.detail_font_family),
+            parent=self.window(),
+        )
+        window.attach_toc(
+            list(state.get("toc_entries") or []),
+            scroll=int(state.get("toc_scroll") or 0),
         )
         # 꺼낸 창에도 본문과 같은 조문 별표ㆍ3단비교 단추를 얹는다.
         # 누르면 본체 화면의 처리를 그대로 부르므로 즐겨찾기와 3단비교

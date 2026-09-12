@@ -4170,7 +4170,7 @@ class TabDragPreview(QWidget):
         header.addRect(
             QRectF(body.left(), body.top() + self.RADIUS, body.width(), 4.0)
         )
-        painter.fillPath(header.simplified(), QBrush(QColor("#eef1f4")))
+        painter.fillPath(header.simplified(), QBrush(QColor("#f5f6f8")))
 
         if self._snapshot is not None and not self._snapshot.isNull():
             target = QRect(
@@ -4194,10 +4194,7 @@ class TabDragPreview(QWidget):
         font.setPointSizeF(max(7.5, font.pointSizeF() - 0.5))
         painter.setFont(font)
         tab_rect = QRectF(8, 6, min(420, self.width() - 160), self.HEADER - 6)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor("#ffffff"))
-        painter.drawRoundedRect(tab_rect, 8, 8)
-        painter.setPen(QColor("#173b63"))
+        painter.setPen(QColor("#34465a"))
         text_rect = tab_rect.toRect().adjusted(16, 0, -16, 0)
         painter.drawText(
             text_rect,
