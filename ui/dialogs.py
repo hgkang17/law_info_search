@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSizeGrip,
     QSpinBox,
     QTextBrowser,
     QVBoxLayout,
@@ -909,34 +910,33 @@ _DETACHED_WINDOW_STYLE = """
 QWidget#detachedDocumentWindow { background: #ffffff; }
 QFrame#detachedDocumentHeader {
     background: #eef2f7;
-    border: 1px solid #dbe3ec;
-    border-radius: 8px;
+    border: none;
+    border-bottom: 1px solid #dbe3ec;
 }
 QFrame#detachedDocumentHeader[dropReady="true"] {
     background: #dbeafe;
     border: 1px solid #6fa8e8;
 }
 QLabel#detachedDocumentTitle {
-    background: transparent;
-    color: #173b63;
-    font-size: 11pt;
-    font-weight: 700;
-}
-QPushButton#detachedDocumentReattach {
     background: #ffffff;
-    color: #3c6ea5;
-    border: 1px solid #c3d4e6;
-    border-radius: 5px;
-    padding: 3px 10px;
+    color: #173b63;
+    font-size: 10pt;
+    font-weight: 500;
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+    padding: 8px 16px;
 }
-QPushButton#detachedDocumentReattach:hover {
-    background: #f2f7fd;
-    color: #22558c;
+QPushButton[windowControl="true"] {
+    background: transparent; border: none; color: #40546a;
+    font-size: 12pt; padding: 0;
+}
+QPushButton[windowControl="true"]:hover { background: #dbe3ec; }
+QPushButton#detachedWindowClose:hover {
+    background: #c42b1c; color: white;
 }
 QTextBrowser#detachedDocumentBrowser {
     background: #ffffff;
-    border: 1px solid #dbe3ec;
-    border-radius: 6px;
+    border: none;
     padding: 8px;
 }
 """
@@ -954,15 +954,19 @@ class ReattachDragBar(QFrame):
         super().__init__(window)
         self.window_ref = window
         self.setObjectName("detachedDocumentHeader")
-        self.setCursor(Qt.CursorShape.SizeAllCursor)
+        self.setCursor(Qt.CursorShape.ArrowCursor)
         self.setToolTip(
             "이 줄을 끌어 창을 옮깁니다. 본 창의 '열린 본문' 띠 위에 "
             "놓으면 본문이 원래 자리로 돌아갑니다."
         )
         self._drag_offset: QPoint | None = None
+        self._press_position: QPoint | None = None
+        self._drag_started = False
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt 규약)
         if event.button() == Qt.MouseButton.LeftButton:
+            self._press_position = event.globalPosition().toPoint()
+            self._drag_started = False
             self._drag_offset = (
                 event.globalPosition().toPoint()
                 - self.window_ref.frameGeometry().topLeft()
@@ -977,6 +981,13 @@ class ReattachDragBar(QFrame):
             and event.buttons() & Qt.MouseButton.LeftButton
         ):
             point = event.globalPosition().toPoint()
+            if not self._drag_started:
+                if (point - self._press_position).manhattanLength() < QApplication.startDragDistance():
+                    return
+                self._drag_started = True
+                if self.window_ref.isMaximized():
+                    self.window_ref.showNormal()
+                    self._drag_offset = QPoint(self.window_ref.width() // 2, 20)
             self.window_ref.move(point - self._drag_offset)
             self.window_ref.probe_reattach(point)
             event.accept()
@@ -984,13 +995,23 @@ class ReattachDragBar(QFrame):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802 (Qt 규약)
-        dragging = self._drag_offset is not None
+        dragging = self._drag_started
+        self._drag_started = False
         self._drag_offset = None
         if dragging and event.button() == Qt.MouseButton.LeftButton:
             self.window_ref.drop_reattach(event.globalPosition().toPoint())
             event.accept()
             return
         super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_offset = None
+            self._drag_started = False
+            self.window_ref.toggle_maximized()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
 
 
 class DetachedDocumentWindow(QWidget):
@@ -1008,15 +1029,16 @@ class DetachedDocumentWindow(QWidget):
         font,
         parent=None,
     ) -> None:
-        super().__init__(None, Qt.WindowType.Window)
+        super().__init__(None, Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
         self.setObjectName("detachedDocumentWindow")
         self.setWindowTitle(title)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self.resize(980, 720)
+        self.setMinimumSize(420, 280)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 8, 10, 10)
-        layout.setSpacing(6)
+        layout.setContentsMargins(1, 1, 1, 1)
+        layout.setSpacing(0)
 
         # 본문을 어디로 되돌릴지 아는 쪽(본 창)이 채워 넣는다.
         self.reattach_payload: dict[str, object] = {}
@@ -1024,26 +1046,35 @@ class DetachedDocumentWindow(QWidget):
         self.reattach_handler = None
         self._geometry_animation: QPropertyAnimation | None = None
         self._drop_ready = False
+        self.reattach_position: QPoint | None = None
 
         self.header = ReattachDragBar(self)
         header_layout = QHBoxLayout(self.header)
-        header_layout.setContentsMargins(10, 6, 8, 6)
-        header_layout.setSpacing(8)
+        header_layout.setContentsMargins(8, 6, 0, 0)
+        header_layout.setSpacing(0)
+        self.header.setFixedHeight(44)
         self.title_label = QLabel(title)
         self.title_label.setObjectName("detachedDocumentTitle")
-        self.title_label.setWordWrap(True)
-        header_layout.addWidget(self.title_label, 1)
-        self.reattach_button = QPushButton("본문으로 되돌리기")
-        self.reattach_button.setObjectName("detachedDocumentReattach")
-        self.reattach_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.reattach_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.reattach_button.setToolTip(
-            "이 본문을 본 창의 '열린 본문' 자리로 되돌립니다. 제목 줄을 "
-            "끌어 띠 위에 놓아도 됩니다."
-        )
-        self.reattach_button.clicked.connect(self._reattach_now)
-        self.reattach_button.hide()
-        header_layout.addWidget(self.reattach_button, 0)
+        self.title_label.setMaximumWidth(420)
+        self.title_label.setMinimumWidth(160)
+        self.title_label.setToolTip(title)
+        self.title_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        header_layout.addWidget(self.title_label)
+        header_layout.addStretch(1)
+        for text, tip, callback in (
+            ("−", "최소화", self.showMinimized),
+            ("□", "최대화 / 복원", self.toggle_maximized),
+            ("×", "닫기", self.close),
+        ):
+            button = QPushButton(text, self.header)
+            button.setProperty("windowControl", "true")
+            button.setFixedSize(44, 38)
+            button.setToolTip(tip)
+            button.setAccessibleName(tip)
+            button.clicked.connect(callback)
+            if text == "×":
+                button.setObjectName("detachedWindowClose")
+            header_layout.addWidget(button)
         layout.addWidget(self.header)
         self.setStyleSheet(_DETACHED_WINDOW_STYLE)
 
@@ -1062,6 +1093,13 @@ class DetachedDocumentWindow(QWidget):
             self.browser.anchorClicked.connect(link_handler)
         self.browser.setHtml(html)
         layout.addWidget(self.browser, 1)
+        grip_row = QHBoxLayout()
+        grip_row.setContentsMargins(0, 0, 0, 0)
+        grip_row.addStretch(1)
+        self.size_grip = QSizeGrip(self)
+        self.size_grip.setFixedSize(16, 16)
+        grip_row.addWidget(self.size_grip)
+        layout.addLayout(grip_row)
 
         # 본문 화면과 같은 찾기 창을 이 창에도 붙인다.
         self.search_bar = DetailSearchBar(self.browser, self)
@@ -1081,6 +1119,12 @@ class DetachedDocumentWindow(QWidget):
             lambda _value=0: self._schedule_article_layout()
         )
 
+    def toggle_maximized(self) -> None:
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
+
     def scroll_to(self, position: int) -> None:
         scroll_bar = self.browser.verticalScrollBar()
         scroll_bar.setValue(max(0, min(int(position), scroll_bar.maximum())))
@@ -1098,7 +1142,6 @@ class DetachedDocumentWindow(QWidget):
         self.reattach_payload = dict(payload or {})
         self.reattach_probe = probe
         self.reattach_handler = handler
-        self.reattach_button.setVisible(handler is not None)
 
     def probe_reattach(self, global_point: QPoint) -> bool:
         """끌고 가는 동안 되돌아갈 자리인지 제목 줄 색으로 알려 준다."""
@@ -1130,6 +1173,7 @@ class DetachedDocumentWindow(QWidget):
                 pass
         self._set_drop_ready(False)
         if ready:
+            self.reattach_position = QPoint(global_point)
             self._reattach_now()
 
     def _reattach_now(self) -> None:
@@ -1138,27 +1182,18 @@ class DetachedDocumentWindow(QWidget):
         handler = self.reattach_handler
         # 두 번 불리지 않게 먼저 끊는다. 본문이 두 군데 열릴 수 있다.
         self.reattach_handler = None
-        self.reattach_button.hide()
         handler(self)
 
     # ---- 열리고 닫히는 모습 ------------------------------------------
     def animate_open_from(self, rect: QRect) -> None:
-        """끌던 미리보기 자리에서 창이 펼쳐지게 보여 준다."""
-        target = self.geometry()
-        if rect is None or rect.isNull() or rect.isEmpty():
-            self.show()
-            return
-        self.setGeometry(rect)
+        """끌던 창과 같은 자리에서 본문을 표시한다."""
+        if rect is not None and rect.isValid():
+            self.setGeometry(rect)
         self.show()
-        self._animate_geometry(rect, target)
 
     def animate_close_to(self, rect: QRect) -> None:
-        """탭 자리로 빨려 들어가듯 줄어든 뒤 닫힌다."""
-        if rect is None or rect.isNull() or rect.isEmpty():
-            self.close()
-            return
-        animation = self._animate_geometry(self.geometry(), rect)
-        animation.finished.connect(self.close)
+        """복원된 탭이 즉시 이어 보이도록 분리 창을 닫는다."""
+        self.close()
 
     def _animate_geometry(self, start: QRect, end: QRect) -> QPropertyAnimation:
         animation = QPropertyAnimation(self, QByteArray(b"geometry"), self)

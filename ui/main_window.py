@@ -1403,9 +1403,21 @@ class LawSearchWindow(QMainWindow):
             # 되돌릴 자리를 잃었으면 창을 그대로 둔다. 닫으면 본문이
             # 어느 쪽에도 남지 않는다.
             window.reattach_handler = self._reattach_detached_window
-            window.reattach_button.setVisible(True)
             return
 
+        position = getattr(window, "reattach_position", None)
+        if token and position is not None:
+            bar = self.open_document_tabs
+            local = bar.mapFromGlobal(position)
+            before = next((
+                str(bar.tabData(index) or "")
+                for index in range(bar.count())
+                if str(bar.tabData(index) or "") != token
+                and local.x() < bar.tabRect(index).center().x()
+            ), None)
+            order = [item for item in self._open_document_order if item != token]
+            order.insert(order.index(before) if before in order else len(order), token)
+            self._open_document_order = order
         self._refresh_open_documents()
         if token:
             self._open_document_scrolls[token] = scroll

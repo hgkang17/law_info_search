@@ -4117,9 +4117,9 @@ class TabDragPreview(QWidget):
     아래쪽 위젯의 끌기를 가로막지 않는다.
     """
 
-    WIDTH = 248
-    HEIGHT = 168
-    HEADER = 26
+    WIDTH = 980
+    HEIGHT = 720
+    HEADER = 44
     RADIUS = 8
 
     def __init__(self, title: str, snapshot: QPixmap | None = None) -> None:
@@ -4193,7 +4193,12 @@ class TabDragPreview(QWidget):
         font = painter.font()
         font.setPointSizeF(max(7.5, font.pointSizeF() - 0.5))
         painter.setFont(font)
-        text_rect = QRect(10, 0, self.width() - 20, self.HEADER + 3)
+        tab_rect = QRectF(8, 6, min(420, self.width() - 160), self.HEADER - 6)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#ffffff"))
+        painter.drawRoundedRect(tab_rect, 8, 8)
+        painter.setPen(QColor("#173b63"))
+        text_rect = tab_rect.toRect().adjusted(16, 0, -16, 0)
         painter.drawText(
             text_rect,
             int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),

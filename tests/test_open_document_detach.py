@@ -307,7 +307,8 @@ def test_a_window_preview_follows_the_cursor_while_dragging_out(qt_app) -> None:
         assert bar._preview is None
         assert len(window._detached_document_windows) == 1
         detached = window._detached_document_windows[0]
-        assert detached.reattach_button.isVisibleTo(detached)
+        assert not hasattr(detached, "reattach_button")
+        assert detached.windowFlags() & Qt.WindowType.FramelessWindowHint
         detached.close()
         qt_app.processEvents()
     finally:
@@ -319,16 +320,15 @@ def test_detached_window_opens_from_the_preview_rect(qt_app) -> None:
     window = LawSearchWindow()
     try:
         token = _fill_expc_document(window)
-        start = QRect(400, 300, 240, 160)
+        start = QRect(400, 300, 980, 720)
         window.open_document_tabs.detach_preview_rect = start
         window.open_document_tabs.detachRequested.emit(token, QPoint(500, 380))
         qt_app.processEvents()
 
         detached = window._detached_document_windows[0]
-        # 끌던 그림 자리에서 시작해 제 크기로 펼쳐진다.
-        assert detached._geometry_animation is not None
-        assert detached._geometry_animation.startValue() == start
-        assert detached._geometry_animation.endValue().width() == 980
+        # 축소 카드가 부풀어 오르지 않고 끌던 창의 자리를 그대로 쓴다.
+        assert detached._geometry_animation is None
+        assert detached.geometry() == start
         detached.close()
         qt_app.processEvents()
     finally:
@@ -349,15 +349,27 @@ def test_preview_carries_a_picture_of_the_document(qt_app) -> None:
         qt_app.processEvents()
 
 
-def test_the_button_on_the_window_also_puts_it_back(qt_app) -> None:
+def test_dragging_the_window_tab_puts_it_back_without_a_button(qt_app) -> None:
     window = LawSearchWindow()
+    window.show()
+    qt_app.processEvents()
     try:
         token = _fill_expc_document(window)
         window.open_document_tabs.detachRequested.emit(token, QPoint(300, 300))
         qt_app.processEvents()
         detached = window._detached_document_windows[0]
 
-        detached.reattach_button.click()
+        header = detached.header
+        start = QPoint(40, 20)
+        target = header.mapFromGlobal(window._open_documents_drop_rect().center())
+        header.mousePressEvent(_mouse_event(
+            header, QEvent.Type.MouseButtonPress, start, Qt.MouseButton.LeftButton,
+        ))
+        _move(header, target)
+        target = header.mapFromGlobal(window._open_documents_drop_rect().center())
+        header.mouseReleaseEvent(_mouse_event(
+            header, QEvent.Type.MouseButtonRelease, target, Qt.MouseButton.NoButton,
+        ))
         qt_app.processEvents()
 
         window._refresh_open_documents()
@@ -365,5 +377,61 @@ def test_the_button_on_the_window_also_puts_it_back(qt_app) -> None:
         # 한 번 되돌린 창은 다시 되돌리지 않는다.
         assert detached.reattach_handler is None
     finally:
+        window.close()
+        qt_app.processEvents()
+
+
+def test_detached_tab_click_does_not_reattach_and_double_click_maximizes(qt_app):
+    detached = DetachedDocumentWindow("본문", "<p>내용</p>", None, qt_app.font())
+    calls = []
+    detached.enable_reattach({}, lambda point: True, lambda window: calls.append(window))
+    detached.show()
+    qt_app.processEvents()
+    try:
+        header = detached.header
+        spot = QPoint(40, 20)
+        header.mousePressEvent(_mouse_event(
+            header, QEvent.Type.MouseButtonPress, spot, Qt.MouseButton.LeftButton,
+        ))
+        header.mouseReleaseEvent(_mouse_event(
+            header, QEvent.Type.MouseButtonRelease, spot, Qt.MouseButton.NoButton,
+        ))
+        assert calls == []
+        header.mouseDoubleClickEvent(_mouse_event(
+            header, QEvent.Type.MouseButtonDblClick, spot, Qt.MouseButton.LeftButton,
+        ))
+        assert detached.isMaximized()
+        detached.toggle_maximized()
+        assert not detached.isMaximized()
+        assert detached.size_grip.isVisible()
+    finally:
+        detached.close()
+        qt_app.processEvents()
+
+
+def test_reattached_document_is_inserted_at_the_drop_position(qt_app):
+    window = LawSearchWindow()
+    window.show()
+    qt_app.processEvents()
+    try:
+        token = _fill_expc_document(window)
+        window._detach_open_document_tab(token, QPoint(300, 300))
+        qt_app.processEvents()
+        detached = window._detached_document_windows[0]
+        tab = window.prec_tab
+        tab._active_detail_row = {"id": "123", "name": "판례 사례"}
+        tab.current_detail_text = "판례 본문"
+        tab.detail_view.setHtml("<p>판례 본문</p>")
+        window._refresh_open_documents()
+        qt_app.processEvents()
+        bar = window.open_document_tabs
+        position = bar.mapToGlobal(bar.tabRect(0).topLeft() + QPoint(2, 10))
+        detached.drop_reattach(position)
+        qt_app.processEvents()
+        assert str(bar.tabData(0)) == token
+        assert bar.count() == 2
+    finally:
+        for detached in list(window._detached_document_windows):
+            detached.close()
         window.close()
         qt_app.processEvents()
