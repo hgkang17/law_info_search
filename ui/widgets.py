@@ -4026,10 +4026,13 @@ class PopupResizeHandle(QWidget):
         popup: QWidget,
         edges,
         cursor: Qt.CursorShape,
+        *,
+        enabled=None,
     ) -> None:
         super().__init__(popup)
         self.popup = popup
         self.edges = edges
+        self._resize_enabled = enabled
         self._press_global = None
         self._press_geometry = None
         self.setCursor(cursor)
@@ -4041,8 +4044,8 @@ class PopupResizeHandle(QWidget):
         pin_button = getattr(self.popup, "pin_button", None)
         if (
             event.button() != Qt.MouseButton.LeftButton
-            or pin_button is None
-            or not pin_button.isChecked()
+            or not (self._resize_enabled() if self._resize_enabled is not None
+                    else pin_button is not None and pin_button.isChecked())
         ):
             super().mousePressEvent(event)
             return

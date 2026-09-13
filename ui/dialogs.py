@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSizeGrip,
+    QStyle,
     QSplitter,
     QStackedWidget,
     QTabBar,
@@ -1587,7 +1588,7 @@ class DetachedDocumentWindow(QWidget):
         self.header = ReattachDragBar(self)
         self.header.setFixedHeight(44)
         row = QHBoxLayout(self.header)
-        row.setContentsMargins(8, 4, 0, 0)
+        row.setContentsMargins(8, 0, 0, 0)
         row.setSpacing(0)
         self.document_tabs = DetachedDocumentTabBar(self)
         self.document_tabs.setObjectName("openDocumentTabs")
@@ -1603,18 +1604,22 @@ class DetachedDocumentWindow(QWidget):
         self.document_tabs.drop_probe = lambda point: self.probe_reattach(point)
         row.addWidget(self.document_tabs, 1)
         row.addSpacing(24)
-        for text, tip, callback in (("−", "최소화", self.showMinimized),
-                                    ("□", "최대화 / 복원", self.toggle_maximized),
-                                    ("×", "닫기", self.close)):
-            button = QPushButton(text)
+        for icon, tip, callback in ((QStyle.StandardPixmap.SP_TitleBarMinButton, "최소화", self.showMinimized),
+                                    (QStyle.StandardPixmap.SP_TitleBarMaxButton, "최대화 / 복원", self.toggle_maximized),
+                                    (QStyle.StandardPixmap.SP_TitleBarCloseButton, "닫기", self.close)):
+            button = QPushButton()
+            button.setIcon(self.style().standardIcon(icon))
+            button.setIconSize(QSize(12, 12))
             button.setProperty("windowControl", "true")
-            button.setFixedSize(44, 38)
+            button.setFixedSize(46, 30)
             button.setToolTip(tip)
             button.setAccessibleName(tip)
-            if text == "×":
+            if tip == "닫기":
                 button.setObjectName("detachedWindowClose")
+            if tip == "최대화 / 복원":
+                self.maximize_button = button
             button.clicked.connect(callback)
-            row.addWidget(button)
+            row.addWidget(button, 0, Qt.AlignmentFlag.AlignTop)
         layout.addWidget(self.header)
         self.stack = QStackedWidget()
         layout.addWidget(self.stack, 1)
@@ -1624,7 +1629,43 @@ class DetachedDocumentWindow(QWidget):
         if page is None:
             page = DetachedDocumentPage(title, html, link_handler, font or self.font(), parent=parent)
         self.add_page(page)
+        self.resize_handles = []
+        for edges, cursor in (
+            (Qt.Edge.LeftEdge, Qt.CursorShape.SizeHorCursor),
+            (Qt.Edge.RightEdge, Qt.CursorShape.SizeHorCursor),
+            (Qt.Edge.TopEdge, Qt.CursorShape.SizeVerCursor),
+            (Qt.Edge.BottomEdge, Qt.CursorShape.SizeVerCursor),
+            (Qt.Edge.LeftEdge | Qt.Edge.TopEdge, Qt.CursorShape.SizeFDiagCursor),
+            (Qt.Edge.RightEdge | Qt.Edge.TopEdge, Qt.CursorShape.SizeBDiagCursor),
+            (Qt.Edge.LeftEdge | Qt.Edge.BottomEdge, Qt.CursorShape.SizeBDiagCursor),
+            (Qt.Edge.RightEdge | Qt.Edge.BottomEdge, Qt.CursorShape.SizeFDiagCursor),
+        ):
+            handle = PopupResizeHandle(self, edges, cursor, enabled=lambda: not self.isMaximized())
+            handle.setToolTip("끌어서 창 크기를 조절합니다.")
+            self.resize_handles.append(handle)
+        self._layout_resize_handles()
         self._windows.add(self)
+
+    def _layout_resize_handles(self):
+        w, h, m = self.width(), self.height(), 6
+        rects = ((0,m,m,h-2*m), (w-m,m,m,h-2*m), (m,0,w-2*m,m),
+                 (m,h-m,w-2*m,m), (0,0,m,m), (w-m,0,m,m),
+                 (0,h-m,m,m), (w-m,h-m,m,m))
+        for handle, rect in zip(self.__dict__.get("resize_handles", []), rects):
+            handle.setGeometry(*rect)
+            handle.setVisible(not self.isMaximized())
+            handle.raise_()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._layout_resize_handles()
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.WindowStateChange:
+            self._layout_resize_handles()
+            icon = QStyle.StandardPixmap.SP_TitleBarNormalButton if self.isMaximized() else QStyle.StandardPixmap.SP_TitleBarMaxButton
+            self.maximize_button.setIcon(self.style().standardIcon(icon))
 
     def current_page(self):
         return self.stack.currentWidget() if self._pages else self._last_page

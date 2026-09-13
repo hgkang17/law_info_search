@@ -2567,10 +2567,9 @@ class ResourceSearchTab(QWidget):
                 else None
             )
         )
-        # 되돌릴 때 쓸 상태를 통째로 들려 보낸다. 그려 둔 QTextDocument는
-        # 이 화면의 본문 칸에 물려 있던 것이라 들고 가지 않는다.
+        # 분리 뷰는 자체 문서를 사용한다. 원본은 복귀용으로 보관하여
+        # 긴 법령을 다시 HTML에서 파싱하지 않는다.
         carried = dict(state)
-        carried["document"] = None
         carried["row"] = dict(row or {})
         owner = self.window()
         register = getattr(owner, "register_detached_window", None)
@@ -2596,6 +2595,9 @@ class ResourceSearchTab(QWidget):
         window.activateWindow()
         window.scroll_to(int(state.get("scroll") or 0))
         self._close_document_tab_by_key(document_key)
+        cached_document = carried.get("document")
+        if isinstance(cached_document, QTextDocument):
+            cached_document.setParent(window.current_page())
         window.finish_detach(global_position)
         self.status_label.setText(
             f"{title}을(를) 별도 창으로 꺼냈습니다. 제목 줄을 끌어 "
@@ -2621,8 +2623,7 @@ class ResourceSearchTab(QWidget):
             return False
         restored = dict(state)
         restored["row"] = dict(row)
-        # 창이 그려 두었던 문서는 창과 함께 사라진다. HTML에서 다시 그린다.
-        restored["document"] = None
+        # _set_active_text_document가 원본 문서의 소유권을 본체로 회수한다.
         restored["scroll"] = int(scroll)
         # 탭 자리를 먼저 만들고(빈 화면은 그리지 않는다) 상태를 얹는다.
         self._open_document_tab(dict(row), defer_restore=True)
@@ -5882,15 +5883,33 @@ class ResourceSearchTab(QWidget):
         if len(valid_options) == 1:
             self._detail_link_clicked(QUrl(str(valid_options[0]["href"])))
             return
-        menu = QMenu(self)
-        for option in valid_options:
-            action = menu.addAction(str(option["text"]))
-            action.triggered.connect(
-                lambda _checked=False, href=str(option["href"]): (
-                    self._detail_link_clicked(QUrl(href))
-                )
-            )
-        menu.exec(QCursor.pos())
+        # 한 위임 문구에 연결된 조문은 모두 보여 준다. 공용 worker와
+        # pending 상태를 덮어쓰지 않도록 조회 완료 후 다음 조문을 연다.
+        self._subordinate_popup_queue = list(dict.fromkeys(
+            str(option["href"]) for option in valid_options
+            if QUrl(str(option["href"])).scheme() == "lawref"
+        ))
+        self._open_next_subordinate_popup()
+
+    def _open_next_subordinate_popup(self) -> None:
+        queue = getattr(self, "_subordinate_popup_queue", [])
+        if not queue or (self.worker and self.worker.isRunning()):
+            return
+        url = QUrl(queue.pop(0))
+        key = self._reference_key_from_url(url)
+        self._detail_link_clicked(url)
+        popup = next((p for p in self._all_reference_popups()
+                      if p.isVisible() and p.reference_key == key), None)
+        if popup is None:
+            # API 키 누락 등으로 열리지 않았으면 같은 안내를 반복하지 않는다.
+            queue.clear()
+            return
+        was_pinned = popup.pin_button.isChecked()
+        popup.pin_button.setChecked(True)
+        if not was_pinned:
+            self._place_reference_popup(popup)
+        if not (self.worker and self.worker.isRunning()):
+            QTimer.singleShot(0, self._open_next_subordinate_popup)
 
     def open_reference_link(self, url: QUrl) -> None:
         """다른 탭이 만든 조문 참조 링크를 이 탭의 조문 팝업으로 연다.
@@ -8601,6 +8620,8 @@ class ResourceSearchTab(QWidget):
         if self._article_favorite_waiting_for_worker:
             self._article_favorite_waiting_for_worker = False
             QTimer.singleShot(0, self._resume_pending_article_favorite)
+        if getattr(self, "_subordinate_popup_queue", []):
+            QTimer.singleShot(0, self._open_next_subordinate_popup)
 
     def _worker_succeeded(self, operation: str, payload: object) -> None:
         try:

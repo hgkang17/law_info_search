@@ -225,6 +225,9 @@ def test_law_body_goes_back_into_its_document_tab(qt_app) -> None:
         assert resource.document_tabs.count() == 0
         detached = window._detached_document_windows[0]
         assert detached.reattach_payload["source"] == "resource"
+        original_document = detached.reattach_payload["state"]["document"]
+        assert original_document is not detached.browser.document()
+        assert "제1조(목적) 본문이다." in original_document.toPlainText()
 
         window._reattach_detached_window(detached)
         qt_app.processEvents()
@@ -232,6 +235,8 @@ def test_law_body_goes_back_into_its_document_tab(qt_app) -> None:
         assert resource.document_tabs.count() == 1
         assert str(resource.document_tabs.tabData(0)) == key
         assert resource._active_document_key == key
+        assert resource.detail_view.document() is original_document
+        assert original_document.parent() is resource
         assert "제1조(목적) 본문이다." in resource.detail_view.toPlainText()
     finally:
         window.close()
