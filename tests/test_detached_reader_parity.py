@@ -201,6 +201,14 @@ def test_family_selection_adds_a_tab_to_the_same_detached_window(app, tmp_path, 
         assert window.document_tabs.count() == 2
         assert window.current_page().reattach_payload["row"]["name"] == "시험법 시행령"
         assert {p.reattach_payload["row"]["name"] for p in window._pages} == {"시험법", "시험법 시행령"}
+        for page in window.ordered_pages():
+            family = page.source_reader.family_law_tree
+            active = page.reattach_payload["row"]["name"]
+            for i in range(family.topLevelItemCount()):
+                item = family.topLevelItem(i)
+                assert (item.background(0).color().name() == "#dcecf9") == (
+                    item.data(0, Qt.ItemDataRole.UserRole) == active)
+            assert not family.selectedItems()
     finally:
         window.close()
         source.close()
@@ -227,5 +235,7 @@ def test_closing_a_detached_window_keeps_its_running_download_alive(app):
     assert isValid(page)
     QTest.qWait(150)
     app.processEvents()
+    from PySide6.QtCore import QCoreApplication, QEvent
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     assert page not in _retired_pages
     assert not isValid(page)

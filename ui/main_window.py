@@ -407,12 +407,14 @@ class LawSearchWindow(QMainWindow):
         self.open_document_tabs.setToolTip(
             "탭을 클릭하면 해당 본문으로 이동하고, 왼쪽 버튼으로 끌면 순서를 "
             "바꿀 수 있습니다. 휠 또는 가운데 버튼 끌기로 좌우 이동합니다. "
-            "위아래로 끌어내 놓으면 별도 창으로 꺼냅니다."
+            "Shift+클릭으로 여러 탭을 선택한 뒤 끌어내면 함께 별도 창으로 꺼냅니다."
         )
         # 본문 화면 안쪽 탭과 같은 몸짓으로 띠에서도 창을 꺼낸다.
         self.open_document_tabs.detachRequested.connect(
             self._detach_open_document_tab
         )
+        self.open_document_tabs.detachGroupRequested.connect(
+            lambda keys, point: DetachedDocumentWindow.detach_group(keys, self._detach_open_document_tab, point))
         # 끌어내는 동안 보여 줄 창 미리보기의 제목과 본문 그림.
         self.open_document_tabs.preview_provider = self._open_document_preview
         self.open_document_tabs.drop_probe = DetachedDocumentWindow.target_at

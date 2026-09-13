@@ -80,6 +80,9 @@ def attach_reader(page, source, payload):
     page.reader_splitter = getattr(reader, "detail_content_splitter", reader.detail_card)
 
     if isinstance(reader, ResourceSearchTab):
+        reader._detached_reader = True
+        from PySide6.QtWidgets import QAbstractItemView
+        reader.family_law_tree.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         reader._law_short_name_cache.update(source._law_short_name_cache)
         state = dict(payload["state"])
         document = state.get("document")
@@ -92,9 +95,10 @@ def attach_reader(page, source, payload):
         page.toc_panel = reader.toc_panel
         page.toc_search_input = reader.toc_search_input
         reader.family_law_tree.itemDoubleClicked.disconnect()
-        reader.family_law_tree.itemDoubleClicked.connect(
-            lambda item, column=0: source._open_detached_family_law(
-                page, str(item.data(0, Qt.ItemDataRole.UserRole) or "")))
+        def open_family(item, column=0):
+            name = str(item.data(0, Qt.ItemDataRole.UserRole) or "")
+            QTimer.singleShot(0, page, lambda: source._open_detached_family_law(page, name))
+        reader.family_law_tree.itemDoubleClicked.connect(open_family)
     else:
         document = source.detail_view.document().clone(reader)
         _install_snapshot_document(reader, document, payload["row"],

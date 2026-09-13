@@ -965,7 +965,7 @@ class ReattachDragBar(QFrame):
         self.setCursor(Qt.CursorShape.ArrowCursor)
         self.setToolTip(
             "이 줄을 끌어 창을 옮깁니다. 본 창의 '열린 본문' 띠 위에 "
-            "놓으면 본문이 원래 자리로 돌아갑니다."
+            "놓으면 이 창의 모든 탭이 원래 자리로 돌아갑니다."
         )
         self._drag_offset: QPoint | None = None
         self._press_position: QPoint | None = None
@@ -1007,7 +1007,7 @@ class ReattachDragBar(QFrame):
         self._drag_started = False
         self._drag_offset = None
         if dragging and event.button() == Qt.MouseButton.LeftButton:
-            self.window_ref.drop_reattach(event.globalPosition().toPoint())
+            self.window_ref.drop_reattach(event.globalPosition().toPoint(), all_pages=True)
             event.accept()
             return
         super().mouseReleaseEvent(event)
@@ -1519,7 +1519,10 @@ class DetachedDocumentTabBar(CornerCloseTabBar):
                 QTabBar.mouseReleaseEvent(self, release)
                 self._pressed_data = None
                 self._hide_preview()
-                self._moving_window = self.owner.split_page(self._press_page, point)
+                pages = [p for p in self.owner.ordered_pages() if p in self._selected_tab_data]
+                if self._press_page not in pages:
+                    pages = [self._press_page]
+                self._moving_window = self.owner.split_pages(pages, point)
                 self._window_offset = QPoint(self._moving_window.width() // 2, 20)
                 # 새 창이 떠도 현재 누름을 시작한 탭바가 놓기까지 받는다.
                 self.grabMouse()
@@ -1548,7 +1551,7 @@ class DetachedDocumentTabBar(CornerCloseTabBar):
             if QWidget.mouseGrabber() is self:
                 self.releaseMouse()
             event.accept()
-            moving.drop_reattach(event.globalPosition().toPoint())
+            moving.drop_reattach(event.globalPosition().toPoint(), all_pages=window_drag or len(moving._pages) > 1)
             return
         if window_drag:
             event.accept()
@@ -1601,6 +1604,10 @@ class DetachedDocumentWindow(QWidget):
         self.document_tabs.preview_provider = lambda page: (page.windowTitle(), tab_preview_snapshot(page.reader_splitter))
         self.document_tabs.drop_probe = lambda point: self.probe_reattach(point)
         row.addWidget(self.document_tabs, 1)
+        self.reattach_all_button = QPushButton("전체 이동")
+        self.reattach_all_button.setToolTip("이 창의 모든 탭을 본 창으로 되돌립니다.")
+        self.reattach_all_button.clicked.connect(self.reattach_all)
+        row.addWidget(self.reattach_all_button)
         row.addSpacing(24)
         for icon, tip, callback in ((QStyle.StandardPixmap.SP_TitleBarMinButton, "최소화", self.showMinimized),
                                     (QStyle.StandardPixmap.SP_TitleBarMaxButton, "최대화 / 복원", self.toggle_maximized),
@@ -1789,15 +1796,48 @@ class DetachedDocumentWindow(QWidget):
         main_ready = bool(probe(point)) if probe else False
         return target is not None or main_ready
 
-    def drop_reattach(self, point):
+    def ordered_pages(self):
+        return [self.document_tabs.tabData(i) for i in range(self.document_tabs.count())]
+
+    def reattach_all(self):
+        for page in self.ordered_pages():
+            self.document_tabs.setCurrentIndex(self.ordered_pages().index(page))
+            page.reattach_position = None
+            self._reattach_now()
+
+    @classmethod
+    def detach_group(cls, keys, callback, point):
+        target = cls.target_at(point)
+        for key in keys:
+            before = set(cls._windows)
+            destination = target.document_tabs.mapToGlobal(QPoint(target.document_tabs.width() - 1, 20)) if target else point
+            callback(key, destination)
+            if target is None:
+                target = next((w for w in cls._windows - before if w.isVisible()), None)
+
+    def drop_reattach(self, point, all_pages=False):
         target = self.target_at(point, self)
         if target is not None:
-            target.add_page(self._take_page(self.current_page()), point)
+            pages = self.ordered_pages() if all_pages else [self.current_page()]
+            x = target.document_tabs.mapFromGlobal(point).x()
+            insertion = next((i for i in range(target.document_tabs.count())
+                              if x < target.document_tabs.tabRect(i).center().x()), target.document_tabs.count())
+            for offset, page in enumerate(pages):
+                target.add_page(self._take_page(page))
+                target.document_tabs.moveTab(target.document_tabs.count() - 1, insertion + offset)
             target.raise_()
             target.activateWindow()
         elif self.current_page().reattach_probe and self.current_page().reattach_probe(point):
-            self.reattach_position = QPoint(point)
-            self._reattach_now()
+            pages = self.ordered_pages() if all_pages else [self.current_page()]
+            for page in pages:
+                self.document_tabs.setCurrentIndex(self.ordered_pages().index(page))
+                self.reattach_position = QPoint(point)
+                self._reattach_now()
+                rect_for = getattr(self.owner, "_open_document_tab_rect", None)
+                if rect_for is not None:
+                    rect = rect_for(str(page.reattach_payload.get("token") or ""))
+                    if rect.isValid():
+                        point = rect.topRight() + QPoint(1, rect.height() // 2)
         self.target_at(QPoint(-100000, -100000))
         page = self.current_page()
         if page and page.reattach_probe:
@@ -1832,6 +1872,14 @@ class DetachedDocumentWindow(QWidget):
             register(window, moved.reattach_payload)
         window.move(point - QPoint(window.width() // 2, 20))
         window.show()
+        return window
+
+    def split_pages(self, pages, point):
+        if len(pages) == len(self._pages):
+            return self
+        window = self.split_page(pages[0], point)
+        for page in pages[1:]:
+            window.add_page(self._take_page(page))
         return window
 
     def animate_open_from(self, rect):

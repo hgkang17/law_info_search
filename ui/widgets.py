@@ -426,6 +426,7 @@ def configure_adaptive_result_rows(
     table.horizontalHeader().sectionResized.connect(
         lambda _index, _old, _new, result_table=table: QTimer.singleShot(
             0,
+            result_table,
             lambda: resize_adaptive_result_rows(result_table),
         )
     )
@@ -4291,6 +4292,7 @@ class CornerCloseTabBar(QTabBar):
 
     # 탭을 띠 밖에 놓았다(탭에 담아 둔 값, 뗀 자리의 전역 좌표).
     detachRequested = Signal(object, QPoint)
+    detachGroupRequested = Signal(object, QPoint)
 
     # 글리프 반팔 길이와 모서리에서 띄우는 거리, 그리고 누르기 판정 크기.
     ARM = 3.0
@@ -4308,6 +4310,8 @@ class CornerCloseTabBar(QTabBar):
         self._preview_cache = None
         self._hover_index = -1
         self._pressed_data = None
+        self._selected_tab_data = []
+        self._selection_anchor = None
         self._preview: TabDragPreview | None = None
         # 놓는 순간의 미리보기 자리. 꺼낸 창이 여기서 펼쳐지면 끌던 그림이
         # 그대로 창이 되는 것처럼 보인다.
@@ -4365,6 +4369,12 @@ class CornerCloseTabBar(QTabBar):
     # --- 그리기 ----------------------------------------------------
     def paintEvent(self, event) -> None:  # noqa: N802 (Qt 규약)
         super().paintEvent(event)
+        if len(self._selected_tab_data) > 1:
+            painter = QPainter(self)
+            for index in range(self.count()):
+                if self.tabData(index) in self._selected_tab_data:
+                    painter.fillRect(self.tabRect(index).adjusted(2, 2, -2, -2), QColor(90, 140, 200, 55))
+            painter.end()
         if self._hover_index < 0:
             return
         painter = QPainter(self)
@@ -4475,6 +4485,16 @@ class CornerCloseTabBar(QTabBar):
                 return
             pressed = self.tabAt(event.position().toPoint())
             if pressed >= 0:
+                data = self.tabData(pressed)
+                if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                    anchor = self._index_for_data(self._selection_anchor)
+                    if anchor < 0:
+                        anchor = max(0, self.currentIndex())
+                    self._selected_tab_data = [self.tabData(i) for i in range(min(anchor, pressed), max(anchor, pressed) + 1)]
+                elif data not in self._selected_tab_data:
+                    self._selected_tab_data = [data]
+                    self._selection_anchor = data
+                self.update()
                 # 끌기가 끝날 때는 탭 자리가 이미 바뀌어 있을 수 있다.
                 # 번호 대신 탭에 담아 둔 값을 들고 있는다.
                 self._pressed_data = self.tabData(pressed)
@@ -4509,7 +4529,14 @@ class CornerCloseTabBar(QTabBar):
         # 바로 탭을 없애면 끌기 상태가 남아 다음 누르기가 어긋난다.
         super().mouseReleaseEvent(event)
         if detaching:
-            self.detachRequested.emit(data, global_point)
+            selected = [self.tabData(i) for i in range(self.count())
+                        if self.tabData(i) in self._selected_tab_data]
+            if data in selected and len(selected) > 1:
+                self.detachGroupRequested.emit(selected, global_point)
+            else:
+                self.detachRequested.emit(data, global_point)
+            self._selected_tab_data = []
+            self.update()
         if self.drop_probe is not None:
             self.drop_probe(QPoint(-100000, -100000))
         self._preview_cache = None

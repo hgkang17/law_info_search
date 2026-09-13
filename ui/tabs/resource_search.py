@@ -1186,6 +1186,8 @@ class ResourceSearchTab(QWidget):
         self.document_tabs.setElideMode(Qt.TextElideMode.ElideNone)
         # 탭을 띠 밖으로 끌어 놓으면 그 본문만 별도 창으로 꺼낸다.
         self.document_tabs.detachRequested.connect(self._detach_document_tab)
+        self.document_tabs.detachGroupRequested.connect(
+            lambda keys, point: DetachedDocumentWindow.detach_group(keys, self._detach_document_tab, point))
         self.document_tabs.drop_probe = DetachedDocumentWindow.target_at
         self.document_tabs.preview_provider = self._document_tab_preview
         self._detached_document_windows: list[DetachedDocumentWindow] = []
@@ -2972,6 +2974,9 @@ class ResourceSearchTab(QWidget):
             item.setData(0, Qt.ItemDataRole.UserRole, full_name)
             item.setToolTip(0, full_name + " · 더블클릭하여 전문 열기")
             if full_name == name:
+                if getattr(self, "_detached_reader", False):
+                    item.setBackground(0, QColor("#dcecf9"))
+                    item.setForeground(0, QColor("#1768aa"))
                 font = item.font(0)
                 font.setBold(True)
                 item.setFont(0, font)
