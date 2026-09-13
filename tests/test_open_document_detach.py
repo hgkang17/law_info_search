@@ -317,7 +317,7 @@ def test_a_window_preview_follows_the_cursor_while_dragging_out(qt_app) -> None:
         assert len(window._detached_document_windows) == 1
         detached = window._detached_document_windows[0]
         assert not hasattr(detached, "reattach_button")
-        assert detached.windowFlags() & Qt.WindowType.FramelessWindowHint
+        assert not detached.windowFlags() & Qt.WindowType.FramelessWindowHint
         detached.close()
         qt_app.processEvents()
     finally:
@@ -412,7 +412,7 @@ def test_detached_tab_click_does_not_reattach_and_double_click_maximizes(qt_app)
         assert detached.isMaximized()
         detached.toggle_maximized()
         assert not detached.isMaximized()
-        assert detached.size_grip.isVisible()
+        assert not detached.size_grip.isVisible()  # Windows 기본 창 테두리로 조절한다.
     finally:
         detached.close()
         qt_app.processEvents()

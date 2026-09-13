@@ -34,15 +34,14 @@ def test_multiple_delegations_open_all_cached_articles(tmp_path, monkeypatch):
         tab._open_next_subordinate_popup()
         app.processEvents()
         popups = [p for p in tab._all_reference_popups() if p.isVisible()]
-        assert len(popups) == 2
+        assert len(popups) == 1
         assert all(p.pin_button.isChecked() for p in popups)
-        assert {p.browser.toPlainText() for p in popups} == {
-            "대통령령 제19조 내용", "대통령령 제20조 내용"}
-        assert popups[0].pos() != popups[1].pos()
+        assert all(option["text"] in popups[0].browser.toPlainText() for option in options)
+        assert len(popups[0]._combined_sections) == 2
         # 반복 클릭해도 이미 열린 두 조문을 재사용한다.
         tab._show_inline_subordinate_menu(QUrl(tab._inline_subordinate_href(options)))
         app.processEvents()
-        assert len([p for p in tab._all_reference_popups() if p.isVisible()]) == 2
+        assert len([p for p in tab._all_reference_popups() if p.isVisible()]) == 1
     finally:
         tab.worker = None
         for popup in tab._all_reference_popups():
@@ -100,10 +99,33 @@ def test_uncached_delegations_continue_after_first_request_fails(tmp_path, monke
             app.processEvents()
         assert calls == ["001900", "002000"]
         popups = [p for p in tab._all_reference_popups() if p.isVisible()]
-        assert len(popups) == 2
+        assert len(popups) == 1
         assert any("첫 조문 조회 실패" in p.browser.toPlainText() for p in popups)
         assert any("002000 본문" in p.browser.toPlainText() for p in popups)
         assert tab.worker is None
+        popup = popups[0]
+        before = popup.browser.toPlainText()
+        popup.set_content_font_point(11.0)
+        assert popup.browser.toPlainText() == before
+        assert popup.refresh_button.isEnabled()
+        tab._refresh_reference_popup(popup)
+        for _ in range(10):
+            app.processEvents()
+        assert calls == ["001900", "002000", "001900", "002000"]
+        assert popup.browser.toPlainText() == before
+        assert len([p for p in tab._all_reference_popups() if p.isVisible()]) == 1
+        group = popups[0]
+        before = group.browser.toPlainText()
+        group._close_popup()
+        tab._show_inline_subordinate_menu(QUrl(tab._inline_subordinate_href(options)))
+        for _ in range(3):
+            app.processEvents()
+        assert group.isVisible()
+        assert group.browser.toPlainText() == before
+        # 일반 조문을 따로 열어도 묶음 팝업의 마지막 조문을 덮어쓰지 않는다.
+        tab._detail_link_clicked(QUrl(options[0]["href"]))
+        assert group.browser.toPlainText() == before
+        assert len([p for p in tab._all_reference_popups() if p.isVisible()]) == 2
     finally:
         for popup in tab._all_reference_popups():
             popup.close()

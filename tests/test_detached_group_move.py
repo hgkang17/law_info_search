@@ -30,8 +30,10 @@ def test_shift_select_drag_emits_ordered_group(app):
     bar.close()
 
 
-def test_group_detach_and_button_restore_all_sources(app):
+def test_group_detach_and_restore_all_sources(app):
     main = LawSearchWindow()
+    main.show()
+    app.processEvents()
     try:
         for name in ("expc", "central"):
             reader = getattr(main, name + "_tab")
@@ -45,7 +47,10 @@ def test_group_detach_and_button_restore_all_sources(app):
         assert len(windows) == 1
         detached = windows[0]
         assert [p.reattach_payload["source"] for p in detached.ordered_pages()] == ["expc", "central"]
-        QTest.mouseClick(detached.reattach_all_button, Qt.LeftButton)
+        assert "reattach_all_button" not in detached.__dict__
+        point = main._open_documents_drop_rect().center()
+        assert main._can_reattach_at(point)
+        detached.drop_reattach(point, all_pages=True)
         assert main.expc_tab.current_detail_text == "expc"
         assert main.central_tab.current_detail_text == "central"
         assert not detached._pages

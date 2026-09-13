@@ -1573,7 +1573,7 @@ class DetachedDocumentWindow(QWidget):
     _windows = set()
 
     def __init__(self, title="", html="", link_handler=None, font=None, parent=None, *, page=None):
-        super().__init__(None, Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
+        super().__init__(None, Qt.WindowType.Window | Qt.WindowType.WindowMinMaxButtonsHint | Qt.WindowType.WindowCloseButtonHint)
         self.setObjectName("detachedDocumentWindow")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
@@ -1604,27 +1604,6 @@ class DetachedDocumentWindow(QWidget):
         self.document_tabs.preview_provider = lambda page: (page.windowTitle(), tab_preview_snapshot(page.reader_splitter))
         self.document_tabs.drop_probe = lambda point: self.probe_reattach(point)
         row.addWidget(self.document_tabs, 1)
-        self.reattach_all_button = QPushButton("전체 이동")
-        self.reattach_all_button.setToolTip("이 창의 모든 탭을 본 창으로 되돌립니다.")
-        self.reattach_all_button.clicked.connect(self.reattach_all)
-        row.addWidget(self.reattach_all_button)
-        row.addSpacing(24)
-        for icon, tip, callback in ((QStyle.StandardPixmap.SP_TitleBarMinButton, "최소화", self.showMinimized),
-                                    (QStyle.StandardPixmap.SP_TitleBarMaxButton, "최대화 / 복원", self.toggle_maximized),
-                                    (QStyle.StandardPixmap.SP_TitleBarCloseButton, "닫기", self.close)):
-            button = QPushButton()
-            button.setIcon(self.style().standardIcon(icon))
-            button.setIconSize(QSize(12, 12))
-            button.setProperty("windowControl", "true")
-            button.setFixedSize(46, 30)
-            button.setToolTip(tip)
-            button.setAccessibleName(tip)
-            if tip == "닫기":
-                button.setObjectName("detachedWindowClose")
-            if tip == "최대화 / 복원":
-                self.maximize_button = button
-            button.clicked.connect(callback)
-            row.addWidget(button, 0, Qt.AlignmentFlag.AlignTop)
         layout.addWidget(self.header)
         self.stack = QStackedWidget()
         self.stack.setObjectName("detachedDocumentStack")
@@ -1633,23 +1612,11 @@ class DetachedDocumentWindow(QWidget):
         layout.addWidget(self.stack, 1)
         self.size_grip = QSizeGrip(self)
         self.size_grip.setFixedSize(10, 10)
+        self.size_grip.hide()
         if page is None:
             page = DetachedDocumentPage(title, html, link_handler, font or self.font(), parent=parent)
         self.add_page(page)
         self.resize_handles = []
-        for edges, cursor in (
-            (Qt.Edge.LeftEdge, Qt.CursorShape.SizeHorCursor),
-            (Qt.Edge.RightEdge, Qt.CursorShape.SizeHorCursor),
-            (Qt.Edge.TopEdge, Qt.CursorShape.SizeVerCursor),
-            (Qt.Edge.BottomEdge, Qt.CursorShape.SizeVerCursor),
-            (Qt.Edge.LeftEdge | Qt.Edge.TopEdge, Qt.CursorShape.SizeFDiagCursor),
-            (Qt.Edge.RightEdge | Qt.Edge.TopEdge, Qt.CursorShape.SizeBDiagCursor),
-            (Qt.Edge.LeftEdge | Qt.Edge.BottomEdge, Qt.CursorShape.SizeBDiagCursor),
-            (Qt.Edge.RightEdge | Qt.Edge.BottomEdge, Qt.CursorShape.SizeFDiagCursor),
-        ):
-            handle = PopupResizeHandle(self, edges, cursor, enabled=lambda: not self.isMaximized())
-            handle.setToolTip("끌어서 창 크기를 조절합니다.")
-            self.resize_handles.append(handle)
         self._layout_resize_handles()
         self._windows.add(self)
 
@@ -1673,8 +1640,6 @@ class DetachedDocumentWindow(QWidget):
         super().changeEvent(event)
         if event.type() == QEvent.Type.WindowStateChange:
             self._layout_resize_handles()
-            icon = QStyle.StandardPixmap.SP_TitleBarNormalButton if self.isMaximized() else QStyle.StandardPixmap.SP_TitleBarMaxButton
-            self.maximize_button.setIcon(self.style().standardIcon(icon))
 
     def current_page(self):
         return self.stack.currentWidget() if self._pages else self._last_page
@@ -1798,6 +1763,22 @@ class DetachedDocumentWindow(QWidget):
 
     def ordered_pages(self):
         return [self.document_tabs.tabData(i) for i in range(self.document_tabs.count())]
+
+    def nativeEvent(self, event_type, message):
+        # Windows 기본 제목줄의 이동 완료도 내부 탭 줄과 같은 드롭 경로로 보낸다.
+        import sys
+        if sys.platform == "win32":
+            import ctypes
+            from ctypes import wintypes
+            msg = wintypes.MSG.from_address(int(message))
+            if msg.message == 0x0216:  # WM_MOVING (크기 조절인 WM_SIZING과 구분)
+                self._native_moving = True
+                self.probe_reattach(QCursor.pos())
+            elif msg.message == 0x0232 and getattr(self, "_native_moving", False):
+                self._native_moving = False
+                point = QCursor.pos()
+                QTimer.singleShot(0, self, lambda: self.drop_reattach(point, all_pages=True))
+        return False, 0  # Windows/Qt의 기본 창 이동·크기 조절 처리를 계속한다.
 
     def reattach_all(self):
         for page in self.ordered_pages():
@@ -2182,6 +2163,10 @@ class LawReferencePopup(QFrame):
 
     def set_loading(self, title: str, message: str) -> None:
         """Show loading content without changing the popup position."""
+        if getattr(self, "_combined_sections", None) is not None:
+            self._set_combined_section(title, f"<p>{escape(message)}</p>")
+            self.refresh_button.setEnabled(False)
+            return
         self._content_generation += 1
         self._source_html = ""
         self._restoring_scroll = False
@@ -2267,6 +2252,9 @@ class LawReferencePopup(QFrame):
         scroll_position: int = 0,
         scroll_anchor: str = "",
     ) -> None:
+        if getattr(self, "_combined_sections", None) is not None and not getattr(self, "_rendering_combined", False):
+            self._set_combined_section(title, html)
+            return
         self.title_label.setText(title)
         self.refresh_button.setEnabled(bool(self.reference_request))
         self._refresh_favorite_button()
@@ -2281,6 +2269,25 @@ class LawReferencePopup(QFrame):
                 generation, scroll_position, scroll_anchor
             ),
         )
+
+    def begin_combined(self, options):
+        self._combined_options = options
+        self._combined_sections = [(str(option["text"]), "<p>불러오는 중…</p>") for option in options]
+        self._combined_active = 0
+        self.pin_button.setChecked(True)
+
+    def _set_combined_section(self, title, html):
+        self._combined_sections[self._combined_active] = (title, html)
+        parts = []
+        for heading, body in self._combined_sections:
+            parts.append(f'<h3>{escape(heading)}</h3>{body}<hr>')
+        position = self.browser.verticalScrollBar().value()
+        self._rendering_combined = True
+        try:
+            self.set_content("연결 조문", "".join(parts), scroll_position=position)
+            self.refresh_button.setEnabled(False)
+        finally:
+            self._rendering_combined = False
 
     def _restore_content_scroll(
         self, generation: int, position: int, anchor: str = ""
@@ -2299,6 +2306,10 @@ class LawReferencePopup(QFrame):
         self._restoring_scroll = False
 
     def set_error(self, message: str) -> None:
+        if getattr(self, "_combined_sections", None) is not None:
+            self._set_combined_section(self._combined_sections[self._combined_active][0],
+                                       f'<p style="color:#a12b2b">{escape(message)}</p>')
+            return
         self._source_html = ""
         self._content_generation += 1
         self._restoring_scroll = False
@@ -2310,6 +2321,9 @@ class LawReferencePopup(QFrame):
         )
 
     def _refresh_favorite_button(self) -> None:
+        if getattr(self, "_combined_sections", None) is not None:
+            self.favorite_button.setEnabled(False)
+            return
         request = self.reference_request
         available = bool(request.get("law_id") and request.get("jo"))
         favorite = False

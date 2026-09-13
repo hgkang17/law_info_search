@@ -2,39 +2,62 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QPoint, Qt
+from PySide6.QtCore import QByteArray, QPoint, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QPushButton
 
 from ui.dialogs import DetachedDocumentWindow
 
 
-def test_all_edges_resize_and_controls_align_at_top():
+def test_detached_window_uses_native_frame_and_controls():
     app = QApplication.instance() or QApplication([])
     window = DetachedDocumentWindow("본문", "<p>제1조 본문</p>")
     window.show()
     app.processEvents()
     try:
-        for index, delta in ((0, QPoint(-20, 0)), (1, QPoint(20, 0)),
-                             (2, QPoint(0, -20)), (3, QPoint(0, 20))):
-            handle = window.resize_handles[index]
-            assert handle.isVisible()
-            before = window.size()
-            start = handle.rect().center()
-            QTest.mousePress(handle, Qt.MouseButton.LeftButton, pos=start)
-            QTest.mouseMove(handle, start + delta)
-            QTest.mouseRelease(handle, Qt.MouseButton.LeftButton, pos=start + delta)
-            assert window.width() > before.width() if index < 2 else window.height() > before.height()
+        flags = window.windowFlags()
+        assert not flags & Qt.WindowType.FramelessWindowHint
+        assert flags & Qt.WindowType.WindowMinMaxButtonsHint
+        assert flags & Qt.WindowType.WindowCloseButtonHint
         controls = [b for b in window.header.findChildren(QPushButton)
                     if b.property("windowControl") == "true"]
-        assert len(controls) == 3
-        assert all(b.y() == 0 and not b.icon().isNull() for b in controls)
+        assert not controls
+        assert not window.resize_handles
         window.toggle_maximized()
         app.processEvents()
-        assert all(not h.isVisible() for h in window.resize_handles)
+        assert window.isMaximized()
         window.toggle_maximized()
         app.processEvents()
-        assert all(h.isVisible() for h in window.resize_handles)
+        assert not window.isMaximized()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_native_title_drag_returns_whole_window_but_resize_does_not(monkeypatch):
+    import sys
+    import pytest
+    if sys.platform != "win32":
+        pytest.skip("Windows native title bar")
+    import ctypes
+    from ctypes import wintypes
+    app = QApplication.instance() or QApplication([])
+    window = DetachedDocumentWindow("native", "<p>body</p>")
+    calls = []
+    monkeypatch.setattr(window, "probe_reattach", lambda point: True)
+    monkeypatch.setattr(window, "drop_reattach", lambda point, all_pages=False: calls.append(all_pages))
+    message = wintypes.MSG()
+    try:
+        for code in (0x0214, 0x0232):
+            message.message = code
+            window.nativeEvent(QByteArray(b"windows_generic_MSG"), ctypes.addressof(message))
+        app.processEvents()
+        assert calls == []
+        for code in (0x0216, 0x0232):
+            message.message = code
+            window.nativeEvent(QByteArray(b"windows_generic_MSG"), ctypes.addressof(message))
+        app.processEvents()
+        assert calls == [True]
     finally:
         window.close()
         app.processEvents()

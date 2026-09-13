@@ -5894,33 +5894,58 @@ class ResourceSearchTab(QWidget):
         if len(valid_options) == 1:
             self._detail_link_clicked(QUrl(str(valid_options[0]["href"])))
             return
-        # 한 위임 문구에 연결된 조문은 모두 보여 준다. 공용 worker와
-        # pending 상태를 덮어쓰지 않도록 조회 완료 후 다음 조문을 연다.
-        self._subordinate_popup_queue = list(dict.fromkeys(
-            str(option["href"]) for option in valid_options
-            if QUrl(str(option["href"])).scheme() == "lawref"
-        ))
+        self._start_subordinate_group(valid_options)
+
+    def _start_subordinate_group(self, options, popup=None, force_api=False):
+        unique = {str(option["href"]): option for option in options
+                  if QUrl(str(option["href"])).scheme() == "lawref"}
+        options = list(unique.values())
+        if not options:
+            return
+        if getattr(self, "_subordinate_group_popup", None) is not None:
+            return
+        if popup is None:
+            popup = next((p for p in self._all_reference_popups()
+                          if getattr(p, "_combined_options", None) == options), None)
+            if popup is not None and popup.isVisible():
+                popup.raise_()
+                return
+            if popup is None:
+                popup = self._create_reference_popup()
+        popup.begin_combined(options)
+        self._subordinate_group_popup = popup
+        self._subordinate_force_api = force_api
+        self._subordinate_popup_queue = list(unique)
         self._open_next_subordinate_popup()
 
     def _open_next_subordinate_popup(self) -> None:
-        queue = getattr(self, "_subordinate_popup_queue", [])
-        if not queue or (self.worker and self.worker.isRunning()):
+        if self.worker and self.worker.isRunning():
             return
-        url = QUrl(queue.pop(0))
-        key = self._reference_key_from_url(url)
-        self._detail_link_clicked(url)
-        popup = next((p for p in self._all_reference_popups()
-                      if p.isVisible() and p.reference_key == key), None)
+        popup = getattr(self, "_subordinate_group_popup", None)
         if popup is None:
-            # API 키 누락 등으로 열리지 않았으면 같은 안내를 반복하지 않는다.
-            queue.clear()
             return
-        was_pinned = popup.pin_button.isChecked()
-        popup.pin_button.setChecked(True)
-        if not was_pinned:
-            self._place_reference_popup(popup)
+        queue = self._subordinate_popup_queue
+        if len(queue) < len(popup._combined_options) and not popup.isVisible():
+            queue.clear()
+        if not queue:
+            popup.reference_key = ""
+            popup.reference_request = {"options": popup._combined_options}
+            popup.refresh_button.setEnabled(True)
+            self._subordinate_group_popup = None
+            return
+        popup._combined_active = len(popup._combined_options) - len(queue)
+        url = QUrl(queue.pop(0))
+        self._subordinate_request_popup = popup
+        try:
+            self._detail_link_clicked(url)
+        finally:
+            self._subordinate_request_popup = None
+        if not popup.isVisible():
+            queue.clear()
+        elif self._subordinate_force_api and not (self.worker and self.worker.isRunning()):
+            self._refresh_reference_popup(popup)
         if not (self.worker and self.worker.isRunning()):
-            QTimer.singleShot(0, self._open_next_subordinate_popup)
+            QTimer.singleShot(0, self, self._open_next_subordinate_popup)
 
     def open_reference_link(self, url: QUrl) -> None:
         """다른 탭이 만든 조문 참조 링크를 이 탭의 조문 팝업으로 연다.
@@ -7425,6 +7450,8 @@ class ResourceSearchTab(QWidget):
                     candidate
                     for candidate in self._all_reference_popups()
                     if candidate.isVisible()
+                    and not getattr(self, "_subordinate_request_popup", None)
+                    and getattr(candidate, "_combined_sections", None) is None
                     and candidate.reference_key == reference_key
                 ),
                 None,
@@ -7677,6 +7704,9 @@ class ResourceSearchTab(QWidget):
         request = dict(popup.reference_request)
         if not request:
             return
+        if request.get("options"):
+            self._start_subordinate_group(request["options"], popup=popup, force_api=True)
+            return
         if request.get("category"):
             href = str(request.get("href") or "")
             category = str(request.get("category") or "")
@@ -7729,7 +7759,7 @@ class ResourceSearchTab(QWidget):
     def _reference_popup_scrolled(
         self, popup: LawReferencePopup, value: int
     ) -> None:
-        if popup._restoring_scroll or not popup.reference_key:
+        if getattr(popup, "_combined_sections", None) is not None or popup._restoring_scroll or not popup.reference_key:
             return
         state = self._reference_popup_states.get(popup.reference_key)
         if state is not None:
@@ -7909,8 +7939,12 @@ class ResourceSearchTab(QWidget):
 
     def _reference_popup_for_request(self) -> LawReferencePopup:
         """고정되지 않은 팝업은 재사용하고, 모두 고정됐으면 새 팝업을 생성."""
+        group = getattr(self, "_subordinate_request_popup", None)
+        if group is not None:
+            self._pending_reference_popup = group
+            return group
         for popup in self._all_reference_popups():
-            if not popup.pin_button.isChecked():
+            if not popup.pin_button.isChecked() and getattr(popup, "_combined_sections", None) is None:
                 self._pending_reference_popup = popup
                 return popup
         popup = self._create_reference_popup()
@@ -7920,7 +7954,7 @@ class ResourceSearchTab(QWidget):
     def _reference_popup_for_pinned_history(self) -> LawReferencePopup:
         """고정 모드에서는 화면에 보이는 팝업을 덮어쓰지 않고 새 창을 확보."""
         for popup in self._all_reference_popups():
-            if not popup.isVisible() and not popup.pin_button.isChecked():
+            if not popup.isVisible() and not popup.pin_button.isChecked() and getattr(popup, "_combined_sections", None) is None:
                 self._pending_reference_popup = popup
                 return popup
         popup = self._create_reference_popup()
@@ -8633,8 +8667,8 @@ class ResourceSearchTab(QWidget):
         if self._article_favorite_waiting_for_worker:
             self._article_favorite_waiting_for_worker = False
             QTimer.singleShot(0, self._resume_pending_article_favorite)
-        if getattr(self, "_subordinate_popup_queue", []):
-            QTimer.singleShot(0, self._open_next_subordinate_popup)
+        if getattr(self, "_subordinate_group_popup", None) is not None:
+            QTimer.singleShot(0, self, self._open_next_subordinate_popup)
 
     def _worker_succeeded(self, operation: str, payload: object) -> None:
         try:
