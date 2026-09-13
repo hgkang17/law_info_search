@@ -1375,6 +1375,8 @@ class LawSearchWindow(QMainWindow):
 
     def _reattach_detached_window(self, window) -> None:
         """꺼낸 창의 본문을 원래 자리로 되돌리고 창을 접는다."""
+        from ui.detached_reader import sync_reader_state, restore_reader_font, restore_snapshot_reader
+        sync_reader_state(window.current_page())
         payload = dict(getattr(window, "reattach_payload", None) or {})
         source = str(payload.get("source") or "")
         token = str(payload.get("token") or "")
@@ -1383,6 +1385,7 @@ class LawSearchWindow(QMainWindow):
 
         restored = False
         if source == "resource":
+            restore_reader_font(window.current_page(), self.resource_tab)
             restored = bool(
                 self.resource_tab.reattach_document(payload, scroll=scroll)
             )
@@ -1393,12 +1396,16 @@ class LawSearchWindow(QMainWindow):
             restore = getattr(tab, "restore_open_document", None)
             row = payload.get("row")
             if restore is not None and isinstance(row, dict) and row:
-                restore(
-                    row,
-                    html=str(payload.get("html") or ""),
-                    text=str(payload.get("text") or ""),
-                    scroll=scroll,
-                )
+                restore_reader_font(window.current_page(), tab)
+                if not restore_snapshot_reader(window.current_page(), tab, payload, scroll):
+                    restore(
+                        row,
+                        html=str(payload.get("html") or ""),
+                        text=str(payload.get("text") or ""),
+                        scroll=scroll,
+                    )
+                if "memos" in payload:
+                    tab._set_visible_memos(payload["memos"])
                 restored = True
         if not restored:
             # 되돌릴 자리를 잃었으면 창을 그대로 둔다. 닫으면 본문이
@@ -1486,7 +1493,7 @@ class LawSearchWindow(QMainWindow):
             row = dict(getattr(tab, "_active_detail_row", None) or {})
         window = DetachedDocumentWindow(
             title,
-            html,
+            "",  # 자료별 reader가 원문 문서의 서식을 보존하여 복제한다.
             getattr(tab, "_detail_link_clicked", None),
             make_detail_font(
                 getattr(tab, "detail_font_size", 10),
@@ -1502,8 +1509,11 @@ class LawSearchWindow(QMainWindow):
                 "row": dict(row),
                 "html": html,
                 "text": str(document.get("text") or ""),
+                "scroll": position,
             },
         )
+        from ui.detached_reader import attach_reader
+        attach_reader(window.current_page(), tab, window.reattach_payload)
         if global_position is not None:
             window.move(
                 max(0, global_position.x() - window.width() // 2),

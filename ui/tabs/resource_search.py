@@ -2245,6 +2245,7 @@ class ResourceSearchTab(QWidget):
                 )
                 QTimer.singleShot(
                     16,
+                    self,
                     lambda restore_key=key: self._restore_cached_document_controls(
                         restore_key
                     ),
@@ -2350,10 +2351,11 @@ class ResourceSearchTab(QWidget):
             if index + 1 < len(self._SCROLL_SETTLE_DELAYS):
                 QTimer.singleShot(
                     self._SCROLL_SETTLE_DELAYS[index + 1],
+                    self,
                     lambda next_index=index + 1: step(next_index),
                 )
 
-        QTimer.singleShot(self._SCROLL_SETTLE_DELAYS[0], lambda: step(0))
+        QTimer.singleShot(self._SCROLL_SETTLE_DELAYS[0], self, lambda: step(0))
 
     def _restore_cached_document_controls(self, key: str) -> None:
         if key != self._active_document_key:
@@ -2493,10 +2495,8 @@ class ResourceSearchTab(QWidget):
     def _detach_document_tab(self, key: object, global_position) -> None:
         """탭 하나를 별도 창으로 꺼낸다.
 
-        꺼낸 창은 그 본문을 그대로 보여 주고 인용 링크도 이 화면이 받아
-        연다(팝업은 본체 창에 뜬다). 원래 탭은 닫는다 — 같은 본문이 두
-        군데에 남으면 어느 쪽을 고쳤는지 알기 어렵다. 저장한 본문은
-        저장내역에 그대로 있다.
+        자료별 본문 컨트롤러에 문서를 넘겨 별표ㆍ편집ㆍ목차 동작을 유지한다.
+        원래 탭은 닫고 저장한 본문은 저장내역에 그대로 둔다.
         """
         document_key = str(key or "")
         if not document_key or document_key == "__preview__":
@@ -2514,10 +2514,6 @@ class ResourceSearchTab(QWidget):
                 "아직 그리지 않은 본문은 꺼낼 수 없습니다."
             )
             return
-        try:
-            source_font_size = float(state.get("font_size") or 10)
-        except (TypeError, ValueError):
-            source_font_size = 10.0
         row = self._document_tab_row(document_key)
         title = str(
             (row or {}).get("name")
@@ -2526,40 +2522,12 @@ class ResourceSearchTab(QWidget):
         )
         window = DetachedDocumentWindow(
             title,
-            normalize_inline_icon_sources(
-                self._scale_document_font_sizes(
-                    html, source_font_size, self.detail_font_size
-                )
-            ),
+            "",  # 원래 탭을 닫은 뒤 attach_reader에서 문서 자체를 넘긴다.
             self._detail_link_clicked,
             make_detail_font(self.detail_font_size, self.detail_font_family),
             parent=self.window(),
         )
-        window.attach_toc(
-            list(state.get("toc_entries") or []),
-            scroll=int(state.get("toc_scroll") or 0),
-        )
-        # 꺼낸 창에도 본문과 같은 조문 별표ㆍ3단비교 단추를 얹는다.
-        # 누르면 본체 화면의 처리를 그대로 부르므로 즐겨찾기와 3단비교
-        # 팝업은 한 곳에서만 관리된다.
-        window.attach_article_controls(
-            [
-                dict(article)
-                for article in state.get("three_stage_articles", []) or []
-                if isinstance(article, dict)
-            ],
-            favorite_clicked=self._toggle_inline_article_favorite,
-            three_stage_clicked=self._open_three_stage_comparison,
-            favorite_state=self._article_is_favorite,
-            favorite_icon_for=lambda favorite: favorite_icon(
-                favorite, "#c88700" if favorite else "#aeb4bc"
-            ),
-            star_size=self._ARTICLE_FAVORITE_SIZE,
-            three_stage_width=THREE_STAGE_BUTTON_WIDTH,
-        )
         self._detached_document_windows.append(window)
-        # 별을 켜고 끄면 꺼낸 창의 별도 함께 바뀐다.
-        self.law_cache.changed.connect(window.refresh_article_favorites)
         window.destroyed.connect(
             lambda _obj=None, target=window: (
                 self._detached_document_windows.remove(target)
@@ -2567,8 +2535,7 @@ class ResourceSearchTab(QWidget):
                 else None
             )
         )
-        # 분리 뷰는 자체 문서를 사용한다. 원본은 복귀용으로 보관하여
-        # 긴 법령을 다시 HTML에서 파싱하지 않는다.
+        # 기존 뷰에서 분리한 문서와 본문 상태를 전용 컨트롤러에 넘긴다.
         carried = dict(state)
         carried["row"] = dict(row or {})
         owner = self.window()
@@ -2598,6 +2565,12 @@ class ResourceSearchTab(QWidget):
         cached_document = carried.get("document")
         if isinstance(cached_document, QTextDocument):
             cached_document.setParent(window.current_page())
+        from ui.detached_reader import attach_reader
+        # 본 창에 등록되지 않은 독립 테스트/컨트롤러에서도 상태를 보유한다.
+        if not window.reattach_payload:
+            window.reattach_payload.update(source="resource", key=document_key,
+                                           row=dict(row or {}), state=carried)
+        attach_reader(window.current_page(), self, window.reattach_payload)
         window.finish_detach(global_position)
         self.status_label.setText(
             f"{title}을(를) 별도 창으로 꺼냈습니다. 제목 줄을 끌어 "
@@ -3020,6 +2993,39 @@ class ResourceSearchTab(QWidget):
         self._start_worker(ResourceApiWorker(
             "family_law_detail", oc=oc, target="law", law_name=name, parent=self,
         ), f"{name} 전문 조회 중...")
+
+    def _open_detached_family_law(self, page, name: str) -> None:
+        if not name or (self.worker is not None and self.worker.isRunning()):
+            return
+        window = page.window()
+        for existing in window._pages:
+            if (existing.reattach_payload.get("row") or {}).get("name") == name:
+                window.document_tabs.setCurrentIndex(next(
+                    i for i in range(window.document_tabs.count())
+                    if window.document_tabs.tabData(i) is existing))
+                return
+        self._detached_family_target = (page, name)
+        item = QTreeWidgetItem([name])
+        item.setData(0, Qt.ItemDataRole.UserRole, name)
+        self._open_family_law(item)
+        if not (self.worker and self.worker.isRunning()):
+            self._finish_detached_family_law()
+
+    def _finish_detached_family_law(self) -> None:
+        target = getattr(self, "_detached_family_target", None)
+        if target is None:
+            return
+        self._detached_family_target = None
+        page, name = target
+        try:
+            window = page.window()
+            if not window.isVisible():
+                return
+        except RuntimeError:
+            return
+        state = self._document_states.get(self._active_document_key) or {}
+        if (state.get("row") or {}).get("name") == name:
+            self._detach_document_tab(self._active_document_key, window.drop_rect().center())
 
     def _toggle_compact_toc(self, checked: bool) -> None:
         """좁은 화면에서 본문 폭을 지키며 목차를 필요할 때만 연다."""
@@ -3740,7 +3746,7 @@ class ResourceSearchTab(QWidget):
         if self._three_stage_position_pending:
             return
         self._three_stage_position_pending = True
-        QTimer.singleShot(0, self._position_three_stage_buttons)
+        QTimer.singleShot(0, self, self._position_three_stage_buttons)
 
     def _position_three_stage_buttons(self) -> None:
         self._three_stage_position_pending = False
@@ -8606,6 +8612,8 @@ class ResourceSearchTab(QWidget):
         if self.worker:
             self.worker.deleteLater()
         self.worker = None
+        if operation in ("family_law_detail", "resource_detail"):
+            self._finish_detached_family_law()
         # 대기 중이던 즐겨찾기 별(파란 표시)을 지금 상태로 다시 그린다.
         self.result_table.viewport().update()
         if operation == "resource_search":
@@ -8717,6 +8725,8 @@ class ResourceSearchTab(QWidget):
             self._worker_failed(operation, str(exc))
 
     def _worker_failed(self, operation: str, error: str) -> None:
+        if operation in ("family_law_detail", "resource_detail"):
+            self._detached_family_target = None
         action = (
             "검색"
             if operation == "resource_search"

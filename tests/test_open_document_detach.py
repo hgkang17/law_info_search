@@ -226,7 +226,8 @@ def test_law_body_goes_back_into_its_document_tab(qt_app) -> None:
         detached = window._detached_document_windows[0]
         assert detached.reattach_payload["source"] == "resource"
         original_document = detached.reattach_payload["state"]["document"]
-        assert original_document is not detached.browser.document()
+        assert original_document is detached.browser.document()
+        assert original_document is not resource.detail_view.document()
         assert "제1조(목적) 본문이다." in original_document.toPlainText()
 
         window._reattach_detached_window(detached)

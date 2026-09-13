@@ -1,6 +1,7 @@
 """열린 본문 탭을 띠 밖으로 끌어 놓으면 별도 창으로 꺼내는지 검증."""
 
 import os
+import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -11,6 +12,12 @@ from storage.cache import LawDocumentCache
 from storage.recent import RecentSearchManager
 from ui.dialogs import DetachedDocumentWindow
 from ui.tabs.resource_search import ResourceSearchTab
+
+
+@pytest.fixture(autouse=True)
+def no_background_comparison_request(monkeypatch):
+    # 이 묶음은 창/별 버튼의 동작만 검증한다. 실제 조회 스레드를 남기지 않는다.
+    monkeypatch.setattr(ResourceSearchTab, "_queue_three_stage_link_request", lambda *args: None)
 
 ROW = {
     "target": "law",
@@ -154,12 +161,12 @@ def test_detached_window_carries_article_star_and_three_stage(tmp_path) -> None:
     assert len(window._favorite_buttons) == len(articles)
     assert window._article_anchor_positions
     assert any(star.isVisible() for star in window._favorite_buttons)
-    # 비교 자료가 확인된 조문의 3단 단추만 보인다.
+    # 본체와 동일하게 미조회(None)는 유지하고 자료 없음(False)만 숨긴다.
     shown = [
         button.isVisible() for button in window._three_stage_buttons
     ]
     assert shown[0] is True
-    assert all(state is False for state in shown[1:])
+    assert shown == [a.get("comparison_available") is not False for a in articles]
     window.close()
 
 

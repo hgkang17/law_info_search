@@ -52,6 +52,7 @@ from ui.widgets import (
     DETAIL_FONT_SIZE_STEP,
     DetailSearchBar,
     CornerCloseTabBar,
+    DeferredWrapTextBrowser,
     tab_preview_snapshot,
     PopupDragBar,
     PopupResizeHandle,
@@ -917,14 +918,14 @@ class MemoNoteDialog(QDialog):
 # 본문 화면과 같은 결로 보이도록 최소한의 규칙을 직접 건다.
 _DETACHED_WINDOW_STYLE = """
 QWidget#detachedDocumentWindow {
-    background: #ffffff;
+    background: #f5f6f8;
     border: 1px solid #91a0b5;
 }
 QWidget#detachedDocumentPage { background: #ffffff; border: none; }
+QStackedWidget#detachedDocumentStack { background: transparent; border: none; }
 QFrame#detachedDocumentHeader {
     background: #f5f6f8;
     border: none;
-    border-bottom: 1px solid #dbe3ec;
 }
 QFrame#detachedDocumentHeader[dropReady="true"] {
     background: #dceafb;
@@ -940,10 +941,7 @@ QPushButton[windowControl="true"] {
     background: transparent; border: none; color: #40546a;
     font-size: 12pt; padding: 0;
 }
-QPushButton[windowControl="true"]:hover { background: #dbe3ec; }
-QPushButton#detachedWindowClose:hover {
-    background: #c42b1c; color: white;
-}
+QPushButton[windowControl="true"]:hover { background: #e7e9ed; }
 QTextBrowser#detachedDocumentBrowser {
     background: #ffffff;
     border: none;
@@ -1119,7 +1117,7 @@ class DetachedDocumentPage(QWidget):
         self.toc_tree.itemActivated.connect(self._toc_item_clicked)
         self.toc_search_input.textChanged.connect(self._filter_toc)
 
-        self.browser = QTextBrowser()
+        self.browser = DeferredWrapTextBrowser()
         self.browser.setObjectName("detachedDocumentBrowser")
         self.browser.setFont(font)
         self.browser.document().setDefaultFont(font)
@@ -1622,10 +1620,12 @@ class DetachedDocumentWindow(QWidget):
             row.addWidget(button, 0, Qt.AlignmentFlag.AlignTop)
         layout.addWidget(self.header)
         self.stack = QStackedWidget()
+        self.stack.setObjectName("detachedDocumentStack")
+        # 탭 바탕색이 본문 사방으로 이어지는 여유 공간.
+        self.stack.setContentsMargins(10, 8, 10, 10)
         layout.addWidget(self.stack, 1)
         self.size_grip = QSizeGrip(self)
-        self.size_grip.setFixedSize(16, 16)
-        layout.addWidget(self.size_grip, 0, Qt.AlignmentFlag.AlignRight)
+        self.size_grip.setFixedSize(10, 10)
         if page is None:
             page = DetachedDocumentPage(title, html, link_handler, font or self.font(), parent=parent)
         self.add_page(page)
@@ -1648,6 +1648,8 @@ class DetachedDocumentWindow(QWidget):
 
     def _layout_resize_handles(self):
         w, h, m = self.width(), self.height(), 6
+        if "size_grip" in self.__dict__:
+            self.size_grip.move(w - 12, h - 12)
         rects = ((0,m,m,h-2*m), (w-m,m,m,h-2*m), (m,0,w-2*m,m),
                  (m,h-m,w-2*m,m), (0,0,m,m), (w-m,0,m,m),
                  (0,h-m,m,m), (w-m,h-m,m,m))
@@ -1671,6 +1673,9 @@ class DetachedDocumentWindow(QWidget):
         return self.stack.currentWidget() if self._pages else self._last_page
 
     def closeEvent(self, event):  # noqa: N802
+        from ui.detached_reader import retain_busy_page
+        for page in self._pages:
+            retain_busy_page(page)
         self._windows.discard(self)
         super().closeEvent(event)
 
@@ -1681,6 +1686,13 @@ class DetachedDocumentWindow(QWidget):
         page = self.current_page()
         if page is None:
             raise AttributeError(name)
+        reader = getattr(page, "source_reader", None)
+        reader_names = {"_favorite_buttons": "_article_favorite_buttons",
+                        "_favorite_state": "_article_is_favorite",
+                        "_three_stage_buttons": "_three_stage_buttons",
+                        "_article_anchor_positions": "_three_stage_anchor_positions"}
+        if reader is not None and name in reader_names and hasattr(reader, reader_names[name]):
+            return getattr(reader, reader_names[name])
         return getattr(page, name)
 
     @property
@@ -1740,9 +1752,11 @@ class DetachedDocumentWindow(QWidget):
         return page
 
     def _close_tab(self, index):
+        from ui.detached_reader import retain_busy_page
         page = self.document_tabs.tabData(index)
         self._take_page(page)
-        page.deleteLater()
+        if not retain_busy_page(page):
+            page.deleteLater()
 
     def toggle_maximized(self):
         self.showNormal() if self.isMaximized() else self.showMaximized()
