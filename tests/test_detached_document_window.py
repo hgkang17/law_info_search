@@ -99,7 +99,12 @@ def test_detaching_opens_a_window_and_closes_the_tab(tmp_path) -> None:
         button.kind for button in window.header.findChildren(DetachedCaptionButton)
     ] == ["minimize", "maximize", "close"]
     assert window.header.layout().count() == 4  # 탭과 창 버튼만 표시한다.
+    assert window.layout().contentsMargins().top() == 10
+    assert window.header.layout().contentsMargins().left() == 8
+    assert window.header.layout().contentsMargins().right() == 8
     assert window.header.height() == 38
+    assert window.document_tabs.height() == 34
+    assert window.document_tabs.mapTo(window, QPoint(0, 0)) == QPoint(10, 10)
     assert window.stack.contentsMargins().top() == 2
     family = window.current_page().source_reader.family_law_tree
     assert family.topLevelItemCount() == 3

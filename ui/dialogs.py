@@ -1630,12 +1630,12 @@ class DetachedDocumentWindow(QWidget):
         self._pages = []
         self._last_page = None
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setContentsMargins(2, 10, 2, 2)
         layout.setSpacing(0)
         self.header = ReattachDragBar(self)
         self.header.setFixedHeight(38)
         row = QHBoxLayout(self.header)
-        row.setContentsMargins(8, 0, 0, 0)
+        row.setContentsMargins(8, 0, 8, 0)
         row.setSpacing(0)
         self.document_tabs = DetachedDocumentTabBar(self)
         self.document_tabs.setObjectName("openDocumentTabs")
@@ -1644,12 +1644,13 @@ class DetachedDocumentWindow(QWidget):
         self.document_tabs.setMovable(True)
         self.document_tabs.setTabsClosable(False)
         self.document_tabs.setElideMode(Qt.TextElideMode.ElideRight)
+        self.document_tabs.setFixedHeight(34)
         self.document_tabs.currentChanged.connect(self._select_page)
         self.document_tabs.tabCloseRequested.connect(self._close_tab)
         self.document_tabs.detachRequested.connect(self._detach_tab)
         self.document_tabs.preview_provider = lambda page: (page.windowTitle(), tab_preview_snapshot(page.reader_splitter))
         self.document_tabs.drop_probe = lambda point: self.probe_reattach(point)
-        row.addWidget(self.document_tabs, 1)
+        row.addWidget(self.document_tabs, 1, Qt.AlignmentFlag.AlignTop)
         for kind, tip, callback in (
             ("minimize", "최소화", self.showMinimized),
             ("maximize", "최대화 / 복원", self.toggle_maximized),
