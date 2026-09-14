@@ -576,100 +576,230 @@ def configure_expanding_column(
 
 
 class _CollapseAwareHandle(QSplitterHandle):
-    """옆 칸이 접히면 그 자리를 눈에 띄게 그리는 분할선 손잡이."""
+    """옆 칸이 접히면 그 칸 이름을 세로로 적은 띠로 바뀌는 분할선 손잡이.
 
-    # 접힌 쪽을 알리는 색과 화살촉 크기.
-    MARK_COLOR = "#8c93a0"
-    MARK_BACKGROUND = "#dfe3ea"
-    MARK_SIZE = 4
-    # 두 번 눌러 되살릴 때 접힌 칸에 줄 폭.
+    처음에는 회색 손잡이에 작은 삼각형만 그렸다. 무엇이 접혔는지 알 수
+    없고, 옆 칸을 체크 해제로 숨겼을 때도 크기 0으로 읽혀 체크된 칸 옆에
+    접힘 표시가 떴다. 지금은 접힌 칸만 이름 띠로 보이고, 누르면 펼친다.
+    """
+
+    STRIP_BACKGROUND = "#eef1f5"
+    STRIP_HOVER_BACKGROUND = "#e1edf8"
+    STRIP_BORDER = "#cfd6df"
+    STRIP_TEXT = "#4f5d6e"
+    STRIP_HOVER_TEXT = "#1768aa"
+    # 접힌 칸 이름을 세로로 적을 띠 폭.
+    STRIP_WIDTH = 24
+    # 눌러 되살릴 때 접힌 칸에 줄 폭.
     RESTORE_SIZE = 180
+    # 이만큼 넘게 끌면 누름이 아니라 끌기로 본다.
+    CLICK_SLOP = 3
 
-    def _neighbours(self) -> tuple[int, int, list[int]]:
+    def __init__(self, orientation, parent) -> None:
+        super().__init__(orientation, parent)
+        self._press_position: QPoint | None = None
+        self._dragged = False
+        self._hovered = False
+        self._collapsed_cache = -1
+        self.setToolTip("칸 경계입니다. 끌어서 넓히거나 좁힙니다.")
+
+    def _own_index(self) -> int:
         splitter = self.splitter()
-        sizes = splitter.sizes()
         for index in range(1, splitter.count()):
             if splitter.handle(index) is self:
-                return index - 1, index, sizes
-        return -1, -1, sizes
+                return index
+        return -1
 
-    def _collapsed_side(self) -> int:
-        """왼쪽(-1)ㆍ오른쪽(1)ㆍ없음(0) 중 접힌 쪽."""
-        before, after, sizes = self._neighbours()
-        if before < 0 or after >= len(sizes):
-            return 0
-        if sizes[before] == 0:
+    def collapsed_index(self) -> int:
+        """이 띠가 대신 보여 줄 접힌 칸 번호. 없으면 -1.
+
+        손잡이 i는 칸 i 앞에 붙는다. 칸 i가 접혔으면 그 칸을 맡는다.
+        첫 칸은 앞 손잡이가 없으므로, 보이는 첫 칸이 접혔을 때만 바로
+        뒤 손잡이가 맡는다. 체크 해제로 숨긴 칸도 크기가 0이지만 접힌
+        칸으로 보지 않는다.
+        """
+        splitter = self.splitter()
+        mine = self._own_index()
+        if mine < 0 or splitter.widget(mine).isHidden():
             return -1
-        if sizes[after] == 0:
-            return 1
-        return 0
+        sizes = splitter.sizes()
+        if sizes[mine] == 0:
+            return mine
+        visible_before = [
+            index
+            for index in range(mine)
+            if not splitter.widget(index).isHidden()
+        ]
+        if len(visible_before) == 1 and sizes[visible_before[0]] == 0:
+            return visible_before[0]
+        return -1
+
+    def collapsed_title(self) -> str:
+        index = self.collapsed_index()
+        if index < 0:
+            return ""
+        widget = self.splitter().widget(index)
+        return str(widget.property("collapsedTitle") or "").strip()
+
+    def sync_collapsed_state(self) -> bool:
+        """접힘 상태가 바뀌었으면 폭ㆍ안내를 고치고 참을 돌려준다."""
+        index = self.collapsed_index()
+        if index == self._collapsed_cache:
+            return False
+        self._collapsed_cache = index
+        if index < 0:
+            self._hovered = False
+            self.setToolTip("칸 경계입니다. 끌어서 넓히거나 좁힙니다.")
+        else:
+            title = self.collapsed_title()
+            name = f"'{title}' 칸" if title else "이 칸"
+            self.setToolTip(f"{name}이 접혀 있습니다. 누르면 다시 펼칩니다.")
+        self.updateGeometry()
+        self.update()
+        return True
+
+    def sizeHint(self) -> QSize:
+        size = super().sizeHint()
+        if self._collapsed_cache < 0:
+            return size
+        if self.orientation() == Qt.Orientation.Horizontal:
+            size.setWidth(max(size.width(), self.STRIP_WIDTH))
+        else:
+            size.setHeight(max(size.height(), self.STRIP_WIDTH))
+        return size
 
     def paintEvent(self, event) -> None:
-        super().paintEvent(event)
-        side = self._collapsed_side()
-        if not side:
+        if self._collapsed_cache < 0:
+            super().paintEvent(event)
             return
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         rect = self.rect()
-        painter.fillRect(rect, QColor(self.MARK_BACKGROUND))
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(self.MARK_COLOR))
-        middle = rect.center()
-        size = self.MARK_SIZE
-        # 접힌 칸이 있는 쪽을 가리키는 작은 삼각형. 여기를 끌거나 두 번
-        # 누르면 숨은 칸이 다시 나온다는 표시다.
+        painter.fillRect(
+            rect,
+            QColor(
+                self.STRIP_HOVER_BACKGROUND
+                if self._hovered
+                else self.STRIP_BACKGROUND
+            ),
+        )
+        painter.setPen(QColor(self.STRIP_BORDER))
         if self.orientation() == Qt.Orientation.Horizontal:
-            tip_x = middle.x() + (size if side < 0 else -size)
-            points = [
-                QPointF(tip_x, middle.y()),
-                QPointF(middle.x() - (size if side < 0 else -size), middle.y() - size),
-                QPointF(middle.x() - (size if side < 0 else -size), middle.y() + size),
-            ]
+            painter.drawLine(rect.topLeft(), rect.bottomLeft())
+            painter.drawLine(rect.topRight(), rect.bottomRight())
         else:
-            tip_y = middle.y() + (size if side < 0 else -size)
-            points = [
-                QPointF(middle.x(), tip_y),
-                QPointF(middle.x() - size, middle.y() - (size if side < 0 else -size)),
-                QPointF(middle.x() + size, middle.y() - (size if side < 0 else -size)),
-            ]
-        painter.drawPolygon(points)
+            painter.drawLine(rect.topLeft(), rect.topRight())
+            painter.drawLine(rect.bottomLeft(), rect.bottomRight())
+        title = self.collapsed_title()
+        if title:
+            painter.setPen(
+                QColor(
+                    self.STRIP_HOVER_TEXT if self._hovered else self.STRIP_TEXT
+                )
+            )
+            painter.setFont(self.font())
+            metrics = QFontMetrics(self.font())
+            if self.orientation() == Qt.Orientation.Horizontal:
+                # 한글은 옆으로 눕히기보다 한 글자씩 세로로 쌓아야 읽힌다.
+                line = metrics.height()
+                y = rect.top() + 10
+                for char in title:
+                    if char.isspace():
+                        y += line // 2
+                        continue
+                    if y + line > rect.bottom() - 6:
+                        break
+                    painter.drawText(
+                        QRect(rect.left(), y, rect.width(), line),
+                        int(Qt.AlignmentFlag.AlignCenter),
+                        char,
+                    )
+                    y += line
+            else:
+                painter.drawText(rect, int(Qt.AlignmentFlag.AlignCenter), title)
         painter.end()
 
+    def enterEvent(self, event) -> None:
+        if self._collapsed_cache >= 0:
+            self._hovered = True
+            self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        if self._hovered:
+            self._hovered = False
+            self.update()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event) -> None:
+        self._press_position = event.position().toPoint()
+        self._dragged = False
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._press_position is not None and not self._dragged:
+            moved = event.position().toPoint() - self._press_position
+            if moved.manhattanLength() <= self.CLICK_SLOP:
+                # 누르다 손이 조금 떨린 것으로 접힌 칸이 1~2px 열리지 않게 한다.
+                return
+            self._dragged = True
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        clicked = (
+            event.button() == Qt.MouseButton.LeftButton
+            and self._press_position is not None
+            and not self._dragged
+        )
+        self._press_position = None
+        super().mouseReleaseEvent(event)
+        if clicked and self._collapsed_cache >= 0:
+            self.restore_collapsed()
+
     def mouseDoubleClickEvent(self, event) -> None:
-        """접힌 칸은 두 번 눌러 되살린다."""
-        side = self._collapsed_side()
-        if not side:
+        if not self.restore_collapsed():
             super().mouseDoubleClickEvent(event)
-            return
-        before, after, sizes = self._neighbours()
-        target = before if side < 0 else after
-        donor = after if side < 0 else before
+
+    def restore_collapsed(self) -> bool:
+        """접힌 칸을 가장 넓은 칸의 폭을 조금 나눠 받아 되살린다."""
+        target = self.collapsed_index()
+        if target < 0:
+            return False
+        splitter = self.splitter()
+        sizes = splitter.sizes()
+        candidates = [
+            index
+            for index in range(splitter.count())
+            if index != target and not splitter.widget(index).isHidden()
+        ]
+        if not candidates:
+            return False
+        donor = max(candidates, key=lambda index: sizes[index])
         room = min(self.RESTORE_SIZE, max(0, sizes[donor] - 80))
         if room <= 0:
-            super().mouseDoubleClickEvent(event)
-            return
+            return False
         sizes[target] = room
         sizes[donor] -= room
-        self.splitter().setSizes(sizes)
-        self.update()
+        splitter.setSizes(sizes)
+        # 폭 저장ㆍ모아보기 칸 맞춤이 끌었을 때와 똑같이 따라오게 한다.
+        splitter.splitterMoved.emit(self.pos().x(), max(1, target))
+        return True
 
 
 class CollapseAwareSplitter(QSplitter):
-    """칸을 0까지 줄여 감췄을 때 그 자리를 남기는 분할 화면.
+    """칸을 0까지 줄여 감췄을 때 그 자리를 이름 띠로 남기는 분할 화면.
 
     즐겨찾기처럼 칸이 여럿인 화면에서 폭을 끝까지 줄이면 칸이 통째로
     사라져, 무엇이 숨었는지도 어디를 끌어야 다시 나오는지도 알 수 없었다.
-    접힌 쪽 손잡이에 삼각형을 그려 두고, 두 번 누르면 되살린다.
+    접힌 칸 자리에 칸 이름을 세로로 적은 띠를 두고, 누르면 되살린다.
+    칸 위젯의 ``collapsedTitle`` 속성이 띠에 적을 이름이다.
     """
 
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._refreshing_handles = False
+
     def createHandle(self) -> QSplitterHandle:
-        handle = _CollapseAwareHandle(self.orientation(), self)
-        handle.setToolTip(
-            "칸 경계입니다. 끌어서 넓히거나 좁히고, 접힌 칸은 두 번 눌러 "
-            "되살립니다."
-        )
-        return handle
+        return _CollapseAwareHandle(self.orientation(), self)
 
     def setSizes(self, sizes) -> None:
         super().setSizes(sizes)
@@ -683,11 +813,28 @@ class CollapseAwareSplitter(QSplitter):
         super().moveSplitter(position, index)
         self._refresh_handles()
 
+    def event(self, event) -> bool:
+        result = super().event(event)
+        # 칸을 체크 해제로 숨기거나 다시 보이면 띠를 맡을 손잡이가 바뀐다.
+        if event.type() == QEvent.Type.LayoutRequest:
+            self._refresh_handles()
+        return result
+
     def _refresh_handles(self) -> None:
-        for index in range(1, self.count()):
-            handle = self.handle(index)
-            if handle is not None:
-                handle.update()
+        # 끄는 동안 매번 불리므로 접힘 상태가 바뀐 손잡이만 다시 배치한다.
+        if self._refreshing_handles:
+            return
+        self._refreshing_handles = True
+        try:
+            changed = False
+            for index in range(1, self.count()):
+                handle = self.handle(index)
+                if isinstance(handle, _CollapseAwareHandle):
+                    changed = handle.sync_collapsed_state() or changed
+            if changed:
+                self.refresh()
+        finally:
+            self._refreshing_handles = False
 
 
 def configure_horizontal_splitter(splitter: QSplitter) -> None:

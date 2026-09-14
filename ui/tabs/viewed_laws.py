@@ -160,6 +160,15 @@ class ViewedLawsTab(QWidget):
         self.union_tree: FavoriteCategoryTree | None = None
         self.favorite_body_splitter: QSplitter | None = None
         self._syncing_union_widths = False
+        # 칸 경계를 끄는 동안 splitterMoved가 픽셀마다 온다. 그때마다
+        # 설정 파일을 sync하면 끌기가 눈에 띄게 끊겼다(측정상 이동 처리
+        # 시간의 8할). 손을 멈춘 뒤 한 번만 기록한다.
+        self._favorite_widths_save_timer = QTimer(self)
+        self._favorite_widths_save_timer.setSingleShot(True)
+        self._favorite_widths_save_timer.setInterval(400)
+        self._favorite_widths_save_timer.timeout.connect(
+            self._write_favorite_widths
+        )
         if self.favorites_only:
             self.law_cache.set_active_favorite_project(
                 self.active_favorite_project
@@ -388,6 +397,8 @@ class ViewedLawsTab(QWidget):
                 card = QFrame()
                 card.setObjectName("favoriteCategoryCard")
                 card.setMinimumWidth(0)
+                # 폭을 0까지 줄이면 분할선이 이 이름을 세로 띠로 남긴다.
+                card.setProperty("collapsedTitle", label.replace("\n", " "))
                 card_layout = QVBoxLayout(card)
                 card_layout.setContentsMargins(0, 0, 0, 0)
                 card_layout.setSpacing(5)
@@ -537,9 +548,12 @@ class ViewedLawsTab(QWidget):
             self.union_splitter.setObjectName("favoriteUnionSplitter")
             self.union_splitter.setChildrenCollapsible(True)
             self.union_splitter.setHandleWidth(7)
-            for category, _label in self.FAVORITE_CATEGORIES:
+            for category, label in self.FAVORITE_CATEGORIES:
                 column = QWidget()
                 column.setObjectName("favoriteUnionColumn")
+                column.setProperty(
+                    "collapsedTitle", label.replace("\n", " ")
+                )
                 column_layout = QVBoxLayout(column)
                 column_layout.setContentsMargins(0, 0, 0, 0)
                 column_layout.setSpacing(0)
@@ -735,6 +749,7 @@ class ViewedLawsTab(QWidget):
             self.union_panel.setVisible(bool(checked))
         if checked:
             self._apply_union_splitter_sizes()
+            self._sync_union_column_widths()
             self._populate_union_favorites()
             self.status_label.setText(
                 "모든 프로젝트의 즐겨찾기입니다. 아래 항목을 위 칸이나 "
@@ -2338,6 +2353,9 @@ class ViewedLawsTab(QWidget):
             self._syncing_union_widths
             or self.union_splitter is None
             or self.favorite_splitter is None
+            # 모아보기가 꺼져 있으면 끄는 동안 보이지 않는 칸까지 다시
+            # 배치할 까닭이 없다. 켤 때 한 번 맞춘다.
+            or not self._is_union_favorites_visible()
         ):
             return
         self._syncing_union_widths = True
@@ -2361,6 +2379,23 @@ class ViewedLawsTab(QWidget):
             self._syncing_union_widths = False
 
     def _save_favorite_widths(self, *_args: object) -> None:
+        """폭 기록을 예약한다. 끄는 도중에는 마지막 한 번만 쓴다."""
+        if self.favorite_splitter is None or self.settings is None:
+            return
+        self._favorite_widths_save_timer.start()
+
+    def flush_favorite_widths(self) -> None:
+        """예약된 폭 기록이 있으면 지금 쓴다."""
+        if self._favorite_widths_save_timer.isActive():
+            self._favorite_widths_save_timer.stop()
+            self._write_favorite_widths()
+
+    def hideEvent(self, event) -> None:
+        # 끈 직후 창을 닫거나 다른 화면으로 넘어가도 폭을 잃지 않게 한다.
+        self.flush_favorite_widths()
+        super().hideEvent(event)
+
+    def _write_favorite_widths(self) -> None:
         if self.favorite_splitter is None or self.settings is None:
             return
         self.settings.setValue(

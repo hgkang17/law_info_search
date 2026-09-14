@@ -58,6 +58,78 @@ def test_favorite_columns_have_no_minimum_width_and_can_collapse(tmp_path) -> No
     tab.close()
 
 
+def test_collapsed_column_shows_named_strip_but_hidden_column_does_not(
+    tmp_path,
+) -> None:
+    """접힌 칸만 이름 띠로 보이고, 체크 해제로 숨긴 칸은 표시하지 않는다."""
+    app = QApplication.instance() or QApplication([])
+    settings = QSettings(str(tmp_path / "strip.ini"), QSettings.Format.IniFormat)
+    tab = ViewedLawsTab(
+        LawDocumentCache(tmp_path / "saved-strip"),
+        favorites_only=True,
+        settings=settings,
+    )
+    try:
+        tab.resize(1400, 600)
+        tab.show()
+        app.processEvents()
+        splitter = tab.favorite_splitter
+        assert splitter is not None
+
+        def strips() -> list[str]:
+            app.processEvents()
+            return [
+                splitter.handle(index).collapsed_title()
+                for index in range(1, splitter.count())
+                if splitter.handle(index).collapsed_index() >= 0
+            ]
+
+        tab.favorite_category_checks["annex"].setChecked(False)
+        assert strips() == []
+
+        sizes = splitter.sizes()
+        sizes[0] += sizes[1]
+        sizes[1] = 0
+        splitter.setSizes(sizes)
+        assert strips() == ["조항호목"]
+        handle = splitter.handle(1)
+        assert handle.width() >= handle.STRIP_WIDTH
+
+        assert handle.restore_collapsed()
+        assert splitter.sizes()[1] > 0
+        assert strips() == []
+    finally:
+        tab.close()
+
+
+def test_dragging_favorite_columns_defers_width_save(tmp_path) -> None:
+    """끄는 동안에는 설정 파일에 쓰지 않고 멈춘 뒤 한 번 쓴다."""
+    app = QApplication.instance() or QApplication([])
+    settings = QSettings(str(tmp_path / "drag.ini"), QSettings.Format.IniFormat)
+    tab = ViewedLawsTab(
+        LawDocumentCache(tmp_path / "saved-drag"),
+        favorites_only=True,
+        settings=settings,
+    )
+    try:
+        tab.resize(1400, 600)
+        tab.show()
+        app.processEvents()
+        splitter = tab.favorite_splitter
+        assert splitter is not None
+        start = splitter.handle(2).x()
+        for offset in range(20):
+            splitter.moveSplitter(start + offset, 2)
+        app.processEvents()
+        assert settings.value("favorite_card_widths") is None
+
+        tab.flush_favorite_widths()
+        saved = [int(value) for value in settings.value("favorite_card_widths")]
+        assert saved == splitter.sizes()
+    finally:
+        tab.close()
+
+
 def test_favorite_checked_cards_are_restored(tmp_path) -> None:
     app = QApplication.instance() or QApplication([])
     settings = QSettings(
