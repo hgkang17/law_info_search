@@ -22,6 +22,10 @@ def test_popup_font_roundtrip_restores_layout_and_link(wrapper):
         popup.set_content("검증", html)
         popup.show()
         app.processEvents()
+        controls = popup.drag_bar.layout()
+        assert controls.indexOf(popup.font_larger_button) == (
+            controls.indexOf(popup.font_smaller_button) + 1
+        )
         initial_text = popup.browser.toPlainText()
         initial_height = popup.browser.document().size().height()
         for point in (14, 7, 18, 9.5, 13, 9.5):
@@ -29,7 +33,7 @@ def test_popup_font_roundtrip_restores_layout_and_link(wrapper):
             app.processEvents()
             document = popup.browser.document()
             assert document.defaultFont().pointSizeF() == point
-            assert popup.font_size_label.text() == f"{point:g}pt"
+            assert popup.content_font_point == point
             assert document.toPlainText() == initial_text
             block = document.begin()
             while block.isValid():
@@ -76,7 +80,7 @@ def test_popup_reset_updates_both_popups_and_saved_size(tmp_path, monkeypatch):
         for popup in (tab.reference_popup, tab.three_stage_popup):
             popup.set_content("검증", "<p>본문</p>")
         tab.reference_popup.font_larger_button.click()
-        assert tab.three_stage_popup.font_size_label.text() == "10pt"
+        assert tab.three_stage_popup.content_font_point == 10
         tab.three_stage_popup.font_reset_button.click()
         assert float(settings.value("resource_popup_font_size")) == 9.5
         for popup in (tab.reference_popup, tab.three_stage_popup):

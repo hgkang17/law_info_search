@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 from PySide6.QtCore import QSettings, QUrl, Signal
+from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -18,6 +19,7 @@ from storage.cache import LawDocumentCache
 from storage.recent import RecentSearchManager
 from ui.tabs import law_search as law_search_module
 from ui.tabs.law_search import LawSearchTab
+from utils.formatting import detail_document_header
 
 
 @pytest.fixture(scope="module")
@@ -353,6 +355,74 @@ def test_saved_case_opens_in_reading_mode(qt_app, tmp_path) -> None:
         assert "저장된 법령해석례" in tab.detail_view.toPlainText()
         assert tab._reading_mode
         assert tab.main_splitter.sizes()[0] == 0
+    finally:
+        tab.close()
+        qt_app.processEvents()
+
+
+@pytest.mark.parametrize("service", ["central", "expc", "prec"])
+def test_case_detail_title_star_matches_saved_favorite(
+    qt_app, tmp_path, service
+) -> None:
+    tab = _tab(tmp_path, service)
+    row = _row(service)
+    header, _ = detail_document_header("사례 제목", [])
+    html = "".join(header) + "<p>본문 내용</p>"
+    try:
+        assert tab.law_cache.save_snapshot(row, html=html, plain_text="본문 내용")
+        tab.open_cached_snapshot(
+            {"row": row, "html": html, "plain_text": "본문 내용"}
+        )
+        qt_app.processEvents()
+
+        star = tab.detail_favorite_button
+        assert star.parent() is tab.detail_view.viewport()
+        assert star.isVisible()
+        assert star.toolTip() == "즐겨찾기에 넣습니다."
+        title_cursor = QTextCursor(tab.detail_view.document())
+        title_cursor.setPosition(tab.detail_view.document().begin().position())
+        assert star.geometry().right() < tab.detail_view.cursorRect(title_cursor).left()
+
+        star.click()
+        qt_app.processEvents()
+        assert tab.law_cache.is_favorite(row)
+        assert star.toolTip() == "즐겨찾기에서 뺍니다."
+
+        assert tab.law_cache.set_favorite(row, False)
+        qt_app.processEvents()
+        assert star.toolTip() == "즐겨찾기에 넣습니다."
+
+        tab.close_open_document()
+        qt_app.processEvents()
+        assert star.isHidden()
+    finally:
+        tab.close()
+        qt_app.processEvents()
+
+
+def test_case_detail_star_saves_restored_body_and_scrolls_away(qt_app, tmp_path) -> None:
+    tab = _tab(tmp_path, "central")
+    row = _row("central")
+    header, _ = detail_document_header("사례 제목", [])
+    html = "".join(header) + "".join("<p>본문 문단</p>" for _ in range(80))
+    try:
+        tab._show_detail_split()
+        tab.restore_open_document(row, html=html, text="본문 문단")
+        qt_app.processEvents()
+        star = tab.detail_favorite_button
+        assert star.isVisible()
+        assert not tab.law_cache.has_snapshot(row)
+
+        star.click()
+        qt_app.processEvents()
+        assert tab.law_cache.has_snapshot(row)
+        assert tab.law_cache.is_favorite(row)
+
+        scroll_bar = tab.detail_view.verticalScrollBar()
+        assert scroll_bar.maximum() > 0
+        scroll_bar.setValue(scroll_bar.maximum())
+        qt_app.processEvents()
+        assert star.isHidden()
     finally:
         tab.close()
         qt_app.processEvents()

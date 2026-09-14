@@ -50,6 +50,66 @@ def test_multiple_delegations_open_all_cached_articles(tmp_path, monkeypatch):
         app.processEvents()
 
 
+def test_combined_articles_share_one_law_header_and_metadata(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    tab = ResourceSearchTab(lambda: "test", RecentSearchManager(
+        QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)),
+        LawDocumentCache(tmp_path / "cache"))
+    popup = tab.reference_popup
+    law_name = "국토의 계획 및 이용에 관한 법률 시행령"
+    options = [{"text": f"{law_name} {article}"} for article in ("제19조의2", "제20조")]
+    header = "".join(tab._popup_detail_header(
+        law_name, [("법령ID", "009419"), ("소관부처", "국토교통부")]
+    ))
+    popup.begin_combined(options)
+    for index, article in enumerate(("제19조의2", "제20조")):
+        popup._combined_active = index
+        popup.set_content(
+            f"{law_name} {article}",
+            header
+            + '<div class="popup-section-title">조문</div>'
+            + f'<div class="content"><p>{article}(주민제안) 내용</p></div>',
+        )
+    shown = popup.browser.toPlainText()
+    assert shown.count(law_name) == 1
+    assert shown.count("법령ID") == 1
+    assert shown.count("소관부처") == 1
+    assert shown.count("제19조의2") == 1
+    assert shown.count("제20조") == 1
+    assert shown.count("조문") == 0
+    assert popup._source_html.count('class="popup-law-title"') == 1
+    assert popup._source_html.count("<hr ") == 1
+    tab.close()
+    app.processEvents()
+
+
+def test_combined_articles_keep_distinct_law_versions(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    tab = ResourceSearchTab(lambda: "test", RecentSearchManager(
+        QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)),
+        LawDocumentCache(tmp_path / "cache"))
+    popup = tab.reference_popup
+    law_name = "국토의 계획 및 이용에 관한 법률 시행령"
+    popup.begin_combined([{"text": "제19조의2"}, {"text": "제20조"}])
+    for index, (article, effective) in enumerate((
+        ("제19조의2", "20260101"), ("제20조", "20260801")
+    )):
+        popup._combined_active = index
+        header = "".join(tab._popup_detail_header(
+            law_name, [("법령ID", "009419"), ("시행일자", effective)]
+        ))
+        popup.set_content(
+            f"{law_name} {article}",
+            header + '<div class="popup-section-title">조문</div>'
+            + f'<div class="content"><p>{article} 내용</p></div>',
+        )
+    shown = popup.browser.toPlainText()
+    assert shown.count(law_name) == 2
+    assert "20260101" in shown and "20260801" in shown
+    tab.close()
+    app.processEvents()
+
+
 def test_uncached_delegations_continue_after_first_request_fails(tmp_path, monkeypatch):
     from PySide6.QtCore import QObject, Signal, QTimer
 

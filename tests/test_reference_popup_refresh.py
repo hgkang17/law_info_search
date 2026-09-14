@@ -115,13 +115,20 @@ def test_reference_popup_favorite_button_tracks_exact_unit() -> None:
         "mok": "",
     }
 
-    popup.set_content("제10조제1항제2호", "<p>본문</p>")
+    popup.set_content(
+        "제10조제1항제2호",
+        '<div class="popup-section-title">조문</div>'
+        '<div class="content"><p>제10조(내용) 본문</p></div>',
+    )
     assert popup.favorite_button.isEnabled()
     assert popup.favorite_button.text() == ""
     assert not popup.favorite_button.icon().isNull()
 
     popup.show()
     app.processEvents()
+    assert popup.favorite_button.parent() is popup.browser.viewport()
+    assert popup.favorite_button.isVisible()
+    assert popup.drag_bar.layout().indexOf(popup.favorite_button) == -1
     QTest.mouseClick(popup.favorite_button, Qt.MouseButton.LeftButton)
     app.processEvents()
     assert emitted == [popup]

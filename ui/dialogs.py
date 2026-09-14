@@ -2012,16 +2012,6 @@ class LawReferencePopup(QFrame):
         self.font_reset_button.setObjectName("referencePopupFontReset")
         self.font_reset_button.setFixedSize(48, 30)
         self.font_reset_button.setToolTip("굴림 9.5pt와 기본 줄간격으로 되돌립니다.")
-        self.font_size_label = QLabel("9.5pt")
-        self.font_size_label.setObjectName("referencePopupFontSize")
-        self.font_size_label.setMinimumWidth(42)
-        self.font_size_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.favorite_button = QPushButton()
-        self.favorite_button.setObjectName("referencePopupFavorite")
-        self.favorite_button.setIconSize(QSize(16, 16))
-        self.favorite_button.setFixedSize(34, 30)
-        self.favorite_button.setEnabled(False)
-        self.favorite_button.setToolTip("이 조항호목을 즐겨찾기에 추가합니다.")
         self.close_button = QPushButton()
         self.close_button.setObjectName("referencePopupClose")
         apply_close_icon(self.close_button)
@@ -2029,9 +2019,7 @@ class LawReferencePopup(QFrame):
         header.addWidget(self.title_label, 1)
         header.addWidget(self.font_reset_button)
         header.addWidget(self.font_smaller_button)
-        header.addWidget(self.font_size_label)
         header.addWidget(self.font_larger_button)
-        header.addWidget(self.favorite_button)
         header.addWidget(self.refresh_button)
         header.addWidget(self.pin_button)
         header.addWidget(self.close_button)
@@ -2041,7 +2029,6 @@ class LawReferencePopup(QFrame):
             self.font_smaller_button,
             self.font_larger_button,
             self.font_reset_button,
-            self.favorite_button,
             self.refresh_button,
             self.pin_button,
             self.close_button,
@@ -2065,6 +2052,23 @@ class LawReferencePopup(QFrame):
             | Qt.TextInteractionFlag.LinksAccessibleByMouse
         )
         self.browser.anchorClicked.connect(link_handler)
+        # 본문 화면과 같은 조문 왼쪽 별. 제목줄의 버튼 자리를 차지하지 않는다.
+        self.favorite_button = QPushButton(self.browser.viewport())
+        self.favorite_button.setObjectName("referencePopupFavorite")
+        self.favorite_button.setIconSize(QSize(16, 16))
+        self.favorite_button.setFixedSize(24, 24)
+        self.favorite_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.favorite_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.favorite_button.setEnabled(False)
+        self.favorite_button.setToolTip("이 조항호목을 즐겨찾기에 추가합니다.")
+        self.favorite_button.setStyleSheet(
+            "QPushButton#referencePopupFavorite {"
+            "border:none; background:transparent; padding:0; }"
+        )
+        self.favorite_button.hide()
+        self.browser.verticalScrollBar().valueChanged.connect(
+            self._position_favorite_button
+        )
         layout.addWidget(self.browser, 1)
 
         self.dismiss_timer = QTimer(self)
@@ -2110,10 +2114,6 @@ class LawReferencePopup(QFrame):
         font = detail_font(point, self.content_font_family or None)
         self.browser.setFont(font)
         self.browser.document().setDefaultFont(font)
-        self.font_size_label.setText(f"{point:g}pt")
-        self.font_size_label.setToolTip(
-            f"현재 글꼴: {self.content_font_family or DETAIL_FONT_FAMILY} · 기본값: 굴림 9.5pt"
-        )
         if self._source_html and (changed or family_changed):
             bar = self.browser.verticalScrollBar()
             ratio = bar.value() / bar.maximum() if bar.maximum() else 0.0
@@ -2152,6 +2152,43 @@ class LawReferencePopup(QFrame):
                 )
                 cursor.setBlockFormat(format_)
             block = block.next()
+        QTimer.singleShot(0, self, self._position_favorite_button)
+
+    def _position_favorite_button(self, _value: int = 0) -> None:
+        button = self.favorite_button
+        request = self.reference_request
+        if (
+            not self._source_html
+            or getattr(self, "_combined_sections", None) is not None
+            or not request.get("law_id")
+            or not request.get("jo")
+        ):
+            button.hide()
+            return
+        block = self.browser.document().begin()
+        after_section = False
+        while block.isValid():
+            if after_section and block.text().strip():
+                break
+            if block.text().strip() == "조문":
+                after_section = True
+            block = block.next()
+        if not block.isValid() or not after_section:
+            button.hide()
+            return
+        cursor = QTextCursor(block)
+        block_format = cursor.blockFormat()
+        if block_format.leftMargin() != 28:
+            block_format.setLeftMargin(28)
+            cursor.setBlockFormat(block_format)
+        rect = self.browser.cursorRect(cursor)
+        y = rect.top() + (rect.height() - button.height()) // 2
+        if rect.bottom() < 0 or y >= self.browser.viewport().height():
+            button.hide()
+            return
+        button.move(max(2, rect.left() - button.width() - 2), y)
+        button.show()
+        button.raise_()
 
     def _create_resize_handles(self) -> None:
         handle_specs = (
@@ -2208,6 +2245,7 @@ class LawReferencePopup(QFrame):
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._position_resize_handles()
+        QTimer.singleShot(0, self, self._position_favorite_button)
 
     def show_loading(
         self,
@@ -2228,6 +2266,7 @@ class LawReferencePopup(QFrame):
             return
         self._content_generation += 1
         self._source_html = ""
+        self.favorite_button.hide()
         self._restoring_scroll = False
         self.refresh_button.setEnabled(False)
         self._refresh_favorite_button()
@@ -2334,12 +2373,45 @@ class LawReferencePopup(QFrame):
         self._combined_sections = [(str(option["text"]), "<p>불러오는 중…</p>") for option in options]
         self._combined_active = 0
         self.pin_button.setChecked(True)
+        self.favorite_button.hide()
+
+    @staticmethod
+    def _combined_law_article(html: str) -> tuple[str, str]:
+        """완성된 조문 팝업에서 법령 공통 머리글과 조문 본문을 분리."""
+        header, separator, article = html.partition("</table></div>")
+        if not separator or not all(
+            marker in header
+            for marker in (
+                "<style>",
+                '<div class="popup-law-title">',
+                '<div class="meta"><table',
+            )
+        ):
+            return "", html
+        article = article.removeprefix(
+            '<div class="popup-section-title">조문</div>'
+        )
+        return header + separator, article
 
     def _set_combined_section(self, title, html):
         self._combined_sections[self._combined_active] = (title, html)
         parts = []
+        previous_header = ""
         for heading, body in self._combined_sections:
-            parts.append(f'<h3>{escape(heading)}</h3>{body}<hr>')
+            header, article = self._combined_law_article(body)
+            if parts:
+                parts.append('<hr style="border:0; border-top:1px solid #dbeaf7; margin:14px 0;">')
+            if header:
+                if header != previous_header:
+                    parts.append(header)
+                parts.append(article)
+                previous_header = header
+            else:
+                # 아직 불러오는 중이거나 API 오류인 항목은 조문 번호만 붙인다.
+                short_heading = heading.rsplit(" 제", 1)[-1]
+                if short_heading != heading:
+                    short_heading = "제" + short_heading
+                parts.append(f'<h3>{escape(short_heading)}</h3>{body}')
         position = self.browser.verticalScrollBar().value()
         self._rendering_combined = True
         try:
@@ -2370,6 +2442,7 @@ class LawReferencePopup(QFrame):
                                        f'<p style="color:#a12b2b">{escape(message)}</p>')
             return
         self._source_html = ""
+        self.favorite_button.hide()
         self._content_generation += 1
         self._restoring_scroll = False
         self.refresh_button.setEnabled(bool(self.reference_request))
@@ -2382,6 +2455,7 @@ class LawReferencePopup(QFrame):
     def _refresh_favorite_button(self) -> None:
         if getattr(self, "_combined_sections", None) is not None:
             self.favorite_button.setEnabled(False)
+            self.favorite_button.hide()
             return
         request = self.reference_request
         available = bool(request.get("law_id") and request.get("jo"))
@@ -2392,6 +2466,8 @@ class LawReferencePopup(QFrame):
             except Exception:  # noqa: BLE001 - 별표 확인 실패는 팝업을 막지 않는다.
                 favorite = False
         self.favorite_button.setEnabled(available)
+        if not available:
+            self.favorite_button.hide()
         self.favorite_button.setText("")
         self.favorite_button.setIcon(
             favorite_icon(

@@ -23,6 +23,7 @@ from ui.widgets import (
     DropdownComboBox,
     DeferredWrapTextBrowser,
     DetailSearchBar,
+    favorite_icon,
     FavoriteTitleDelegate,
     MemoMarkerBar,
     RecentSearchBar,
@@ -80,7 +81,7 @@ from utils.parsing import (
     whitespace_insensitive_contains,
     serialize_agency_search_payload,
 )
-from PySide6.QtCore import QRect, QTimer, QUrl, Qt
+from PySide6.QtCore import QRect, QSize, QTimer, QUrl, Qt
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QKeySequence, QShortcut, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import QAbstractItemView, QApplication, QDialog, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton, QSizePolicy, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget
 from html import escape
@@ -452,6 +453,24 @@ class LawSearchTab(QWidget):
         self.detail_view.setPlaceholderText(
             "검색 결과에서 항목을 더블클릭하면 본문을 조회합니다."
         )
+        self.detail_favorite_button = QPushButton(self.detail_view.viewport())
+        self.detail_favorite_button.setObjectName("caseDetailFavorite")
+        self.detail_favorite_button.setFixedSize(24, 24)
+        self.detail_favorite_button.setIconSize(QSize(16, 16))
+        self.detail_favorite_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.detail_favorite_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.detail_favorite_button.setStyleSheet(
+            "QPushButton#caseDetailFavorite { border: none; background: transparent; padding: 0; }"
+        )
+        self.detail_favorite_button.clicked.connect(self._toggle_detail_favorite)
+        self.detail_favorite_button.hide()
+        self.detail_view.verticalScrollBar().valueChanged.connect(
+            self._position_detail_favorite
+        )
+        self.detail_view.horizontalScrollBar().valueChanged.connect(
+            self._position_detail_favorite
+        )
+        self.detail_view.layoutSettled.connect(self._position_detail_favorite)
         # 찾기 줄은 본문 위에 뜨는 창이라 레이아웃에 넣지 않는다.
         self.detail_search = DetailSearchBar(self.detail_view, self)
         detail_view_row = QWidget()
@@ -1646,6 +1665,86 @@ class LawSearchTab(QWidget):
             )
         self.result_table.viewport().update()
 
+    def _toggle_detail_favorite(self) -> None:
+        row = self._active_detail_row
+        if row is None or not self.detail_view.toPlainText().strip():
+            return
+        wants_favorite = not self.law_cache.is_favorite(row)
+        if wants_favorite and not self.law_cache.has_snapshot(row):
+            if not self.law_cache.save_snapshot(
+                row,
+                html=strip_search_highlight_html(self.detail_view.toHtml()),
+                plain_text=self.current_detail_text or self.detail_view.toPlainText(),
+            ):
+                self.status_label.setText(
+                    f"즐겨찾기 설정에 실패했습니다: {self.law_cache.last_error}"
+                )
+                return
+        if self.law_cache.set_favorite(row, wants_favorite):
+            self.status_label.setText(
+                "즐겨찾기에 추가했습니다."
+                if wants_favorite
+                else "즐겨찾기에서 뺐습니다."
+            )
+        else:
+            self.status_label.setText(
+                f"즐겨찾기 설정에 실패했습니다: {self.law_cache.last_error}"
+            )
+        self._refresh_detail_favorite()
+
+    def _refresh_detail_favorite(self) -> None:
+        button = self.detail_favorite_button
+        row = self._active_detail_row
+        if row is None or not self.detail_view.toPlainText().strip():
+            button.hide()
+            return
+        favorite = self.law_cache.is_favorite(row)
+        button.setIcon(
+            favorite_icon(favorite, "#c88700" if favorite else "#aeb4bc")
+        )
+        button.setToolTip(
+            "즐겨찾기에서 뺍니다." if favorite else "즐겨찾기에 넣습니다."
+        )
+        button.setAccessibleName(
+            f"{row.get('title') or row.get('name') or '본문'} 즐겨찾기"
+        )
+        QTimer.singleShot(0, self._position_detail_favorite)
+
+    def _position_detail_favorite(self) -> None:
+        button = self.detail_favorite_button
+        viewport = self.detail_view.viewport()
+        if (
+            self._active_detail_row is None
+            or not self.detail_view.isVisible()
+            or not viewport.isVisible()
+        ):
+            button.hide()
+            return
+        block = self.detail_view.document().begin()
+        while block.isValid() and not block.text().strip():
+            block = block.next()
+        if not block.isValid():
+            button.hide()
+            return
+        cursor = QTextCursor(self.detail_view.document())
+        cursor.setPosition(block.position())
+        rect = self.detail_view.cursorRect(cursor)
+        if rect.left() < button.width() + 3:
+            block_format = block.blockFormat()
+            if block_format.leftMargin() < button.width() + 4:
+                block_format.setLeftMargin(button.width() + 4)
+                cursor.setBlockFormat(block_format)
+                rect = self.detail_view.cursorRect(cursor)
+        if rect.bottom() < 0 or rect.top() >= viewport.height():
+            button.hide()
+            return
+        button.move(
+            max(1, rect.left() - button.width() - 2),
+            rect.top() + (rect.height() - button.height()) // 2,
+        )
+        button.show()
+        button.raise_()
+
     def _refresh_snapshot_checks(self) -> None:
         if not hasattr(self, "result_table"):
             return
@@ -1660,6 +1759,7 @@ class LawSearchTab(QWidget):
         finally:
             self._updating_cache_checks = False
         self.result_table.viewport().update()
+        self._refresh_detail_favorite()
 
     def _finalize_pending_favorite(self, saved_row: dict[str, object]) -> None:
         pending = self._pending_favorite_row
@@ -1844,6 +1944,7 @@ class LawSearchTab(QWidget):
                 self.copy_button.setEnabled(bool(self.current_detail_text))
                 self._restore_cached_formatting(snapshot)
                 self._restore_cached_memos(snapshot)
+                self._refresh_detail_favorite()
                 self.status_label.setText(
                     f"{selected.get('agency', '')} ID {selected.get('id', '')} 저장된 본문 열기"
                 )
@@ -1893,6 +1994,7 @@ class LawSearchTab(QWidget):
         self._restore_cached_formatting(record)
         self._restore_cached_memos(record)
         self._set_reading_mode(True)
+        self._refresh_detail_favorite()
         title = str(row.get("title") or row.get("name") or "저장 본문")
         self.status_label.setText(f"{title} 저장된 본문 열기 · API 호출 없음")
 
@@ -1992,6 +2094,7 @@ class LawSearchTab(QWidget):
             )
             self._finalize_pending_favorite(self._pending_detail_row)
             self._pending_detail_row = None
+        self._refresh_detail_favorite()
         self.status_label.setText(f"{agency.name} ID {item_id} 본문 조회 완료")
 
     def restore_open_document(
@@ -2018,6 +2121,7 @@ class LawSearchTab(QWidget):
             self._replace_detail_content(text=text)
         self.copy_button.setEnabled(bool(text))
         self._set_visible_memos([])
+        self._refresh_detail_favorite()
         scroll_bar = self.detail_view.verticalScrollBar()
         QTimer.singleShot(
             0,
@@ -2039,6 +2143,7 @@ class LawSearchTab(QWidget):
         self._pending_detail_row = None
         self.current_detail_text = ""
         self.detail_view.clear()
+        self.detail_favorite_button.hide()
         self.copy_button.setEnabled(False)
         self._set_visible_memos([])
         self._hide_detail_split()
