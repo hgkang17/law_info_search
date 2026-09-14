@@ -1572,8 +1572,8 @@ class DetachedDocumentWindow(QWidget):
 
     _windows = set()
 
-    def __init__(self, title="", html="", link_handler=None, font=None, parent=None, *, page=None):
-        super().__init__(None, Qt.WindowType.Window | Qt.WindowType.WindowMinMaxButtonsHint | Qt.WindowType.WindowCloseButtonHint)
+    def __init__(self, title="", html="", link_handler=None, font=None, parent=None, *, page=None, tab_title=None):
+        super().__init__(None, Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
         self.setObjectName("detachedDocumentWindow")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
@@ -1604,6 +1604,22 @@ class DetachedDocumentWindow(QWidget):
         self.document_tabs.preview_provider = lambda page: (page.windowTitle(), tab_preview_snapshot(page.reader_splitter))
         self.document_tabs.drop_probe = lambda point: self.probe_reattach(point)
         row.addWidget(self.document_tabs, 1)
+        for icon, tip, callback in (
+            (QStyle.StandardPixmap.SP_TitleBarMinButton, "최소화", self.showMinimized),
+            (QStyle.StandardPixmap.SP_TitleBarMaxButton, "최대화 / 복원", self.toggle_maximized),
+            (QStyle.StandardPixmap.SP_TitleBarCloseButton, "닫기", self.close),
+        ):
+            button = QPushButton(self.header)
+            button.setIcon(self.style().standardIcon(icon))
+            button.setIconSize(QSize(12, 12))
+            button.setProperty("windowControl", "true")
+            button.setFixedSize(46, 30)
+            button.setToolTip(tip)
+            button.setAccessibleName(tip)
+            button.clicked.connect(callback)
+            if tip == "최대화 / 복원":
+                self.maximize_button = button
+            row.addWidget(button, 0, Qt.AlignmentFlag.AlignTop)
         layout.addWidget(self.header)
         self.stack = QStackedWidget()
         self.stack.setObjectName("detachedDocumentStack")
@@ -1615,8 +1631,23 @@ class DetachedDocumentWindow(QWidget):
         self.size_grip.hide()
         if page is None:
             page = DetachedDocumentPage(title, html, link_handler, font or self.font(), parent=parent)
+        if tab_title:
+            page.detached_tab_title = tab_title
         self.add_page(page)
         self.resize_handles = []
+        for edges, cursor in (
+            (Qt.Edge.LeftEdge, Qt.CursorShape.SizeHorCursor),
+            (Qt.Edge.RightEdge, Qt.CursorShape.SizeHorCursor),
+            (Qt.Edge.TopEdge, Qt.CursorShape.SizeVerCursor),
+            (Qt.Edge.BottomEdge, Qt.CursorShape.SizeVerCursor),
+            (Qt.Edge.LeftEdge | Qt.Edge.TopEdge, Qt.CursorShape.SizeFDiagCursor),
+            (Qt.Edge.RightEdge | Qt.Edge.TopEdge, Qt.CursorShape.SizeBDiagCursor),
+            (Qt.Edge.LeftEdge | Qt.Edge.BottomEdge, Qt.CursorShape.SizeBDiagCursor),
+            (Qt.Edge.RightEdge | Qt.Edge.BottomEdge, Qt.CursorShape.SizeFDiagCursor),
+        ):
+            handle = PopupResizeHandle(self, edges, cursor, enabled=lambda: not self.isMaximized())
+            handle.setToolTip("끌어서 창 크기를 조절합니다.")
+            self.resize_handles.append(handle)
         self._layout_resize_handles()
         self._windows.add(self)
 
@@ -1640,6 +1671,9 @@ class DetachedDocumentWindow(QWidget):
         super().changeEvent(event)
         if event.type() == QEvent.Type.WindowStateChange:
             self._layout_resize_handles()
+            icon = (QStyle.StandardPixmap.SP_TitleBarNormalButton if self.isMaximized()
+                    else QStyle.StandardPixmap.SP_TitleBarMaxButton)
+            self.maximize_button.setIcon(self.style().standardIcon(icon))
 
     def current_page(self):
         return self.stack.currentWidget() if self._pages else self._last_page
@@ -1697,7 +1731,7 @@ class DetachedDocumentWindow(QWidget):
             x = self.document_tabs.mapFromGlobal(position).x()
             index = next((i for i in range(index) if x < self.document_tabs.tabRect(i).center().x()), index)
         self.document_tabs.blockSignals(True)
-        self.document_tabs.insertTab(index, page.windowTitle())
+        self.document_tabs.insertTab(index, getattr(page, "detached_tab_title", page.windowTitle()))
         self.document_tabs.setTabData(index, page)
         self.document_tabs.setTabToolTip(index, page.windowTitle())
         self.document_tabs.setCurrentIndex(index)
@@ -1763,22 +1797,6 @@ class DetachedDocumentWindow(QWidget):
 
     def ordered_pages(self):
         return [self.document_tabs.tabData(i) for i in range(self.document_tabs.count())]
-
-    def nativeEvent(self, event_type, message):
-        # Windows 기본 제목줄의 이동 완료도 내부 탭 줄과 같은 드롭 경로로 보낸다.
-        import sys
-        if sys.platform == "win32":
-            import ctypes
-            from ctypes import wintypes
-            msg = wintypes.MSG.from_address(int(message))
-            if msg.message == 0x0216:  # WM_MOVING (크기 조절인 WM_SIZING과 구분)
-                self._native_moving = True
-                self.probe_reattach(QCursor.pos())
-            elif msg.message == 0x0232 and getattr(self, "_native_moving", False):
-                self._native_moving = False
-                point = QCursor.pos()
-                QTimer.singleShot(0, self, lambda: self.drop_reattach(point, all_pages=True))
-        return False, 0  # Windows/Qt의 기본 창 이동·크기 조절 처리를 계속한다.
 
     def reattach_all(self):
         for page in self.ordered_pages():

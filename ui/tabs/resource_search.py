@@ -2522,12 +2522,24 @@ class ResourceSearchTab(QWidget):
             or state.get("headline")
             or "본문"
         )
+        owner = self.window()
+        if hasattr(owner, "_document_title"):
+            short_title = owner._document_title(row or {}, title)[0]
+            detached_tab_title = owner._two_line_open_document_title(short_title)
+        else:
+            short_title = law_short_name(
+                title,
+                str((row or {}).get("short_name") or "")
+                or self._known_law_short_name(title),
+            )
+            detached_tab_title = self._two_line_tab_title(short_title)
         window = DetachedDocumentWindow(
             title,
             "",  # 원래 탭을 닫은 뒤 attach_reader에서 문서 자체를 넘긴다.
             self._detail_link_clicked,
             make_detail_font(self.detail_font_size, self.detail_font_family),
-            parent=self.window(),
+            parent=owner,
+            tab_title=detached_tab_title,
         )
         self._detached_document_windows.append(window)
         window.destroyed.connect(
@@ -2981,6 +2993,9 @@ class ResourceSearchTab(QWidget):
                 font.setBold(True)
                 item.setFont(0, font)
                 self.family_law_tree.setCurrentItem(item)
+        # 열린 법령은 고정 음영으로 표시하고, 클릭 선택은 따로 비워 둔다.
+        # 그래야 다른 행을 한 번 눌렀을 때 선택 음영이 즉시 나타난다.
+        self.family_law_tree.clearSelection()
 
     def _open_family_law(self, item: QTreeWidgetItem, _column: int = 0) -> None:
         name = str(item.data(0, Qt.ItemDataRole.UserRole) or "")

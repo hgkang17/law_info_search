@@ -1502,6 +1502,7 @@ class LawSearchWindow(QMainWindow):
                 getattr(tab, "detail_font_family", ""),
             ),
             parent=self,
+            tab_title=self._two_line_open_document_title(str(document.get("short") or title)),
         )
         self.register_detached_window(
             window,

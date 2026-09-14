@@ -81,8 +81,6 @@ def attach_reader(page, source, payload):
 
     if isinstance(reader, ResourceSearchTab):
         reader._detached_reader = True
-        from PySide6.QtWidgets import QAbstractItemView
-        reader.family_law_tree.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         reader._law_short_name_cache.update(source._law_short_name_cache)
         state = dict(payload["state"])
         document = state.get("document")

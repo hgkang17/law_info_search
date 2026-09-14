@@ -196,6 +196,14 @@ def test_family_selection_adds_a_tab_to_the_same_detached_window(app, tmp_path, 
     try:
         tree = window.current_page().source_reader.family_law_tree
         assert tree.isVisible()
+        target = tree.topLevelItem(1)
+        QTest.mouseClick(
+            tree.viewport(), Qt.MouseButton.LeftButton,
+            pos=tree.visualItemRect(target).center(),
+        )
+        app.processEvents()
+        assert tree.selectedItems() == [target]
+        assert window.document_tabs.count() == 1  # 전문 열기는 더블클릭에서만 한다.
         tree.itemDoubleClicked.emit(tree.topLevelItem(1), 0)
         app.processEvents()
         assert window.document_tabs.count() == 2
@@ -208,7 +216,7 @@ def test_family_selection_adds_a_tab_to_the_same_detached_window(app, tmp_path, 
                 item = family.topLevelItem(i)
                 assert (item.background(0).color().name() == "#dcecf9") == (
                     item.data(0, Qt.ItemDataRole.UserRole) == active)
-            assert not family.selectedItems()
+            assert family.selectedItems() == ([target] if family is tree else [])
     finally:
         window.close()
         source.close()

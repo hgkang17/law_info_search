@@ -30,6 +30,8 @@ def test_dragging_the_strip_tab_out_detaches_that_document(qt_app) -> None:
     window = LawSearchWindow()
     try:
         token = _fill_expc_document(window)
+        window.expc_tab._active_detail_row["short_name"] = "해석례 약칭"
+        window._refresh_open_documents()
         assert window._open_document_index_for_token(token) >= 0
 
         # 띠 탭바가 알리는 신호 그대로 부른다. 연결까지 함께 확인한다.
@@ -44,6 +46,7 @@ def test_dragging_the_strip_tab_out_detaches_that_document(qt_app) -> None:
         assert not detached.toc_panel.isVisible()
         assert "질의요지와 회답 본문이다." in detached.browser.toPlainText()
         assert "법령해석례 사례" in detached.windowTitle()
+        assert detached.document_tabs.tabText(0) == "해석례 약칭"
 
         # 꺼낸 본문은 원래 화면에서 닫혀 띠에서도 사라진다.
         assert window.expc_tab._active_detail_row is None
@@ -225,6 +228,7 @@ def test_law_body_goes_back_into_its_document_tab(qt_app) -> None:
         assert resource.document_tabs.count() == 0
         detached = window._detached_document_windows[0]
         assert detached.reattach_payload["source"] == "resource"
+        assert detached.document_tabs.tabText(0) == "국토계획법"
         original_document = detached.reattach_payload["state"]["document"]
         assert original_document is detached.browser.document()
         assert original_document is not resource.detail_view.document()
@@ -317,7 +321,7 @@ def test_a_window_preview_follows_the_cursor_while_dragging_out(qt_app) -> None:
         assert len(window._detached_document_windows) == 1
         detached = window._detached_document_windows[0]
         assert not hasattr(detached, "reattach_button")
-        assert not detached.windowFlags() & Qt.WindowType.FramelessWindowHint
+        assert detached.windowFlags() & Qt.WindowType.FramelessWindowHint
         detached.close()
         qt_app.processEvents()
     finally:
@@ -412,7 +416,7 @@ def test_detached_tab_click_does_not_reattach_and_double_click_maximizes(qt_app)
         assert detached.isMaximized()
         detached.toggle_maximized()
         assert not detached.isMaximized()
-        assert not detached.size_grip.isVisible()  # Windows 기본 창 테두리로 조절한다.
+        assert len(detached.resize_handles) == 8
     finally:
         detached.close()
         qt_app.processEvents()
