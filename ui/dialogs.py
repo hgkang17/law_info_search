@@ -19,7 +19,7 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QCursor, QMouseEvent, QPixmap, QTextCursor, QTextBlockFormat
+from PySide6.QtGui import QColor, QCursor, QMouseEvent, QPainter, QPen, QPixmap, QTextCursor, QTextBlockFormat
 from PySide6.QtPdf import QPdfDocument
 from PySide6.QtPdfWidgets import QPdfView
 from PySide6.QtWidgets import (
@@ -942,6 +942,13 @@ QPushButton[windowControl="true"] {
     font-size: 12pt; padding: 0;
 }
 QPushButton[windowControl="true"]:hover { background: #e7e9ed; }
+QPushButton#detachedCaptionButton {
+    background: transparent; border: none; padding: 0;
+}
+QPushButton#detachedCaptionButton:hover { background: #e7e9ed; }
+QPushButton#detachedCaptionButton[captionKind="close"]:hover {
+    background: #e81123;
+}
 QTextBrowser#detachedDocumentBrowser {
     background: #ffffff;
     border: none;
@@ -1567,6 +1574,45 @@ class DetachedDocumentTabBar(CornerCloseTabBar):
         super().mouseDoubleClickEvent(event)
 
 
+class DetachedCaptionButton(QPushButton):
+    """분리 창 버튼을 참고 이미지처럼 같은 굵기의 선으로 그린다."""
+
+    def __init__(self, kind: str, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.kind = kind
+        self.setObjectName("detachedCaptionButton")
+        self.setProperty("windowControl", "true")
+        self.setProperty("captionKind", kind)
+        self.setFixedSize(46, 28)
+
+    def set_kind(self, kind: str) -> None:
+        self.kind = kind
+        self.setProperty("captionKind", kind)
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        icon_color = "#ffffff" if self.kind == "close" and self.underMouse() else "#53616e"
+        pen = QPen(QColor(icon_color))
+        pen.setWidth(1)
+        pen.setCosmetic(True)
+        painter.setPen(pen)
+        x, y = self.width() // 2, self.height() // 2
+        if self.kind == "minimize":
+            painter.drawLine(x - 5, y + 4, x + 5, y + 4)
+        elif self.kind == "maximize":
+            painter.drawRect(x - 5, y - 4, 10, 9)
+        elif self.kind == "restore":
+            painter.drawLine(x - 3, y - 5, x + 6, y - 5)
+            painter.drawLine(x + 6, y - 5, x + 6, y + 3)
+            painter.drawRect(x - 6, y - 2, 10, 8)
+        else:
+            painter.drawLine(x - 5, y - 5, x + 5, y + 5)
+            painter.drawLine(x + 5, y - 5, x - 5, y + 5)
+
+
 class DetachedDocumentWindow(QWidget):
     """독립된 본문 페이지를 탭으로 소유하는 창. 이동 시 페이지를 재생성하지 않는다."""
 
@@ -1587,7 +1633,7 @@ class DetachedDocumentWindow(QWidget):
         layout.setContentsMargins(2, 2, 2, 2)
         layout.setSpacing(0)
         self.header = ReattachDragBar(self)
-        self.header.setFixedHeight(44)
+        self.header.setFixedHeight(38)
         row = QHBoxLayout(self.header)
         row.setContentsMargins(8, 0, 0, 0)
         row.setSpacing(0)
@@ -1604,27 +1650,23 @@ class DetachedDocumentWindow(QWidget):
         self.document_tabs.preview_provider = lambda page: (page.windowTitle(), tab_preview_snapshot(page.reader_splitter))
         self.document_tabs.drop_probe = lambda point: self.probe_reattach(point)
         row.addWidget(self.document_tabs, 1)
-        for icon, tip, callback in (
-            (QStyle.StandardPixmap.SP_TitleBarMinButton, "최소화", self.showMinimized),
-            (QStyle.StandardPixmap.SP_TitleBarMaxButton, "최대화 / 복원", self.toggle_maximized),
-            (QStyle.StandardPixmap.SP_TitleBarCloseButton, "닫기", self.close),
+        for kind, tip, callback in (
+            ("minimize", "최소화", self.showMinimized),
+            ("maximize", "최대화 / 복원", self.toggle_maximized),
+            ("close", "닫기", self.close),
         ):
-            button = QPushButton(self.header)
-            button.setIcon(self.style().standardIcon(icon))
-            button.setIconSize(QSize(12, 12))
-            button.setProperty("windowControl", "true")
-            button.setFixedSize(46, 30)
+            button = DetachedCaptionButton(kind, self.header)
             button.setToolTip(tip)
             button.setAccessibleName(tip)
             button.clicked.connect(callback)
-            if tip == "최대화 / 복원":
+            if kind == "maximize":
                 self.maximize_button = button
             row.addWidget(button, 0, Qt.AlignmentFlag.AlignTop)
         layout.addWidget(self.header)
         self.stack = QStackedWidget()
         self.stack.setObjectName("detachedDocumentStack")
         # 탭 바탕색이 본문 사방으로 이어지는 여유 공간.
-        self.stack.setContentsMargins(10, 8, 10, 10)
+        self.stack.setContentsMargins(10, 2, 10, 10)
         layout.addWidget(self.stack, 1)
         self.size_grip = QSizeGrip(self)
         self.size_grip.setFixedSize(10, 10)
@@ -1671,9 +1713,7 @@ class DetachedDocumentWindow(QWidget):
         super().changeEvent(event)
         if event.type() == QEvent.Type.WindowStateChange:
             self._layout_resize_handles()
-            icon = (QStyle.StandardPixmap.SP_TitleBarNormalButton if self.isMaximized()
-                    else QStyle.StandardPixmap.SP_TitleBarMaxButton)
-            self.maximize_button.setIcon(self.style().standardIcon(icon))
+            self.maximize_button.set_kind("restore" if self.isMaximized() else "maximize")
 
     def current_page(self):
         return self.stack.currentWidget() if self._pages else self._last_page

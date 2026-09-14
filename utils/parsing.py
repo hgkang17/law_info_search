@@ -407,6 +407,11 @@ def split_inline_paren_items(line: str) -> list[str]:
     return [line]
 
 
+_CLOSING_PAREN_CHAIN_REFERENCE = re.compile(
+    r"(?<![\d(])\d{1,2}\)[ \t]*[ㆍ·][ \t]*\d{1,2}\)의(?=[ \t]|$)"
+)
+
+
 def split_inline_closing_paren_items(line: str) -> list[str]:
     """API가 ``용도1) 발전용2) 산업용``처럼 붙여 보낸 세부항목 복원.
 
@@ -417,7 +422,14 @@ def split_inline_closing_paren_items(line: str) -> list[str]:
     # ``1) 용도, 2) 규모``만 대상으로 한다. ``※ (1)과 (2)에 따른``의
     # 괄호 번호는 숫자 앞에 여는 괄호가 있으므로 닫는 괄호형 목록에서
     # 제외한다.
-    matches = list(_CLOSING_PAREN_ITEM_PATTERN.finditer(line))
+    # ``가목1)ㆍ2)의``는 앞 목의 두 세부항목을 함께 가리킨다. 숫자가
+    # 연속해도 각각의 본문이 없고 마지막에 조사가 붙으므로 목록이 아니다.
+    # 원래 표식 정규식은 그대로 두고 이 좁은 인용 범위 안의 후보만 제외한다.
+    references = [match.span() for match in _CLOSING_PAREN_CHAIN_REFERENCE.finditer(line)]
+    matches = [
+        match for match in _CLOSING_PAREN_ITEM_PATTERN.finditer(line)
+        if not any(start <= match.start() < end for start, end in references)
+    ]
     for first_index, first in enumerate(matches):
         if int(first.group(1)) != 1:
             continue

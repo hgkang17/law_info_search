@@ -1342,6 +1342,7 @@ class ResourceSearchTab(QWidget):
         self.family_law_tree.setFont(ui_font(point_size=8.0))
         self.family_law_tree.setFixedHeight(70)
         self.family_law_tree.setToolTip("법률·시행령·시행규칙을 더블클릭하면 전문을 엽니다.")
+        self.family_law_tree.itemClicked.connect(self._shade_family_law_choice)
         self.family_law_tree.itemDoubleClicked.connect(self._open_family_law)
         toc_panel_layout.addWidget(self.family_law_tree)
         # "조문 검색" 제목 줄은 두지 않는다. 바로 아래 입력칸의 안내
@@ -2996,6 +2997,22 @@ class ResourceSearchTab(QWidget):
         # 열린 법령은 고정 음영으로 표시하고, 클릭 선택은 따로 비워 둔다.
         # 그래야 다른 행을 한 번 눌렀을 때 선택 음영이 즉시 나타난다.
         self.family_law_tree.clearSelection()
+
+    def _shade_family_law_choice(self, item: QTreeWidgetItem, _column: int = 0) -> None:
+        """더블클릭 전 첫 클릭에도 선택한 법령을 분명히 표시한다."""
+        active_name = str(self._current_document_row().get("name") or "")
+        detached = bool(getattr(self, "_detached_reader", False))
+        for index in range(self.family_law_tree.topLevelItemCount()):
+            candidate = self.family_law_tree.topLevelItem(index)
+            name = str(candidate.data(0, Qt.ItemDataRole.UserRole) or "")
+            if candidate is item:
+                background, foreground = QColor("#b9def5"), QColor("#145a91")
+            elif detached and name == active_name:
+                background, foreground = QColor("#dcecf9"), QColor("#1768aa")
+            else:
+                background, foreground = QBrush(), QBrush()
+            candidate.setBackground(0, background)
+            candidate.setForeground(0, foreground)
 
     def _open_family_law(self, item: QTreeWidgetItem, _column: int = 0) -> None:
         name = str(item.data(0, Qt.ItemDataRole.UserRole) or "")

@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from PySide6.QtWidgets import QApplication
+
 from utils.parsing import (
+    normalize_legal_body,
     split_inline_korean_closing_paren_items,
     split_inline_law_subitems,
 )
+from utils.legal_body import legal_body_to_html
 
 
 SOURCE = (
@@ -54,4 +58,27 @@ def test_korean_marker_split_needs_two_consecutive_markers() -> None:
     # 차례가 건너뛰면 자르지 않는다.
     assert split_inline_korean_closing_paren_items("가) 첫째 다) 셋째") == [
         "가) 첫째 다) 셋째"
+    ]
+
+
+def test_farmland_decree_item_reference_stays_in_one_line() -> None:
+    # 현행 농지법 시행령 제29조제4항제1호나목의 가목 세부항목 인용.
+    source = (
+        "나. 가목1)ㆍ2)의 어느 하나에 해당하는 세대의 세대원이 장기간 "
+        "독립된 주거생활을 영위할 수 있는 구조로 된 건축물"
+    )
+
+    assert normalize_legal_body(source) == source
+    QApplication.instance() or QApplication([])
+    html = legal_body_to_html(source, document_name="농지법 시행령")
+    assert "가목1)ㆍ2)의 어느 하나" in html
+
+
+def test_numbered_items_still_split_after_a_cited_number_chain() -> None:
+    source = "나. 가목1)ㆍ2)의 세대에 관하여 1) 첫째 조건 2) 둘째 조건"
+
+    assert split_inline_law_subitems(source).splitlines() == [
+        "나. 가목1)ㆍ2)의 세대에 관하여",
+        "1) 첫째 조건",
+        "2) 둘째 조건",
     ]

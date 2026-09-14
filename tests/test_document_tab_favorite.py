@@ -787,6 +787,41 @@ def test_snapshot_from_another_law_is_ignored(tmp_path) -> None:
     assert "제1조(목적)" in body
 
 
+def test_old_farmland_render_snapshot_is_rebuilt_from_source(tmp_path) -> None:
+    from ui.tabs.resource_search import LAW_RENDER_SNAPSHOT_VERSION
+
+    tab = _tab(tmp_path)
+    row = {**ROW, "id": "010000", "name": "농지법 시행령"}
+    payload = _decree_payload(
+        row["name"], row["id"],
+        [{
+            "조문번호": "29",
+            "조문내용": "제29조(농업진흥구역에서 할 수 있는 행위) "
+            "나. 가목1)ㆍ2)의 어느 하나에 해당하는 세대의 세대원",
+        }],
+    )
+    assert tab.law_cache.save(row, payload)
+    assert tab.law_cache.update_snapshot(row, {
+        "render_snapshot_version": LAW_RENDER_SNAPSHOT_VERSION - 1,
+        "rendered_html": "나. 가목<br>1)ㆍ<br>2)의 어느 하나",
+        "rendered_plain_text": "농지법 시행령\n나. 가목\n1)ㆍ\n2)의 어느 하나",
+        "rendered_toc_entries": [],
+        "rendered_three_stage_articles": [],
+        "render_highlight_terms": [],
+        "rendered_font_size": 10,
+    })
+
+    saved = tab.law_cache.load(tab.law_cache.path_for_row(row))
+    assert saved is not None
+    tab.open_cached_law(saved)
+
+    assert "가목1)ㆍ2)의 어느 하나" in tab.detail_view.toPlainText()
+    refreshed = tab.law_cache.load(tab.law_cache.path_for_row(row))
+    assert refreshed is not None
+    assert refreshed["render_snapshot_version"] == LAW_RENDER_SNAPSHOT_VERSION
+    assert "가목1)ㆍ2)의 어느 하나" in refreshed["rendered_html"]
+
+
 def test_resource_name_column_stretches_to_fill_table(tmp_path) -> None:
     app = QApplication.instance() or QApplication([])
     tab = _tab(tmp_path)

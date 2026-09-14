@@ -4517,8 +4517,8 @@ class LawSearchWindow(QMainWindow):
                 padding: 0 3px;
             }
             QTreeWidget#familyLawTree::item:selected {
-                background: #dcecf9;
-                color: #1768aa;
+                background: #b9def5;
+                color: #145a91;
             }
             QTreeWidget#articleToc QHeaderView::section {
                 background: #e8f1f8;
@@ -5240,6 +5240,10 @@ class LawSearchWindow(QMainWindow):
             QListWidget#favoriteCategoryList::item:selected {
                 background: #edf3ff;
                 color: #174ea6;
+            }
+            QTreeWidget#familyLawTree::item:selected {
+                background: #b9def5;
+                color: #145a91;
             }
             /* 본문 글꼴은 여기서 정하지 않는다. 스타일시트가 위젯보다
                우선해서, 코드가 정한 본문 글꼴과 사용자가 조절한 글자

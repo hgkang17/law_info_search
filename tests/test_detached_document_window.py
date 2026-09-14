@@ -5,12 +5,13 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QPoint, QSettings
+from PySide6.QtCore import QPoint, QSettings, Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from storage.cache import LawDocumentCache
 from storage.recent import RecentSearchManager
-from ui.dialogs import DetachedDocumentWindow
+from ui.dialogs import DetachedCaptionButton, DetachedDocumentWindow
 from ui.tabs.resource_search import ResourceSearchTab
 
 
@@ -73,10 +74,11 @@ def test_detaching_opens_a_window_and_closes_the_tab(tmp_path) -> None:
     app = QApplication.instance() or QApplication([])
     tab = _tab(tmp_path)
     payload = _payload()
-    assert tab.law_cache.save(dict(ROW), payload)
+    row = {**ROW, "short_name": "테법"}
+    assert tab.law_cache.save(row, payload)
     tab.resize(1000, 700)
     tab.show()
-    tab.open_cached_law({"row": dict(ROW), "payload": payload})
+    tab.open_cached_law({"row": row, "payload": payload})
     app.processEvents()
     key = tab._active_document_key
 
@@ -89,9 +91,25 @@ def test_detaching_opens_a_window_and_closes_the_tab(tmp_path) -> None:
     assert isinstance(window, DetachedDocumentWindow)
     assert "제1조(목적) 본문이다." in window.browser.toPlainText()
     assert ROW["name"] in window.windowTitle()
+    assert "테법" in window.document_tabs.tabText(0)
     assert window.toc_panel.isVisible()
     assert window.toc_tree.topLevelItemCount() == 2
     assert "제1조" in window.toc_tree.topLevelItem(0).text(0)
+    assert [
+        button.kind for button in window.header.findChildren(DetachedCaptionButton)
+    ] == ["minimize", "maximize", "close"]
+    assert window.header.layout().count() == 4  # 탭과 창 버튼만 표시한다.
+    assert window.header.height() == 38
+    assert window.stack.contentsMargins().top() == 2
+    family = window.current_page().source_reader.family_law_tree
+    assert family.topLevelItemCount() == 3
+    next_law = family.topLevelItem(1)
+    QTest.mouseClick(
+        family.viewport(), Qt.MouseButton.LeftButton,
+        pos=family.visualItemRect(next_law).center(),
+    )
+    assert next_law.background(0).color().name() == "#b9def5"
+    assert window.document_tabs.count() == 1  # 전문 열기는 여전히 더블클릭이다.
     window.close()
 
 
