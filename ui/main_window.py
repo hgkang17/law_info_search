@@ -501,6 +501,25 @@ class LawSearchWindow(QMainWindow):
         # 남는 자리는 모두 오른쪽에 몰아 준다. 이 여백이 없으면 탭과 단추가
         # 띠 가운데로 모여 왼쪽 끝에서 시작하지 않았다.
         self.open_documents_layout.addStretch(0)
+        self.open_document_api_refresh_button = QPushButton("API\n갱신")
+        self.open_document_api_refresh_button.setObjectName(
+            "openDocumentApiRefresh"
+        )
+        self.open_document_api_refresh_button.setFixedHeight(30)
+        self.open_document_api_refresh_button.setCursor(
+            Qt.CursorShape.PointingHandCursor
+        )
+        self.open_document_api_refresh_button.setToolTip(
+            "선택한 열린 본문을 API에서 다시 받아 화면과 저장본을 갱신합니다."
+        )
+        self.open_document_api_refresh_button.setEnabled(False)
+        self.open_document_api_refresh_button.clicked.connect(
+            self._refresh_open_document_from_api
+        )
+        self.open_documents_layout.addWidget(
+            self.open_document_api_refresh_button, 0,
+            Qt.AlignmentFlag.AlignVCenter,
+        )
         # 창 제목 표시줄에 이미 프로그램 이름이 있어 머리글에서는 로고만
         # 남긴다. 이름 라벨이 차지하던 자리는 열린 본문 띠가 넘겨받는다.
         header_layout.addWidget(logo_label)
@@ -1132,6 +1151,70 @@ class LawSearchWindow(QMainWindow):
         if not token or token == self._active_document_token:
             return
         self._active_document_token = token
+        self._sync_open_document_api_refresh_button()
+
+    def _refreshable_open_document(self) -> tuple[object, dict[str, object]] | None:
+        document = self._open_document_descriptors.get(self._active_document_token)
+        if not isinstance(document, dict):
+            return None
+        source = str(document.get("source") or "")
+        if source == "resource":
+            row = self.resource_tab._document_tab_row(str(document.get("key") or ""))
+            if not isinstance(row, dict):
+                return None
+            target = str(row.get("target") or "")
+            if target == "law_article":
+                source_row = row.get("source_row")
+                if not isinstance(source_row, dict) or not isinstance(row.get("favorite_unit"), dict):
+                    return None
+            elif target not in {"law", "admrul", "ordin"}:
+                return None
+            return self.resource_tab, dict(row)
+        tab = {
+            "central": self.central_tab,
+            "expc": self.expc_tab,
+            "prec": self.prec_tab,
+        }.get(source)
+        row = document.get("row")
+        if tab is None or not isinstance(row, dict) or not row.get("detail_available"):
+            return None
+        return tab, dict(row)
+
+    def _sync_open_document_api_refresh_button(self) -> None:
+        refreshable = self._refreshable_open_document()
+        busy = bool(
+            refreshable and getattr(refreshable[0], "worker", None)
+            and refreshable[0].worker.isRunning()
+        )
+        self.open_document_api_refresh_button.setEnabled(
+            refreshable is not None and not busy
+        )
+
+    def _refresh_open_document_from_api(self) -> None:
+        refreshable = self._refreshable_open_document()
+        if refreshable is None:
+            return
+        tab, row = refreshable
+        if getattr(tab, "worker", None) and tab.worker.isRunning():
+            return
+        token = self._active_document_token
+        self._activate_open_document(token)
+        if tab is self.resource_tab:
+            if str(row.get("target") or "") == "law_article":
+                source_row = row["source_row"]
+                unit = row["favorite_unit"]
+                tab.open_cached_favorite_article(
+                    {"row": dict(source_row), "payload": {}},
+                    dict(unit), allow_full_fallback=False, force_api=True,
+                )
+            else:
+                tab._request_resource_detail(row, force_api=True)
+        else:
+            tab._request_detail(row, force_api=True)
+        worker = getattr(tab, "worker", None)
+        if worker is not None and worker.isRunning():
+            worker.finished.connect(self._sync_open_document_api_refresh_button)
+        self._sync_open_document_api_refresh_button()
 
     def _open_document_tab_activated(self, index: int) -> None:
         """탭을 눌렀다 뗐다. 이미 보고 있던 본문이어도 다시 연다.
@@ -1192,6 +1275,7 @@ class LawSearchWindow(QMainWindow):
         self._open_document_descriptors = {
             str(item["token"]): item for item in documents
         }
+        self._sync_open_document_api_refresh_button()
 
         tab_signature = tuple(
             (

@@ -10698,6 +10698,7 @@ class ResourceSearchTab(QWidget):
                     article_record,
                     keyword_unit,
                     allow_full_fallback=False,
+                    force_api=force_api,
                 )
             prompt_oc_api_key(self)
             return False
@@ -11733,6 +11734,7 @@ class ResourceSearchTab(QWidget):
         unit: dict[str, object],
         *,
         allow_full_fallback: bool = True,
+        force_api: bool = False,
     ) -> bool:
         """조문 API를 우선해 열고, 허용된 즐겨찾기에서만 전문을 대신 쓴다."""
         source_row = record.get("row")
@@ -11749,7 +11751,9 @@ class ResourceSearchTab(QWidget):
         if not jo:
             raise ValueError("즐겨찾기 조문 번호를 찾지 못했습니다.")
 
-        cached_payload = self._load_favorite_article_cache(source_row, unit)
+        cached_payload = (
+            None if force_api else self._load_favorite_article_cache(source_row, unit)
+        )
         if isinstance(cached_payload, dict):
             self._show_favorite_article_payload(
                 record, unit, cached_payload, "조항호목 캐시"
@@ -11772,7 +11776,7 @@ class ResourceSearchTab(QWidget):
             return True
 
         self._pending_favorite_article_api = (
-            dict(record),
+            dict(record, _force_api_refresh=force_api),
             dict(unit),
             allow_full_fallback,
         )
@@ -11824,6 +11828,26 @@ class ResourceSearchTab(QWidget):
             self._pending_favorite_article_api = None
             return
         cached = self._save_favorite_article_cache(source_row, unit, payload)
+        if record.get("_force_api_refresh"):
+            active_row = self._document_tab_row(self._active_document_key)
+            active_source_row = (
+                active_row.get("source_row")
+                if isinstance(active_row, dict) else None
+            )
+            if (
+                isinstance(active_row, dict)
+                and isinstance(active_source_row, dict)
+                and str(active_row.get("target") or "") == "law_article"
+                and str(active_source_row.get("id") or "")
+                == str(source_row.get("id") or "")
+                and isinstance(active_row.get("favorite_unit"), dict)
+                and all(
+                    str(active_row["favorite_unit"].get(key) or "")
+                    == str(unit.get(key) or "")
+                    for key in ("jo", "hang", "ho", "mok")
+                )
+            ):
+                self._save_keyword_article_snapshot(active_row)
         self._pending_favorite_article_api = None
         if cached:
             self.status_label.setText(
