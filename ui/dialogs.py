@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from html import escape
 
 from PySide6.QtCore import (
@@ -2066,6 +2067,8 @@ class LawReferencePopup(QFrame):
             "border:none; background:transparent; padding:0; }"
         )
         self.favorite_button.hide()
+        self._combined_favorite_buttons: list[QPushButton] = []
+        self._combined_requests: list[dict[str, str]] = []
         self.browser.verticalScrollBar().valueChanged.connect(
             self._position_favorite_button
         )
@@ -2157,9 +2160,39 @@ class LawReferencePopup(QFrame):
     def _position_favorite_button(self, _value: int = 0) -> None:
         button = self.favorite_button
         request = self.reference_request
+        if getattr(self, "_combined_sections", None) is not None:
+            button.hide()
+            for index, combined_button in enumerate(self._combined_favorite_buttons):
+                combined_button.hide()
+                if index >= len(self._combined_requests):
+                    continue
+                request = self._combined_requests[index]
+                if not request.get("law_id") or not request.get("jo"):
+                    continue
+                heading = str(self._combined_options[index].get("text") or "")
+                article = re.search(r"제\s*\d+조(?:의\s*\d+)?", heading)
+                if article is None:
+                    continue
+                cursor = self.browser.document().find(article.group(0))
+                if cursor.isNull():
+                    continue
+                block_cursor = QTextCursor(cursor.block())
+                block_format = block_cursor.blockFormat()
+                if block_format.leftMargin() != 28:
+                    block_format.setLeftMargin(28)
+                    block_cursor.setBlockFormat(block_format)
+                rect = self.browser.cursorRect(block_cursor)
+                y = rect.top() + (rect.height() - combined_button.height()) // 2
+                if rect.bottom() < 0 or y >= self.browser.viewport().height():
+                    continue
+                combined_button.move(
+                    max(2, rect.left() - combined_button.width() - 2), y
+                )
+                combined_button.show()
+                combined_button.raise_()
+            return
         if (
             not self._source_html
-            or getattr(self, "_combined_sections", None) is not None
             or not request.get("law_id")
             or not request.get("jo")
         ):
@@ -2369,8 +2402,30 @@ class LawReferencePopup(QFrame):
         )
 
     def begin_combined(self, options):
+        for button in self._combined_favorite_buttons:
+            button.deleteLater()
         self._combined_options = options
         self._combined_sections = [(str(option["text"]), "<p>불러오는 중…</p>") for option in options]
+        self._combined_requests = [{} for _option in options]
+        self._combined_favorite_buttons = []
+        for index, _option in enumerate(options):
+            button = QPushButton(self.browser.viewport())
+            button.setObjectName("referencePopupFavorite")
+            button.setIconSize(QSize(16, 16))
+            button.setFixedSize(24, 24)
+            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setStyleSheet(
+                "QPushButton#referencePopupFavorite {"
+                "border:none; background:transparent; padding:0; }"
+            )
+            button.clicked.connect(
+                lambda _checked=False, item=index: self.favoriteRequested.emit(
+                    (self, dict(self._combined_requests[item]))
+                )
+            )
+            button.hide()
+            self._combined_favorite_buttons.append(button)
         self._combined_active = 0
         self.pin_button.setChecked(True)
         self.favorite_button.hide()
@@ -2395,6 +2450,9 @@ class LawReferencePopup(QFrame):
 
     def _set_combined_section(self, title, html):
         self._combined_sections[self._combined_active] = (title, html)
+        request = dict(self.reference_request or {})
+        if request.get("law_id") and request.get("jo"):
+            self._combined_requests[self._combined_active] = request
         parts = []
         previous_header = ""
         for heading, body in self._combined_sections:
@@ -2456,6 +2514,30 @@ class LawReferencePopup(QFrame):
         if getattr(self, "_combined_sections", None) is not None:
             self.favorite_button.setEnabled(False)
             self.favorite_button.hide()
+            for request, button in zip(
+                self._combined_requests, self._combined_favorite_buttons
+            ):
+                available = bool(request.get("law_id") and request.get("jo"))
+                favorite = False
+                if available and self.favorite_checker is not None:
+                    try:
+                        favorite = bool(self.favorite_checker(request))
+                    except Exception:
+                        favorite = False
+                button.setEnabled(available)
+                button.setText("")
+                button.setIcon(favorite_icon(
+                    favorite, "#c88700" if favorite else "#aeb4bc"
+                ))
+                button.setProperty("favorite", favorite)
+                button.setToolTip(
+                    "이 조항호목을 즐겨찾기에서 해제합니다."
+                    if favorite
+                    else "이 조항호목을 즐겨찾기에 추가합니다."
+                )
+                button.style().unpolish(button)
+                button.style().polish(button)
+            QTimer.singleShot(0, self, self._position_favorite_button)
             return
         request = self.reference_request
         available = bool(request.get("law_id") and request.get("jo"))
@@ -2484,11 +2566,19 @@ class LawReferencePopup(QFrame):
         self.favorite_button.style().unpolish(self.favorite_button)
         self.favorite_button.style().polish(self.favorite_button)
 
-    def set_favorite_pending(self) -> None:
+    def set_favorite_pending(self, request: dict[str, str] | None = None) -> None:
         """본문 저장을 기다리는 동안 클릭이 접수됐음을 표시한다."""
-        self.favorite_button.setEnabled(False)
-        self.favorite_button.setText("…")
-        self.favorite_button.setToolTip(
+        button = self.favorite_button
+        if request is not None:
+            for candidate_request, candidate_button in zip(
+                self._combined_requests, self._combined_favorite_buttons
+            ):
+                if candidate_request == request:
+                    button = candidate_button
+                    break
+        button.setEnabled(False)
+        button.setText("…")
+        button.setToolTip(
             "진행 중인 조회가 끝나면 이 조항호목을 즐겨찾기에 추가합니다."
         )
 

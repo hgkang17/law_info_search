@@ -7655,9 +7655,16 @@ class ResourceSearchTab(QWidget):
             popup._refresh_favorite_button()
 
     def _toggle_reference_favorite(self, popup: object) -> None:
+        request_override = None
+        if (
+            isinstance(popup, tuple)
+            and len(popup) == 2
+            and isinstance(popup[1], dict)
+        ):
+            popup, request_override = popup
         if not isinstance(popup, LawReferencePopup):
             return
-        request = popup.reference_request
+        request = request_override or popup.reference_request
         law_id = str(request.get("law_id") or "")
         jo = str(request.get("jo") or "")
         if not law_id or not jo:
@@ -7704,7 +7711,7 @@ class ResourceSearchTab(QWidget):
         )
         pending = self._pending_article_favorite
         if pending is not None and str(pending[0].get("id") or "") == law_id:
-            popup.set_favorite_pending()
+            popup.set_favorite_pending(request)
         else:
             popup._refresh_favorite_button()
 

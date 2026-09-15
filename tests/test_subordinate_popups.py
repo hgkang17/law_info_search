@@ -38,6 +38,23 @@ def test_multiple_delegations_open_all_cached_articles(tmp_path, monkeypatch):
         assert all(p.pin_button.isChecked() for p in popups)
         assert all(option["text"] in popups[0].browser.toPlainText() for option in options)
         assert len(popups[0]._combined_sections) == 2
+        assert len(popups[0]._combined_favorite_buttons) == 2
+        assert [request["jo"] for request in popups[0]._combined_requests] == [
+            "001900", "002000"
+        ]
+        app.processEvents()
+        assert all(
+            button.isVisible() and button.isEnabled()
+            for button in popups[0]._combined_favorite_buttons
+        )
+        popups[0].favorite_checker = (
+            lambda request: request.get("jo") == "001900"
+        )
+        popups[0]._refresh_favorite_button()
+        assert popups[0]._combined_favorite_buttons[0].property("favorite") is True
+        assert popups[0]._combined_favorite_buttons[1].property("favorite") is False
+        assert "해제" in popups[0]._combined_favorite_buttons[0].toolTip()
+        assert "추가" in popups[0]._combined_favorite_buttons[1].toolTip()
         # 반복 클릭해도 이미 열린 두 조문을 재사용한다.
         tab._show_inline_subordinate_menu(QUrl(tab._inline_subordinate_href(options)))
         app.processEvents()

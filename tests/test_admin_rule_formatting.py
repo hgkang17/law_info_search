@@ -16,6 +16,7 @@ from utils.formatting import (
     body_to_html,
 )
 from utils.constants import FONT_FAMILY
+from utils.legal_body import legal_body_to_html
 from utils.parsing import (
     insert_admin_clause_breaks,
     normalize_admin_rule_text,
@@ -23,6 +24,45 @@ from utils.parsing import (
     split_inline_paren_items,
 )
 from ui.tabs.resource_search import ResourceSearchTab
+
+
+def test_farmland_rule_article_18_annex_numbers_survive_joined_items() -> None:
+    _app = QApplication.instance() or QApplication([])
+    source = (
+        "제18조(협의서류 작성) 첨부 서류는 다음 각 호와 같다."
+        "1. 광역도시계획 협의 : 별표 32. 도시관리계획 협의 : 별표 4"
+        "3. 도시지역 확장의 경우 : 별표 54. 관리지역 세분화의 경우 : 별표 6"
+    )
+    expected = [
+        "제18조(협의서류 작성) 첨부 서류는 다음 각 호와 같다.",
+        "1. 광역도시계획 협의 : 별표 3",
+        "2. 도시관리계획 협의 : 별표 4",
+        "3. 도시지역 확장의 경우 : 별표 5",
+        "4. 관리지역 세분화의 경우 : 별표 6",
+    ]
+
+    normalized = normalize_admin_rule_text(source)
+    assert normalized.splitlines() == expected
+    assert normalize_admin_rule_text(normalized).splitlines() == expected
+
+    html = legal_body_to_html(
+        source, document_target="admrul", document_name="농지전용업무처리규정"
+    )
+    for number in (3, 4, 5, 6):
+        assert f"별표 {number}</a>" in html
+        assert f"name=%EB%B3%84%ED%91%9C%20{number}" in html
+    assert "별표 32" not in html
+
+
+def test_old_broken_annex_line_rejoins_only_sequential_item() -> None:
+    source = "제18조(서류)\n1. 첫 협의 : 별표\n32. 다음 협의 : 별표 4"
+    assert normalize_admin_rule_text(source).splitlines() == [
+        "제18조(서류)",
+        "1. 첫 협의 : 별표 3",
+        "2. 다음 협의 : 별표 4",
+    ]
+    unrelated = "제18조(서류) 3. 참고 기준은 별표 32에 따른다."
+    assert "별표 32에" in normalize_admin_rule_text(unrelated)
 
 
 def test_pre_normalized_admin_rule_skips_only_duplicate_normalization() -> None:

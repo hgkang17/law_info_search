@@ -773,6 +773,29 @@ def insert_admin_clause_breaks(text: str) -> str:
     줄바꿈을 보정한다."""
     if not text:
         return text
+    sparse_layout = text.count("\n") <= len(text) / 200
+    # 번호 없는 API 줄에서 ``1. ... 별표 32. 다음 호``는 별표 32가
+    # 아니라 ``별표 3`` 뒤에 2호가 붙은 것이다. 바로 앞 호와 다음 호가
+    # 연속할 때만 분리한다. 이미 ``별표\n32.``로 저장된 본문도 복구한다.
+    annex_followed_by_item = re.compile(
+        r"(?P<annex>별표[ \t\n]*[1-9])(?P<item>[2-9])\.[ \t]+"
+        r"(?=[가-힣「])"
+    )
+    preceding_item = re.compile(r"(?<!\d)([1-8])\.[ \t]+")
+
+    def separate_annex_and_item(match: re.Match[str]) -> str:
+        previous = None
+        for candidate in preceding_item.finditer(text, 0, match.start()):
+            previous = candidate
+        if previous is None or int(match.group("item")) != int(previous.group(1)) + 1:
+            return match.group(0)
+        return f"{match.group('annex').replace(chr(10), ' ')}\n{match.group('item')}. "
+
+    while True:
+        repaired = annex_followed_by_item.sub(separate_annex_and_item, text)
+        if repaired == text:
+            break
+        text = repaired
     # 이미 잘린 구버전 캐시의 각주 번호를 먼저 되붙인 뒤, 전체 파싱이
     # 끝날 때까지 괄호 번호를 보호한다. 중간의 일반 항목 분리 정규식이
     # ``※ (1)``을 다시 새 (1) 항목으로 자르는 것을 막는다.
@@ -854,7 +877,6 @@ def insert_admin_clause_breaks(text: str) -> str:
         lambda match: f"{match.group(1).rstrip()} {match.group(2)}",
         text,
     )
-    sparse_layout = text.count("\n") <= len(text) / 200
     def clause_break(match: re.Match[str]) -> str:
         # ``2-6-6.의 계획도서``처럼 번호 바로 뒤에 조사가 붙으면 다른
         # 항목을 인용한 문장이다. 실제 항목(``2-6-8. 주민제안...``)과
