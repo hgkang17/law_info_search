@@ -31,7 +31,13 @@ class _Locator:
         self.selector = selector
 
     def wait_for(self, **_kwargs):
-        pass
+        if self.selector == "input[name='arSeq']":
+            assert self.page.opened
+            self.page.body_list_ready = True
+
+    @property
+    def first(self):
+        return self
 
     def evaluate(self, _expression):
         if self.selector == "#bdySaveBtn":
@@ -39,7 +45,7 @@ class _Locator:
         elif self.selector == "#FileSaveHwpx1":
             self.page.selected_hwpx = True
         elif self.selector == "#aBtnOutPutSave":
-            assert self.page.opened and self.page.selected_hwpx
+            assert self.page.opened and self.page.selected_hwpx and self.page.body_list_ready
             self.page.emit_download()
 
     def locator(self, selector):
@@ -67,6 +73,7 @@ class _Page:
         self.download = _Download(payload)
         self.opened = False
         self.selected_hwpx = False
+        self.body_list_ready = False
         self.url = ""
         self.listeners = {}
         self.context = context
@@ -137,6 +144,7 @@ def test_blob_download_is_verified_then_saved_with_selected_name(tmp_path, monke
     assert saved == target
     assert target.read_bytes() == _hwpx_bytes()
     assert "lsId=014041" in browser.page.url
+    assert browser.page.body_list_ready
     assert browser.closed
     assert not list(tmp_path.glob("*.part"))
 

@@ -209,6 +209,19 @@ def download_official_law_hwpx(
                 page.locator("#bdySaveBtn").evaluate("element => element.click()")
                 layer = page.locator("#lsOutPutLayer")
                 layer.wait_for(state="visible", timeout=30000)
+                # 페이지 껍데기와 저장 버튼이 먼저 보이고, 저장 창을 열 때
+                # 조문 목록 AJAX 조회가 시작되는 경우가 있다. 사이트의
+                # beforeSavePrint()는 arSeq가 하나도 없으면 "법령 본문 목록
+                # 조회 후 사용하세요"라는 안내만 띄운다.
+                progress("법령 본문 목록 불러오는 중")
+                try:
+                    page.locator("input[name='arSeq']").first.wait_for(
+                        state="attached", timeout=60000
+                    )
+                except Exception as exc:
+                    raise RuntimeError(
+                        "국가법령정보센터에서 60초 안에 법령 본문 목록을 불러오지 못했습니다."
+                    ) from exc
                 progress("법령 전문 HWPX 내려받는 중")
                 download = _wait_for_site_download(page, context, layer)
                 expected_date = re.sub(r"\D", "", effective_date or "")
