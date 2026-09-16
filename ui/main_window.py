@@ -3112,6 +3112,18 @@ class LawSearchWindow(QMainWindow):
             QPushButton#aboutLinkButton:hover, QPushButton#updateLinkButton:hover {
                 color: #1768aa;
             }
+            QToolButton#downloadStatusButton {
+                background: #eaf3ff;
+                border: 1px solid #bdd6f3;
+                border-radius: 4px;
+                padding: 0 6px;
+                color: #1768aa;
+                font-size: 11px;
+            }
+            QToolButton#downloadStatusButton:hover,
+            QToolButton#downloadStatusButton:open {
+                background: #dcecff;
+            }
             QDialog#aboutDialog {
                 background: #ffffff;
             }
@@ -4673,6 +4685,18 @@ class LawSearchWindow(QMainWindow):
             QPushButton#aboutLinkButton:hover, QPushButton#updateLinkButton:hover {
                 color: __WB_NAVY__;
             }
+            QToolButton#downloadStatusButton {
+                background: #244963;
+                border: 1px solid #45667b;
+                border-radius: 4px;
+                padding: 0 6px;
+                color: #d8eaff;
+                font-size: 11px;
+            }
+            QToolButton#downloadStatusButton:hover,
+            QToolButton#downloadStatusButton:open {
+                background: #315c79;
+            }
             QFrame#apiCompact {
                 background: #1d4059;
                 border: 1px solid #45667b;
@@ -5570,6 +5594,16 @@ class LawSearchWindow(QMainWindow):
             QPushButton#updateLinkButton { font-weight: 400; }
             QPushButton#aboutLinkButton:hover,
             QPushButton#updateLinkButton:hover { color: #1f57c8; }
+            QToolButton#downloadStatusButton {
+                background: #eaf3ff;
+                border: 1px solid #bdd6f3;
+                border-radius: 4px;
+                padding: 0 6px;
+                color: #1f57c8;
+                font-size: 11px;
+            }
+            QToolButton#downloadStatusButton:hover,
+            QToolButton#downloadStatusButton:open { background: #dcecff; }
             QMenu {
                 background: #ffffff;
                 color: #2d2f33;

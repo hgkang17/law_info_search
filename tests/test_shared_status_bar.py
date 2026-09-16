@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -10,6 +11,7 @@ import pytest
 from PySide6.QtWidgets import QApplication
 
 from ui.main_window import LawSearchWindow
+from ui import widgets
 
 
 @pytest.fixture(scope="module")
@@ -99,3 +101,26 @@ def test_keyword_screens_show_their_guidance_in_the_status_line(window, qt_app) 
     resource.select_category("ai_related")
     qt_app.processEvents()
     assert "연관성이 높은" in window.status_bar.label.text()
+
+
+def test_download_button_shows_progress_then_opens_completed_file(window, qt_app, tmp_path, monkeypatch) -> None:
+    saved = tmp_path / "행정기본법.hwpx"
+    saved.write_bytes(b"example")
+    opened = []
+    monkeypatch.setattr(
+        widgets, "QDesktopServices",
+        SimpleNamespace(openUrl=lambda url: opened.append(url.toLocalFile()) or True),
+    )
+    bar = window.status_bar
+
+    bar.set_download_progress("법령 전문 HWPX 내려받는 중")
+    qt_app.processEvents()
+    assert bar.download_button.isVisible()
+    assert bar.download_button.text() == "다운로드 중…"
+
+    bar.add_completed_download(saved)
+    assert bar.download_button.text() == "다운로드 완료 ▾"
+    action = bar.download_menu.actions()[0]
+    assert action.text() == saved.name
+    action.trigger()
+    assert opened == [str(saved.resolve()).replace("\\", "/")]

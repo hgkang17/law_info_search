@@ -196,6 +196,7 @@ from PySide6.QtCore import (
     QRect,
     QSize,
     QTimer,
+    QStandardPaths,
     QUrl,
     QUrlQuery,
     Qt,
@@ -846,6 +847,7 @@ class ResourceSearchTab(QWidget):
         self.status_label = line
         self.progress = line
         self._progress_opacity = line
+        self._shared_status_bar = bar
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -1236,9 +1238,9 @@ class ResourceSearchTab(QWidget):
         self.hwp_export_button.setFixedSize(28, 28)
         self.hwp_export_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.hwp_export_button.setToolTip(
-            "국가법령정보센터에서 이 법령 전문 HWPX를 내려받습니다."
+            "국가법령정보센터에서 이 법령 전문 HWPX를 다운로드 폴더에 내려받습니다."
         )
-        self.hwp_export_button.setAccessibleName("한글 문서로 저장")
+        self.hwp_export_button.setAccessibleName("한글 문서 다운로드")
         self.hwp_export_button.clicked.connect(self._download_detail_to_hwpx)
         self.hwp_export_button.hide()
         self._law_hwpx_download_worker = None
@@ -12477,7 +12479,7 @@ class ResourceSearchTab(QWidget):
         )
 
     def _download_detail_to_hwpx(self) -> None:
-        """공식 사이트의 파일을 백그라운드로 받아 완성되면 선택 경로에 둔다."""
+        """공식 사이트의 파일을 기본 다운로드 폴더에 바로 내려받는다."""
         if self._law_hwpx_download_worker is not None:
             self.status_label.setText("한글 문서를 내려받는 중입니다.")
             return
@@ -12493,29 +12495,30 @@ class ResourceSearchTab(QWidget):
             f"{date_match.group(1)}{int(date_match.group(2)):02d}{int(date_match.group(3)):02d}"
             if date_match else ""
         )
-        suggested = str(Path.home() / default_export_name(title))
-        path, _selected = QFileDialog.getSaveFileName(
-            self, "국가법령정보센터 한글 문서 내려받기", suggested,
-            "한글 문서 (*.hwpx)",
-        )
+        path = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation)
         if not path:
-            return
-        if not path.lower().endswith(".hwpx"):
-            path = f"{path}.hwpx"
+            path = str(Path.home() / "Downloads")
+        bar = getattr(self, "_shared_status_bar", None)
         document_key = self._active_document_key
         worker = LawHwpxDownloadWorker(law_id, title, effective_date, path)
         self._law_hwpx_download_worker = worker
         self.hwp_export_button.setEnabled(False)
 
         def show_progress(message: str) -> None:
+            if bar is not None:
+                bar.set_download_progress(message)
             if self._active_document_key == document_key:
                 self.status_label.setText(message)
 
         def downloaded(saved_path: str) -> None:
+            if bar is not None:
+                bar.add_completed_download(saved_path)
             if self._active_document_key == document_key:
                 self.status_label.setText(f"{Path(saved_path).name} 저장 완료")
 
         def failed(message: str) -> None:
+            if bar is not None:
+                bar.set_download_failed()
             QMessageBox.warning(self, "한글 문서 다운로드 실패", message)
             if self._active_document_key == document_key:
                 self.status_label.setText("한글 문서 다운로드 실패")
@@ -12530,6 +12533,8 @@ class ResourceSearchTab(QWidget):
         worker.failed.connect(failed)
         worker.finished.connect(finished)
         self.status_label.setText("국가법령정보센터 한글 문서 준비 중")
+        if bar is not None:
+            bar.set_download_progress("국가법령정보센터 한글 문서 준비 중")
         worker.start()
 
     @classmethod

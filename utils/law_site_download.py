@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import zipfile
 from collections.abc import Callable
 
@@ -121,6 +122,55 @@ def _verify_hwpx(path: Path) -> None:
             raise ValueError("내려받은 HWPX 압축 파일이 손상되었습니다.")
 
 
+def _unique_download_path(directory: Path, suggested_filename: str) -> Path:
+    """사이트 파일명을 유지하면서 기존 다운로드를 덮어쓰지 않는다."""
+    filename = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", suggested_filename).strip(" .")
+    if not filename.lower().endswith(".hwpx"):
+        raise ValueError("사이트가 HWPX 대신 다른 파일을 보냈습니다.")
+    base = Path(filename)
+    candidate = directory / filename
+    index = 1
+    while candidate.exists():
+        candidate = directory / f"{base.stem} ({index}){base.suffix}"
+        index += 1
+    return candidate
+
+
+def _wait_for_site_download(page, context, layer):
+    """저장 결과가 현재 페이지나 새 창에서 생겨도 다운로드를 잡는다."""
+    downloads = []
+    alerts = []
+
+    def on_dialog(dialog) -> None:
+        if dialog.type == "confirm":
+            dialog.accept()
+        else:
+            alerts.append(dialog.message)
+            dialog.dismiss()
+
+    def attach_page(opened) -> None:
+        opened.on("download", lambda download: downloads.append(download))
+        opened.on("dialog", on_dialog)
+
+    context.on("page", attach_page)
+    attach_page(page)
+    # 사이트의 저장 창은 화면 밖에 놓일 수 있다. 실제 input을 선택하고
+    # 저장 링크의 click을 DOM에서 실행해야 Playwright의 좌표 클릭이 막히지 않는다.
+    radio = layer.locator("#FileSaveHwpx1")
+    radio.evaluate("element => element.click()")
+    if not radio.is_checked():
+        raise RuntimeError("사이트 저장 창에서 HWPX 형식을 선택하지 못했습니다.")
+    layer.locator("#aBtnOutPutSave").evaluate("element => element.click()")
+    deadline = time.monotonic() + 60
+    while not downloads:
+        if alerts:
+            raise RuntimeError(f"국가법령정보센터 안내: {alerts[-1]}")
+        if time.monotonic() >= deadline:
+            raise RuntimeError("사이트 저장 버튼을 눌렀지만 60초 동안 다운로드가 시작되지 않았습니다.")
+        page.wait_for_timeout(200)
+    return downloads[0]
+
+
 def download_official_law_hwpx(
     law_id: str,
     title: str,
@@ -132,10 +182,12 @@ def download_official_law_hwpx(
     progress = progress or (lambda _message: None)
     if not re.fullmatch(r"\d{1,12}", str(law_id)):
         raise ValueError("법령 ID가 올바르지 않습니다.")
-    target = Path(destination)
-    if target.suffix.lower() != ".hwpx":
-        raise ValueError("저장 경로는 .hwpx 파일이어야 합니다.")
-    target.parent.mkdir(parents=True, exist_ok=True)
+    destination_path = Path(destination)
+    is_directory = destination_path.is_dir() or not destination_path.suffix
+    if not is_directory and destination_path.suffix.lower() != ".hwpx":
+        raise ValueError("저장 경로는 다운로드 폴더 또는 .hwpx 파일이어야 합니다.")
+    directory = destination_path if is_directory else destination_path.parent
+    directory.mkdir(parents=True, exist_ok=True)
     sync_playwright = _load_playwright(progress)
     with tempfile.TemporaryDirectory(prefix="law-site-download-") as browser_temp:
         with sync_playwright() as playwright:
@@ -150,24 +202,24 @@ def download_official_law_hwpx(
                     timeout=45000,
                 )
                 page.locator("#bdySaveBtn").wait_for(state="visible", timeout=30000)
-                if title and re.sub(r"\s+", "", title) not in re.sub(r"\s+", "", page.title()):
-                    raise ValueError("국가법령정보센터에 열린 법령명이 화면과 다릅니다.")
+                site_title = page.title()
+                if title and re.sub(r"\s+", "", title) not in re.sub(r"\s+", "", site_title):
+                    raise ValueError(f"국가법령정보센터에 열린 법령명이 화면과 다릅니다. (사이트: {site_title})")
                 # 사이트의 로딩 마스크가 버튼 위에 남는 때에도 저장 함수를 실행한다.
                 page.locator("#bdySaveBtn").evaluate("element => element.click()")
                 layer = page.locator("#lsOutPutLayer")
                 layer.wait_for(state="visible", timeout=30000)
-                layer.locator("label[for='FileSaveHwpx1']").click()
                 progress("법령 전문 HWPX 내려받는 중")
-                with page.expect_download(timeout=90000) as event:
-                    layer.locator("#aBtnOutPutSave").click()
-                download = event.value
+                download = _wait_for_site_download(page, context, layer)
                 expected_date = re.sub(r"\D", "", effective_date or "")
                 if expected_date and f"({expected_date})" not in download.suggested_filename:
                     raise ValueError("사이트 다운로드의 시행일이 현재 화면과 다릅니다.")
-                if not download.suggested_filename.lower().endswith(".hwpx"):
-                    raise ValueError("사이트가 HWPX 대신 다른 파일을 보냈습니다.")
+                target = (
+                    _unique_download_path(directory, download.suggested_filename)
+                    if is_directory else destination_path
+                )
                 with tempfile.NamedTemporaryFile(
-                    prefix=".law-hwpx-", suffix=".part", dir=target.parent, delete=False
+                    prefix=".law-hwpx-", suffix=".part", dir=directory, delete=False
                 ) as temporary:
                     partial = Path(temporary.name)
                 try:

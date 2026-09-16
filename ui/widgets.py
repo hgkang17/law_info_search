@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from html import escape
 import json
 from math import cos, pi, sin
+from pathlib import Path
 import re
 from PySide6.QtCore import (
     QEvent,
@@ -24,12 +25,14 @@ from PySide6.QtCore import (
     QRegularExpression,
     QPropertyAnimation,
     QRectF,
+    QUrl,
     QVariantAnimation,
 )
 from PySide6.QtGui import (
     QBrush,
     QColor,
     QCursor,
+    QDesktopServices,
     QFont,
     QFontDatabase,
     QFontMetrics,
@@ -61,6 +64,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QMenu,
+    QMessageBox,
     QProgressBar,
     QPushButton,
     QScrollArea,
@@ -1858,6 +1862,62 @@ class SharedStatusBar(QFrame):
         self._layout = layout
         self._active: StatusLine | None = None
         self._owners: dict[QWidget, StatusLine] = {}
+        self._completed_downloads: list[Path] = []
+        self._download_in_progress = False
+        self.download_button = QToolButton(self)
+        self.download_button.setObjectName("downloadStatusButton")
+        self.download_button.setText("다운로드 중…")
+        self.download_button.setFixedHeight(18)
+        self.download_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.download_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.download_menu = QMenu(self.download_button)
+        self.download_menu.setObjectName("downloadStatusMenu")
+        self.download_button.setMenu(self.download_menu)
+        self.download_button.hide()
+        self.add_trailing_widget(self.download_button)
+
+    def set_download_progress(self, message: str) -> None:
+        self._download_in_progress = True
+        self.download_button.setText("다운로드 중…")
+        self.download_button.setToolTip(message)
+        self.download_button.show()
+        self._refresh_download_menu()
+
+    def add_completed_download(self, saved_path: str | Path) -> None:
+        path = Path(saved_path)
+        self._download_in_progress = False
+        self._completed_downloads.insert(0, path)
+        self._completed_downloads = self._completed_downloads[:10]
+        self.download_button.setText("다운로드 완료 ▾")
+        self.download_button.setToolTip("클릭하면 내려받은 파일을 열 수 있습니다.")
+        self.download_button.show()
+        self._refresh_download_menu()
+
+    def set_download_failed(self) -> None:
+        self._download_in_progress = False
+        self.download_button.setVisible(bool(self._completed_downloads))
+        if self._completed_downloads:
+            self.download_button.setText("다운로드 목록 ▾")
+            self._refresh_download_menu()
+
+    def _refresh_download_menu(self) -> None:
+        self.download_menu.clear()
+        if self._download_in_progress:
+            action = self.download_menu.addAction("다운로드 중…")
+            action.setEnabled(False)
+            if self._completed_downloads:
+                self.download_menu.addSeparator()
+        for path in self._completed_downloads:
+            action = self.download_menu.addAction(path.name)
+            action.setToolTip(str(path))
+            action.triggered.connect(lambda _checked=False, file_path=path: self._open_download(file_path))
+
+    def _open_download(self, path: Path) -> None:
+        if not path.is_file():
+            QMessageBox.warning(self, "파일을 열 수 없음", f"파일이 없습니다.\n{path}")
+            return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.resolve()))):
+            QMessageBox.warning(self, "파일을 열 수 없음", f"연결된 프로그램에서 파일을 열지 못했습니다.\n{path}")
 
     def add_trailing_widget(self, widget: QWidget) -> None:
         """상태 문구와 같은 줄, 오른쪽 끝에 세울 위젯(업데이트ㆍ정보 단추)."""

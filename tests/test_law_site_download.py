@@ -26,20 +26,27 @@ def _hwpx_bytes() -> bytes:
 
 
 class _Locator:
-    def __init__(self, page):
+    def __init__(self, page, selector=""):
         self.page = page
+        self.selector = selector
 
     def wait_for(self, **_kwargs):
         pass
 
     def evaluate(self, _expression):
-        self.page.opened = True
+        if self.selector == "#bdySaveBtn":
+            self.page.opened = True
+        elif self.selector == "#FileSaveHwpx1":
+            self.page.selected_hwpx = True
+        elif self.selector == "#aBtnOutPutSave":
+            assert self.page.opened and self.page.selected_hwpx
+            self.page.emit_download()
 
-    def locator(self, _selector):
-        return self
+    def locator(self, selector):
+        return _Locator(self.page, selector)
 
-    def click(self):
-        assert self.page.opened
+    def is_checked(self):
+        return self.page.selected_hwpx
 
 
 class _Download:
@@ -56,10 +63,14 @@ class _Download:
 
 
 class _Page:
-    def __init__(self, payload: bytes):
+    def __init__(self, payload: bytes, context=None, popup=False):
         self.download = _Download(payload)
         self.opened = False
+        self.selected_hwpx = False
         self.url = ""
+        self.listeners = {}
+        self.context = context
+        self.popup = popup
 
     def goto(self, url, **_kwargs):
         self.url = url
@@ -67,18 +78,29 @@ class _Page:
     def title(self):
         return "법령 > 본문 > 행정기본법 | 국가법령정보센터"
 
-    def locator(self, _selector):
-        return _Locator(self)
+    def locator(self, selector):
+        return _Locator(self, selector)
 
-    @contextmanager
-    def expect_download(self, **_kwargs):
-        yield type("Event", (), {"value": self.download})()
+    def on(self, event, callback):
+        self.listeners[event] = callback
+
+    def emit_download(self):
+        if self.popup:
+            new_page = _Page(self.download.payload)
+            self.context.listeners["page"](new_page)
+            new_page.emit_download()
+        else:
+            self.listeners["download"](self.download)
+
+    def wait_for_timeout(self, _milliseconds):
+        pass
 
 
 class _Browser:
-    def __init__(self, payload: bytes):
-        self.page = _Page(payload)
+    def __init__(self, payload: bytes, popup=False):
+        self.page = _Page(payload, self, popup)
         self.closed = False
+        self.listeners = {}
 
     def new_context(self, **_kwargs):
         return self
@@ -89,9 +111,12 @@ class _Browser:
     def close(self):
         self.closed = True
 
+    def on(self, event, callback):
+        self.listeners[event] = callback
 
-def _fake_browser(monkeypatch, payload: bytes) -> _Browser:
-    browser = _Browser(payload)
+
+def _fake_browser(monkeypatch, payload: bytes, popup=False) -> _Browser:
+    browser = _Browser(payload, popup)
 
     @contextmanager
     def playwright_context():
@@ -114,6 +139,30 @@ def test_blob_download_is_verified_then_saved_with_selected_name(tmp_path, monke
     assert "lsId=014041" in browser.page.url
     assert browser.closed
     assert not list(tmp_path.glob("*.part"))
+
+
+def test_download_directory_keeps_site_filename_and_existing_file(tmp_path, monkeypatch):
+    _fake_browser(monkeypatch, _hwpx_bytes())
+    original = tmp_path / _Download.suggested_filename
+    original.write_bytes(b"already downloaded")
+
+    saved = site.download_official_law_hwpx(
+        "014041", "행정기본법", "20260319", tmp_path
+    )
+
+    assert saved.name.endswith(" (1).hwpx")
+    assert saved.read_bytes() == _hwpx_bytes()
+    assert original.read_bytes() == b"already downloaded"
+
+
+def test_download_started_in_new_window_is_saved(tmp_path, monkeypatch):
+    _fake_browser(monkeypatch, _hwpx_bytes(), popup=True)
+
+    saved = site.download_official_law_hwpx(
+        "014041", "행정기본법", "20260319", tmp_path
+    )
+
+    assert saved.read_bytes() == _hwpx_bytes()
 
 
 def test_mislabeled_or_corrupt_file_preserves_existing_document(tmp_path, monkeypatch):

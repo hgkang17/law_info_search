@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 import zipfile
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -14,6 +15,7 @@ from PySide6.QtWidgets import QApplication
 from storage.cache import LawDocumentCache
 from storage.recent import RecentSearchManager
 from ui.tabs.resource_search import ResourceSearchTab
+from ui.widgets import SharedStatusBar
 from utils.hwp_export import (
     default_export_name,
     law_export_blocks,
@@ -138,12 +140,21 @@ def test_pinned_title_row_offers_the_hwp_button_for_a_law(qt_app, tmp_path, monk
         title, headline = tab._pinned_headline_parts()
         assert title == "국토기본법"
         assert headline.startswith("[시행 2026. 1. 1.]")
+        bar = SharedStatusBar()
+        tab.use_shared_status(bar)
 
         started = []
 
         class StubSignal:
-            def connect(self, _callback):
-                pass
+            def __init__(self):
+                self.callbacks = []
+
+            def connect(self, callback):
+                self.callbacks.append(callback)
+
+            def emit(self, value=None):
+                for callback in self.callbacks:
+                    callback() if value is None else callback(value)
 
         class StubWorker:
             def __init__(self, law_id, name, date, path):
@@ -155,18 +166,30 @@ def test_pinned_title_row_offers_the_hwp_button_for_a_law(qt_app, tmp_path, monk
 
             def start(self):
                 started.append(self.details)
+                self.progress.emit("다운로드 중")
+                self.succeeded.emit(str(tmp_path / "국토기본법.hwpx"))
+                self.finished.emit()
 
             def deleteLater(self):
                 pass
 
         monkeypatch.setattr("ui.tabs.resource_search.LawHwpxDownloadWorker", StubWorker)
         monkeypatch.setattr(
+            "ui.tabs.resource_search.QStandardPaths",
+            SimpleNamespace(
+                StandardLocation=SimpleNamespace(DownloadLocation=object()),
+                writableLocation=lambda _location: str(tmp_path),
+            ),
+        )
+        monkeypatch.setattr(
             "ui.tabs.resource_search.QFileDialog.getSaveFileName",
-            lambda *_args: (str(tmp_path / "official.hwpx"), ""),
+            lambda *_args: pytest.fail("다운로드 버튼이 저장 위치 창을 열었습니다."),
         )
         tab.hwp_export_button.click()
         assert started == [
-            ("001234", "국토기본법", "20260101", str(tmp_path / "official.hwpx"))
+            ("001234", "국토기본법", "20260101", str(tmp_path))
         ]
+        assert bar.download_button.text() == "다운로드 완료 ▾"
+        assert bar.download_menu.actions()[0].text() == "국토기본법.hwpx"
     finally:
         tab.close()
