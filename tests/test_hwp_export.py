@@ -1,8 +1,4 @@
-"""법령 전문을 한글 문서(HWPX)로 내보내는 기능 회귀 시험.
-
-법제처 OPEN API는 별표ㆍ서식만 원본 파일을 준다. 법령 전문은 이 프로그램이
-직접 만들어 저장한다.
-"""
+"""법령 전문 HWPX 자체 생성 코드와 공식 사이트 저장 버튼 회귀 시험."""
 
 from __future__ import annotations
 
@@ -60,6 +56,7 @@ def test_export_name_drops_characters_a_path_cannot_hold() -> None:
 
 
 def test_saved_file_is_a_hwpx_package_with_the_body(tmp_path) -> None:
+    pytest.importorskip("hwpx", reason="기존 자체 생성 코드의 별도 의존성")
     target = tmp_path / "국토기본법.hwpx"
 
     saved = save_law_hwpx(
@@ -89,7 +86,7 @@ def test_saved_file_is_a_hwpx_package_with_the_body(tmp_path) -> None:
     assert "이 법은 공포한 날부터 시행한다." in body
 
 
-def test_pinned_title_row_offers_the_hwp_button_for_a_law(qt_app, tmp_path) -> None:
+def test_pinned_title_row_offers_the_hwp_button_for_a_law(qt_app, tmp_path, monkeypatch) -> None:
     """법령 본문을 열면 제목 줄 옆에 한글 저장 단추가 함께 뜬다."""
     settings = QSettings(
         str(tmp_path / "export.ini"), QSettings.Format.IniFormat
@@ -135,12 +132,41 @@ def test_pinned_title_row_offers_the_hwp_button_for_a_law(qt_app, tmp_path) -> N
         )
         qt_app.processEvents()
 
-        # 단추는 서식을 더 다듬을 때까지 화면에서 뺐다. 내보내기 기능과
-        # 제목 줄 자체는 그대로 남는다.
-        assert tab.hwp_export_button.isHidden()
-        assert not tab.HWP_EXPORT_BUTTON_ENABLED
+        # 사이트의 전문 HWPX를 받는 버튼이 제목 줄에 표시된다.
+        assert not tab.hwp_export_button.isHidden()
+        assert tab.HWP_EXPORT_BUTTON_ENABLED
         title, headline = tab._pinned_headline_parts()
         assert title == "국토기본법"
         assert headline.startswith("[시행 2026. 1. 1.]")
+
+        started = []
+
+        class StubSignal:
+            def connect(self, _callback):
+                pass
+
+        class StubWorker:
+            def __init__(self, law_id, name, date, path):
+                self.details = (law_id, name, date, path)
+                self.progress = StubSignal()
+                self.succeeded = StubSignal()
+                self.failed = StubSignal()
+                self.finished = StubSignal()
+
+            def start(self):
+                started.append(self.details)
+
+            def deleteLater(self):
+                pass
+
+        monkeypatch.setattr("ui.tabs.resource_search.LawHwpxDownloadWorker", StubWorker)
+        monkeypatch.setattr(
+            "ui.tabs.resource_search.QFileDialog.getSaveFileName",
+            lambda *_args: (str(tmp_path / "official.hwpx"), ""),
+        )
+        tab.hwp_export_button.click()
+        assert started == [
+            ("001234", "국토기본법", "20260101", str(tmp_path / "official.hwpx"))
+        ]
     finally:
         tab.close()

@@ -112,6 +112,7 @@ from workers.search_worker import (
     ResourceApiWorker,
 )
 from workers.download_worker import (
+    LawHwpxDownloadWorker,
     OrdinanceAnnexPreviewWorker,
     PdfDownloadWorker,
 )
@@ -466,10 +467,8 @@ class ResourceSearchTab(QWidget):
     # 좌우 끝까지 이어 붙이므로 이 값은 그 아래 내용에만 쓴다.
     BODY_SIDE_MARGIN = 12
     BODY_TOP_MARGIN = 12
-    # 한글 문서(HWPX) 저장 단추를 제목 줄에 세울지. 내보내기 자체는
-    # utils/hwp_export.py에 그대로 두고 화면에서만 잠시 뺀다. 서식 보완이
-    # 끝나면 이 값을 True로 되돌리면 그대로 다시 뜬다.
-    HWP_EXPORT_BUTTON_ENABLED = False
+    # 국가법령정보센터의 원문 저장 기능으로 전문 HWPX를 받는다.
+    HWP_EXPORT_BUTTON_ENABLED = True
 
     def __init__(
         self,
@@ -1228,8 +1227,7 @@ class ResourceSearchTab(QWidget):
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
         self.pinned_headline.hide()
-        # 법령 전문을 한글 문서로 저장하는 단추. API는 별표ㆍ서식만 원본
-        # 파일을 주므로 전문은 우리가 만들어 준다. 제목 줄 오른쪽에 두어
+        # 사이트 저장 창에서 전문 HWPX를 내려받는다. 제목 줄 오른쪽에 두어
         # 본문을 어디까지 굴려도 같이 따라온다.
         self.hwp_export_button = QToolButton()
         self.hwp_export_button.setObjectName("hwpExportButton")
@@ -1238,11 +1236,12 @@ class ResourceSearchTab(QWidget):
         self.hwp_export_button.setFixedSize(28, 28)
         self.hwp_export_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.hwp_export_button.setToolTip(
-            "이 법령 전문을 한글 문서(HWPX)로 저장합니다."
+            "국가법령정보센터에서 이 법령 전문 HWPX를 내려받습니다."
         )
         self.hwp_export_button.setAccessibleName("한글 문서로 저장")
-        self.hwp_export_button.clicked.connect(self._export_detail_to_hwpx)
+        self.hwp_export_button.clicked.connect(self._download_detail_to_hwpx)
         self.hwp_export_button.hide()
+        self._law_hwpx_download_worker = None
         # 제목 줄과 저장 단추를 한 띠로 묶는다. 바탕을 깔아 두면 본문과
         # 구분되어 상단에 늘 붙어 있는 줄로 읽힌다.
         self.pinned_headline_bar = QFrame()
@@ -12420,9 +12419,11 @@ class ResourceSearchTab(QWidget):
             re.sub(r"<[^>]+>", "", text).replace("&nbsp;", " ")
         )
         self.pinned_headline.show()
-        # 한글 저장은 법령 전문에서만 뜻이 있다. 제목 줄이 뜨는 문서가
-        # 곧 그 대상이다. 지금은 서식을 더 다듬을 때까지 단추를 감춰 둔다.
-        self.hwp_export_button.setVisible(self.HWP_EXPORT_BUTTON_ENABLED)
+        # 조문 하나만 열린 법령 행은 전문 다운로드 대상으로 보이지 않게 한다.
+        state = self._document_states.get(self._active_document_key)
+        row = state.get("row") if isinstance(state, dict) else None
+        is_law = isinstance(row, dict) and row.get("target") == "law"
+        self.hwp_export_button.setVisible(self.HWP_EXPORT_BUTTON_ENABLED and is_law)
         self.pinned_headline_bar.show()
 
     def _pinned_headline_parts(self) -> tuple[str, str]:
@@ -12474,6 +12475,62 @@ class ResourceSearchTab(QWidget):
         self.status_label.setText(
             f"{saved.name} 으로 저장했습니다. 한글에서 열어 .hwp로 다시 저장할 수 있습니다."
         )
+
+    def _download_detail_to_hwpx(self) -> None:
+        """공식 사이트의 파일을 백그라운드로 받아 완성되면 선택 경로에 둔다."""
+        if self._law_hwpx_download_worker is not None:
+            self.status_label.setText("한글 문서를 내려받는 중입니다.")
+            return
+        state = self._document_states.get(self._active_document_key)
+        row = state.get("row") if isinstance(state, dict) else None
+        if not isinstance(row, dict) or row.get("target") != "law":
+            self.status_label.setText("법령 전문을 먼저 열어 주세요.")
+            return
+        law_id = str(row.get("id") or "")
+        title, headline = self._pinned_headline_parts()
+        date_match = re.search(r"\[시행\s+(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})\.", headline)
+        effective_date = (
+            f"{date_match.group(1)}{int(date_match.group(2)):02d}{int(date_match.group(3)):02d}"
+            if date_match else ""
+        )
+        suggested = str(Path.home() / default_export_name(title))
+        path, _selected = QFileDialog.getSaveFileName(
+            self, "국가법령정보센터 한글 문서 내려받기", suggested,
+            "한글 문서 (*.hwpx)",
+        )
+        if not path:
+            return
+        if not path.lower().endswith(".hwpx"):
+            path = f"{path}.hwpx"
+        document_key = self._active_document_key
+        worker = LawHwpxDownloadWorker(law_id, title, effective_date, path)
+        self._law_hwpx_download_worker = worker
+        self.hwp_export_button.setEnabled(False)
+
+        def show_progress(message: str) -> None:
+            if self._active_document_key == document_key:
+                self.status_label.setText(message)
+
+        def downloaded(saved_path: str) -> None:
+            if self._active_document_key == document_key:
+                self.status_label.setText(f"{Path(saved_path).name} 저장 완료")
+
+        def failed(message: str) -> None:
+            QMessageBox.warning(self, "한글 문서 다운로드 실패", message)
+            if self._active_document_key == document_key:
+                self.status_label.setText("한글 문서 다운로드 실패")
+
+        def finished() -> None:
+            self._law_hwpx_download_worker = None
+            self.hwp_export_button.setEnabled(True)
+            worker.deleteLater()
+
+        worker.progress.connect(show_progress)
+        worker.succeeded.connect(downloaded)
+        worker.failed.connect(failed)
+        worker.finished.connect(finished)
+        self.status_label.setText("국가법령정보센터 한글 문서 준비 중")
+        worker.start()
 
     @classmethod
     def _law_document_headline(cls, payload: object) -> tuple[str, str]:

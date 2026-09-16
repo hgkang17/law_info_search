@@ -114,12 +114,26 @@ LICENSE_NOTICES = (
         "holder": "python-hwpx 기여자",
         "license": "Apache License 2.0",
         "note": (
-            "법령 전문을 한글 문서(HWPX)로 내보낼 때 씁니다. 법제처 OPEN "
-            "API는 별표·서식만 원본 파일을 주므로 전문은 이 라이브러리로 "
-            "만들어 저장합니다."
+            "기존 법령 전문 HWPX 자체 생성 코드에서 사용합니다. 현재 화면의 "
+            "한글 저장 버튼은 국가법령정보센터의 파일을 내려받습니다."
         ),
         "links": (
             ("소스", "https://github.com/airmang/python-hwpx"),
+            ("라이선스 전문", "https://www.apache.org/licenses/LICENSE-2.0"),
+        ),
+    },
+    {
+        "role": "법령 문서 다운로드",
+        "name": "Playwright for Python",
+        "holder": "Copyright (c) Microsoft Corporation",
+        "license": "Apache License 2.0",
+        "note": (
+            "국가법령정보센터의 저장 창을 백그라운드로 제어하여 법령 전문 "
+            "HWPX 파일을 내려받습니다. 라이브러리와 Node 드라이버는 실행 "
+            "파일에 포함하고, 브라우저가 없으면 사용자 프로필에 설치합니다."
+        ),
+        "links": (
+            ("소스", "https://github.com/microsoft/playwright-python"),
             ("라이선스 전문", "https://www.apache.org/licenses/LICENSE-2.0"),
         ),
     },

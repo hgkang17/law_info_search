@@ -19,9 +19,13 @@ APP_NAME = "국가법령정보 통합검색"
 # 한글 문서 저장(HWPX)은 hwpx 패키지가 들고 있는 빈 문서 뼈대
 # (hwpx/data/Skeleton.hwpx)를 읽어 새 문서를 만든다. 이 파일이 번들에
 # 빠지면 개발 중에는 되고 EXE에서만 저장이 실패한다.
-from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_all, collect_data_files
 
-datas = collect_data_files("hwpx") + [
+# Playwright는 Node 드라이버와 JS 패키지를 함께 필요로 한다. 브라우저는
+# 사용자 Chrome/Edge를 먼저 쓰고, 없으면 최초 사용 시 내려받는다.
+playwright_datas, playwright_binaries, playwright_hiddenimports = collect_all("playwright")
+
+datas = collect_data_files("hwpx") + playwright_datas + [
     ("molit_law_logo.svg", "."),
     ("home_search.gif", "."),
     ("업데이트내역.md", "."),
@@ -33,6 +37,7 @@ datas = collect_data_files("hwpx") + [
     ("licenses/LICENSE.kordoc-MIT.txt", "licenses"),
     ("licenses/LICENSE.korean-law-mcp-MIT.txt", "licenses"),
     ("licenses/LICENSE.project-MIT.txt", "licenses"),
+    ("licenses/LICENSE.Playwright-Apache-2.0.txt", "licenses"),
     # 인증키 발급 안내(물음표 단추). HTML과 그림이 같은 폴더에 있어야
     # 브라우저가 그림을 찾는다.
     ("메뉴얼/API인증키 발급안내.html", "메뉴얼"),
@@ -73,7 +78,7 @@ datas = collect_data_files("hwpx") + [
 analysis = Analysis(
     ["main.py"],
     pathex=[],
-    binaries=[],
+    binaries=playwright_binaries,
     datas=datas,
     # SVG 아이콘과 별표·서식 PDF 미리보기는 실행 중에야 쓰이므로
     # PyInstaller가 정적 분석만으로는 놓칠 수 있다.
@@ -91,6 +96,7 @@ analysis = Analysis(
         # 한글 문서 저장. 화면에서 단추를 누를 때에야 import 하므로
         # 정적 분석이 놓친다.
         "hwpx",
+        *playwright_hiddenimports,
     ],
     hookspath=[],
     hooksconfig={},
