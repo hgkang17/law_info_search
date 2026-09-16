@@ -99,6 +99,9 @@ FAVORITE_PLUS_ICON_PATH = APP_DIR / "favorite_plus.svg"
 ANNEX_HWP_ICON_PATH = APP_DIR / "annex_hwp.svg"
 
 
+DOWNLOAD_ICON_PATH = APP_DIR / "download.svg"
+
+
 ANNEX_PDF_ICON_PATH = APP_DIR / "annex_pdf.svg"
 
 

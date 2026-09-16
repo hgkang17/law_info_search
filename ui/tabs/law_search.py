@@ -368,6 +368,7 @@ class LawSearchTab(QWidget):
         detail_layout.setSpacing(10)
 
         detail_head = QHBoxLayout()
+        self.detail_head_layout = detail_head
         detail_head.setContentsMargins(0, 0, 0, 0)
         detail_head.setSpacing(5)
         detail_controls = build_detail_header_controls(

@@ -501,11 +501,11 @@ class LawSearchWindow(QMainWindow):
         # 남는 자리는 모두 오른쪽에 몰아 준다. 이 여백이 없으면 탭과 단추가
         # 띠 가운데로 모여 왼쪽 끝에서 시작하지 않았다.
         self.open_documents_layout.addStretch(0)
-        self.open_document_api_refresh_button = QPushButton("API\n갱신")
+        self.open_document_api_refresh_button = QPushButton("API 갱신")
         self.open_document_api_refresh_button.setObjectName(
             "openDocumentApiRefresh"
         )
-        self.open_document_api_refresh_button.setFixedHeight(30)
+        self.open_document_api_refresh_button.setFixedHeight(28)
         self.open_document_api_refresh_button.setCursor(
             Qt.CursorShape.PointingHandCursor
         )
@@ -515,10 +515,6 @@ class LawSearchWindow(QMainWindow):
         self.open_document_api_refresh_button.setEnabled(False)
         self.open_document_api_refresh_button.clicked.connect(
             self._refresh_open_document_from_api
-        )
-        self.open_documents_layout.addWidget(
-            self.open_document_api_refresh_button, 0,
-            Qt.AlignmentFlag.AlignVCenter,
         )
         # 창 제목 표시줄에 이미 프로그램 이름이 있어 머리글에서는 로고만
         # 남긴다. 이름 라벨이 차지하던 자리는 열린 본문 띠가 넘겨받는다.
@@ -649,6 +645,10 @@ class LawSearchWindow(QMainWindow):
             self.tabs,
             settings=self.settings,
         )
+        self.resource_tab.set_pinned_api_refresh_button(
+            self.open_document_api_refresh_button
+        )
+        self._api_refresh_layout = self.resource_tab.pinned_headline_row
         self.viewed_laws_tab = ViewedLawsTab(self.law_cache, self.tabs)
         self.viewed_laws_tab.openRequested.connect(self._open_viewed_law)
         self.viewed_laws_tab.allCachesDeleted.connect(
@@ -1182,6 +1182,18 @@ class LawSearchWindow(QMainWindow):
 
     def _sync_open_document_api_refresh_button(self) -> None:
         refreshable = self._refreshable_open_document()
+        target_tab = refreshable[0] if refreshable else self.resource_tab
+        if target_tab in (self.central_tab, self.expc_tab, self.prec_tab):
+            target_layout = target_tab.detail_head_layout
+            target_parent = target_tab.detail_card
+        else:
+            target_layout = self.resource_tab.pinned_headline_row
+            target_parent = self.resource_tab.pinned_headline_bar
+        if target_layout is not self._api_refresh_layout:
+            self._api_refresh_layout.removeWidget(self.open_document_api_refresh_button)
+            self.open_document_api_refresh_button.setParent(target_parent)
+            target_layout.addWidget(self.open_document_api_refresh_button)
+            self._api_refresh_layout = target_layout
         busy = bool(
             refreshable and getattr(refreshable[0], "worker", None)
             and refreshable[0].worker.isRunning()

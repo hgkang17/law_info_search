@@ -15,6 +15,7 @@ from ui.assets import (
     ANNEX_COLLAPSE_ICON_PATH,
     ANNEX_EXPAND_ICON_PATH,
     ANNEX_HWP_ICON_PATH,
+    DOWNLOAD_ICON_PATH,
     ANNEX_PDF_ICON_PATH,
     SEARCH_API_REFRESH_TOOLTIP,
     icon_data_uri,
@@ -849,6 +850,13 @@ class ResourceSearchTab(QWidget):
         self._progress_opacity = line
         self._shared_status_bar = bar
 
+    def set_pinned_api_refresh_button(self, button: QWidget) -> None:
+        """API 갱신 단추를 본문 제목 고정 바의 맨 오른쪽에 둔다."""
+        button.setParent(self.pinned_headline_bar)
+        self.pinned_headline_row.addWidget(
+            button, 0, Qt.AlignmentFlag.AlignVCenter
+        )
+
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
         # 위아래 여백을 두지 않는다. 왼쪽 메뉴 카드는 이 탭 바깥에 있어
@@ -1233,7 +1241,7 @@ class ResourceSearchTab(QWidget):
         # 본문을 어디까지 굴려도 같이 따라온다.
         self.hwp_export_button = QToolButton()
         self.hwp_export_button.setObjectName("hwpExportButton")
-        self.hwp_export_button.setIcon(QIcon(str(ANNEX_HWP_ICON_PATH)))
+        self.hwp_export_button.setIcon(QIcon(str(DOWNLOAD_ICON_PATH)))
         self.hwp_export_button.setIconSize(QSize(18, 18))
         self.hwp_export_button.setFixedSize(28, 28)
         self.hwp_export_button.setCursor(Qt.CursorShape.PointingHandCursor)

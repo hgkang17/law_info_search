@@ -131,6 +131,10 @@ def _fake_browser(monkeypatch, payload: bytes, popup=False) -> _Browser:
 
     monkeypatch.setattr(site, "_load_playwright", lambda _progress: playwright_context)
     monkeypatch.setattr(site, "_launch_browser", lambda *_args: browser)
+    monkeypatch.setattr(
+        site, "_download_hwpx_direct",
+        lambda *_args: (_ for _ in ()).throw(site._FastDownloadUnavailable("fallback")),
+    )
     return browser
 
 
@@ -171,6 +175,74 @@ def test_download_started_in_new_window_is_saved(tmp_path, monkeypatch):
     )
 
     assert saved.read_bytes() == _hwpx_bytes()
+
+
+def test_fast_post_download_skips_browser_and_includes_current_appendix(tmp_path, monkeypatch):
+    page_html = b"""
+        <input id="lsiSeq" value="269955">
+        <input id="lsNm" value="\xed\x96\x89\xec\xa0\x95\xea\xb8\xb0\xeb\xb3\xb8\xeb\xb2\x95">
+        <input id="lsBdyChrCls" value="010202">
+        <script>lsPopViewAll2('269955', '', '', '20260319', '', '', '010202', '0');</script>
+    """
+    posted = []
+
+    class Response:
+        def __init__(self, content=b"", *, items=None, headers=None):
+            self.content = content
+            self._items = items
+            self.headers = headers or {}
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self._items
+
+        def iter_content(self, chunk_size):
+            yield self.content
+
+    class Session:
+        def __init__(self):
+            self.headers = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def get(self, *_args, **_kwargs):
+            return Response(page_html)
+
+        def post(self, url, **kwargs):
+            posted.append((url, kwargs))
+            if url.endswith("joListRInc.do"):
+                return Response(items=[
+                    {"cls": "arSeq", "joNo": 11517575, "joChgYn": "N"},
+                    {"cls": "arSeq", "joNo": 11517581, "joChgYn": "Y"},
+                ])
+            return Response(
+                _hwpx_bytes(),
+                headers={
+                    "Content-Disposition":
+                    'attachment; filename="행정기본법(법률)(제20824호)(20260319).hwpx"'
+                },
+            )
+
+    monkeypatch.setattr(site.requests, "Session", Session)
+    monkeypatch.setattr(
+        site, "_load_playwright", lambda *_args: pytest.fail("빠른 경로가 브라우저를 열었습니다.")
+    )
+
+    saved = site.download_official_law_hwpx(
+        "014041", "행정기본법", "20260319", tmp_path
+    )
+
+    assert saved.read_bytes() == _hwpx_bytes()
+    save_data = posted[-1][1]["data"]
+    assert save_data["joAllCheck"] == "Y"
+    assert save_data["arSeqs"] == ",,11517581#"
+    assert save_data["arIds"] == "check_outPut_11517581"
 
 
 def test_mislabeled_or_corrupt_file_preserves_existing_document(tmp_path, monkeypatch):

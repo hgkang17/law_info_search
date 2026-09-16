@@ -12,9 +12,13 @@ import tempfile
 import time
 import zipfile
 from collections.abc import Callable
+from urllib.parse import unquote
+
+import requests
 
 PLAYWRIGHT_VERSION = "1.60.0"
 LAW_SITE_URL = "https://www.law.go.kr/lsInfoP.do"
+LAW_SITE_ORIGIN = "https://www.law.go.kr"
 _REQUIRED_HWPX_MEMBERS = {
     "mimetype",
     "version.xml",
@@ -23,6 +27,10 @@ _REQUIRED_HWPX_MEMBERS = {
     "Contents/content.hpf",
     "META-INF/container.xml",
 }
+
+
+class _FastDownloadUnavailable(RuntimeError):
+    """사이트의 빠른 POST 저장 경로를 쓸 수 없어 브라우저 대체가 필요하다."""
 
 
 def _browser_candidates() -> list[Path]:
@@ -136,6 +144,195 @@ def _unique_download_path(directory: Path, suggested_filename: str) -> Path:
     return candidate
 
 
+def _site_input_value(page_html: str, element_id: str) -> str:
+    match = re.search(
+        rf'<input\b(?=[^>]*\bid=["\']{re.escape(element_id)}["\'])'
+        rf'(?=[^>]*\bvalue=["\']([^"\']*)["\'])[^>]*>',
+        page_html,
+        re.IGNORECASE,
+    )
+    if not match:
+        raise _FastDownloadUnavailable(f"사이트 응답에서 {element_id} 값을 찾지 못했습니다.")
+    return match.group(1)
+
+
+def _site_effective_date(page_html: str, law_sequence: str) -> str:
+    match = re.search(
+        rf"lsPopViewAll2\(\s*'{re.escape(law_sequence)}'\s*,\s*'[^']*'\s*,"
+        rf"\s*'[^']*'\s*,\s*'(\d{{8}})'",
+        page_html,
+    )
+    if not match:
+        raise _FastDownloadUnavailable("사이트 응답에서 현행 시행일을 찾지 못했습니다.")
+    return match.group(1)
+
+
+def _response_filename(content_disposition: str) -> str:
+    extended = re.search(r"filename\*=UTF-8''([^;]+)", content_disposition, re.IGNORECASE)
+    if extended:
+        filename = unquote(extended.group(1))
+    else:
+        quoted = re.search(r'filename="([^"]+)"', content_disposition, re.IGNORECASE)
+        plain = re.search(r"filename=([^;]+)", content_disposition, re.IGNORECASE)
+        filename = (quoted or plain).group(1).strip(" \"") if (quoted or plain) else ""
+        try:
+            filename = filename.encode("latin-1").decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            pass
+    filename = Path(filename.replace("\\", "/")).name.strip()
+    if not filename:
+        raise _FastDownloadUnavailable("사이트가 다운로드 파일명을 보내지 않았습니다.")
+    if not filename.lower().endswith(".hwpx"):
+        raise _FastDownloadUnavailable("사이트가 HWPX 대신 다른 파일을 보냈습니다.")
+    return filename
+
+
+def _download_hwpx_direct(
+    law_id: str,
+    title: str,
+    effective_date: str,
+    directory: Path,
+    destination_path: Path,
+    is_directory: bool,
+    progress: Callable[[str], None],
+) -> Path:
+    """화면 렌더링 없이 사이트의 HWPX POST 저장 요청을 직접 실행한다."""
+    progress("한글 문서 빠른 다운로드 연결 중")
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 Chrome/140 Safari/537.36"
+        ),
+        "Referer": f"{LAW_SITE_URL}?lsId={law_id}&ancYnChk=0",
+        "X-Requested-With": "XMLHttpRequest",
+    }
+    try:
+        with requests.Session() as session:
+            session.headers.update(headers)
+            page_response = session.get(
+                LAW_SITE_URL,
+                params={"lsId": law_id, "ancYnChk": "0"},
+                timeout=15,
+            )
+            page_response.raise_for_status()
+            page_html = page_response.content.decode("utf-8")
+            law_sequence = _site_input_value(page_html, "lsiSeq")
+            site_title = _site_input_value(page_html, "lsNm")
+            character_class = _site_input_value(page_html, "lsBdyChrCls")
+            site_date = _site_effective_date(page_html, law_sequence)
+            if title and re.sub(r"\s+", "", title) not in re.sub(r"\s+", "", site_title):
+                raise ValueError(
+                    f"국가법령정보센터에 열린 법령명이 화면과 다릅니다. (사이트: {site_title})"
+                )
+            expected_date = re.sub(r"\D", "", effective_date or "")
+            if expected_date and expected_date != site_date:
+                raise ValueError("사이트 다운로드의 시행일이 현재 화면과 다릅니다.")
+
+            appendix_response = session.post(
+                f"{LAW_SITE_ORIGIN}/joListRInc.do",
+                params={
+                    "lsiSeq": law_sequence,
+                    "mode": "9",
+                    "chapNo": "1",
+                    "nwYn": "3",
+                    "efYd": site_date,
+                    "gubun": "save",
+                    "ancYnChk": "0",
+                    "timeStamp": int(time.time() * 1000),
+                },
+                timeout=15,
+            )
+            appendix_response.raise_for_status()
+            appendix_items = appendix_response.json()
+            if not isinstance(appendix_items, list):
+                raise _FastDownloadUnavailable("사이트의 부칙 목록 형식이 바뀌었습니다.")
+            appendix_sequences = list(dict.fromkeys(
+                str(item.get("joNo") or "")
+                for item in appendix_items
+                if isinstance(item, dict)
+                and item.get("cls") == "arSeq"
+                and item.get("joChgYn") == "Y"
+                and item.get("joNo")
+            ))
+            if appendix_items and not appendix_sequences:
+                raise _FastDownloadUnavailable(
+                    "사이트의 현행 부칙을 구분하지 못했습니다."
+                )
+            appendix_values = ",," + ",".join(
+                f"{sequence}#" for sequence in appendix_sequences
+            ) if appendix_sequences else ","
+            save_params = {
+                "trSeq": law_sequence,
+                "efDvPop": "",
+                "nwJoYnInfo": "",
+                "efGubun": "",
+                "ancYnChk": "0",
+            }
+            if appendix_sequences:
+                save_params["lastCheck"] = "Y"
+            response = session.post(
+                f"{LAW_SITE_ORIGIN}/lsHwpxSave.do",
+                params=save_params,
+                data={
+                    "lsiSeq": law_sequence,
+                    "chrClsCd": character_class,
+                    "outPutTitleYn": "",
+                    "joAllCheck": "Y",
+                    "onlyEfYd": "",
+                    "efLsGubun": "",
+                    "efDvPop": "",
+                    "nwJoYnInfo": "",
+                    "arSeqs": appendix_values,
+                    "mokChaChk": "N",
+                    "bylChaChk": "N",
+                    "arIds": ",".join(
+                        f"check_outPut_{sequence}" for sequence in appendix_sequences
+                    ),
+                    "bylAllSeq": "",
+                    "efYd": site_date,
+                    "efGubun": "",
+                    "test1": "on",
+                    "joEfOutPutYn": "on",
+                    "coverDpYn": "1",
+                    "lsNmFont": "goThic",
+                    "lsJoSize": "10",
+                    "lsJoFont": "smyoungjo",
+                    "spaceCls": "2",
+                    "fileType": "hwpx",
+                },
+                timeout=30,
+                stream=True,
+            )
+            response.raise_for_status()
+            suggested_filename = _response_filename(
+                response.headers.get("Content-Disposition", "")
+            )
+            if expected_date and f"({expected_date})" not in suggested_filename:
+                raise ValueError("사이트 다운로드의 시행일이 현재 화면과 다릅니다.")
+            target = (
+                _unique_download_path(directory, suggested_filename)
+                if is_directory else destination_path
+            )
+            with tempfile.NamedTemporaryFile(
+                prefix=".law-hwpx-", suffix=".part", dir=directory, delete=False
+            ) as temporary:
+                partial = Path(temporary.name)
+                for chunk in response.iter_content(chunk_size=64 * 1024):
+                    if chunk:
+                        temporary.write(chunk)
+            try:
+                _verify_hwpx(partial)
+                partial.replace(target)
+            except ValueError as exc:
+                raise _FastDownloadUnavailable(str(exc)) from exc
+            finally:
+                partial.unlink(missing_ok=True)
+    except requests.RequestException as exc:
+        raise _FastDownloadUnavailable(str(exc)) from exc
+    progress("한글 문서 저장 완료")
+    return target
+
+
 def _wait_for_site_download(page, context, layer):
     """저장 결과가 현재 페이지나 새 창에서 생겨도 다운로드를 잡는다."""
     downloads = []
@@ -188,6 +385,15 @@ def download_official_law_hwpx(
         raise ValueError("저장 경로는 다운로드 폴더 또는 .hwpx 파일이어야 합니다.")
     directory = destination_path if is_directory else destination_path.parent
     directory.mkdir(parents=True, exist_ok=True)
+    try:
+        return _download_hwpx_direct(
+            law_id, title, effective_date, directory, destination_path,
+            is_directory, progress,
+        )
+    except _FastDownloadUnavailable:
+        # 사이트가 POST 형식을 바꾸거나 직접 연결을 일시 차단하면, 이미
+        # 검증한 실제 저장 창 조작으로 자동 복구한다.
+        progress("빠른 다운로드 연결 실패 · 브라우저로 다시 시도 중")
     sync_playwright = _load_playwright(progress)
     with tempfile.TemporaryDirectory(prefix="law-site-download-") as browser_temp:
         with sync_playwright() as playwright:

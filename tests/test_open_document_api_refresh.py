@@ -1,4 +1,4 @@
-"""상단 열린 본문 띠의 API 갱신은 선택한 본문 저장본을 건너뛴다."""
+"""본문 제목 고정 바의 API 갱신은 선택한 본문 저장본을 건너뛴다."""
 
 from __future__ import annotations
 
@@ -62,9 +62,13 @@ def test_header_refresh_uses_active_document_and_forces_api(
             ),
         )
 
-        assert window.open_documents_layout.itemAt(
-            window.open_documents_layout.count() - 1
-        ).widget() is window.open_document_api_refresh_button
+        button_row = (
+            window.resource_tab.pinned_headline_row
+            if source == "resource" else tab.detail_head_layout
+        )
+        assert button_row.itemAt(button_row.count() - 1).widget() is (
+            window.open_document_api_refresh_button
+        )
         assert window.open_document_api_refresh_button.isEnabled()
         window.open_document_api_refresh_button.click()
 
