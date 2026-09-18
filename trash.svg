@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
+  <!-- 다운로드 목록에서 받은 파일을 휴지통으로 보내는 표시.
+       선은 얇게 두어 키운 뒤에도 묵직해 보이지 않게 한다. -->
+  <g fill="none" stroke="#5b6675" stroke-width="0.75"
+     stroke-linecap="round" stroke-linejoin="round">
+    <path d="M2.6 4.3h10.8"/>
+    <path d="M6.3 4.3V3.1c0-.31.25-.56.56-.56h2.28c.31 0 .56.25.56.56v1.2"/>
+    <path d="M4 4.3l.58 8.5c.03.38.34.66.72.66h5.4c.38 0 .69-.28.72-.66L12 4.3"/>
+    <path d="M6.6 6.6v4.4"/>
+    <path d="M9.4 6.6v4.4"/>
+  </g>
+</svg>

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
+  <!-- 다운로드 폴더 열기 표시. 다른 아이콘처럼 얇은 선으로만 그린다. -->
+  <path d="M1.75 12.75V3.9c0-.36.29-.65.65-.65h3.3c.2 0 .39.09.51.25l.92 1.15c.12.16.31.25.51.25h4.06c.36 0 .65.29.65.65v1.2"
+        fill="none" stroke="#5b6675" stroke-width="1.1"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M3.3 12.75h9.2c.3 0 .56-.2.63-.49l1-4a.65.65 0 0 0-.63-.81H4.53c-.3 0-.56.2-.63.49l-1 4a.65.65 0 0 0 .63.81Z"
+        fill="none" stroke="#5b6675" stroke-width="1.1"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -15,7 +15,10 @@ from ui.assets import (
     ANNEX_COLLAPSE_ICON_PATH,
     ANNEX_EXPAND_ICON_PATH,
     ANNEX_HWP_ICON_PATH,
+    CHECK_ICON_PATH,
     DOWNLOAD_ICON_PATH,
+    FOLDER_OPEN_ICON_PATH,
+    TRASH_ICON_PATH,
     ANNEX_PDF_ICON_PATH,
     SEARCH_API_REFRESH_TOOLTIP,
     icon_data_uri,
@@ -38,6 +41,7 @@ from ui.theme import (
     user_format_color,
 )
 from ui.widgets import (
+    DownloadFileRow,
     CenteredCheckDelegate,
     THREE_STAGE_BUTTON_WIDTH,
     DETAIL_DOCUMENT_MARGIN,
@@ -113,6 +117,7 @@ from workers.search_worker import (
     ResourceApiWorker,
 )
 from workers.download_worker import (
+    AnnexFileDownloadWorker,
     LawHwpxDownloadWorker,
     OrdinanceAnnexPreviewWorker,
     PdfDownloadWorker,
@@ -137,7 +142,7 @@ from utils.annex_notation import (
     row_matches_annex_hint,
 )
 from utils.annex_parse import parse_annex_bytes
-from utils.law_download import download_law_file
+from utils.law_download import delete_downloaded_file, download_law_file
 from utils.constants import (
     DEFAULT_DETAIL_FONT_POINT,
     DEFAULT_POPUP_FONT_POINT,
@@ -204,7 +209,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtPdf import QPdfDocument
 from PySide6.QtGui import QBrush, QColor, QCursor, QDesktopServices, QFont, QIcon, QKeySequence, QShortcut, QTextCharFormat, QTextCursor, QTextDocument, QTextFormat
-from PySide6.QtWidgets import QAbstractItemView, QApplication, QDialog, QFileDialog, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMenu, QMessageBox, QProgressBar, QPushButton, QSizePolicy, QSplitter, QStackedWidget, QTabBar, QTableWidget, QTableWidgetItem, QTextEdit, QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QApplication, QDialog, QFileDialog, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMenu, QMessageBox, QProgressBar, QPushButton, QSizePolicy, QSplitter, QStackedWidget, QTabBar, QTableWidget, QTableWidgetItem, QTextEdit, QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget, QWidgetAction
 from datetime import datetime
 from html import escape, unescape
 from pathlib import Path
@@ -461,7 +466,18 @@ class ResourceSearchTab(QWidget):
     # 조보다 앞에 있는 것처럼 보이므로, 별 크기와 틈만큼만 자리를 낸다.
     _ARTICLE_FAVORITE_SIZE = 24
     _ARTICLE_FAVORITE_GAP = 2
-    _ARTICLE_FAVORITE_HEADING_MARGIN = 22.0
+    # 별 오른쪽에 조문 선택 상자를 놓는다. 상자는 본문 글자(굴림 9.5pt,
+    # 대략 13px)와 같은 높이로 두어야 조문 제목 옆에서 튀지 않는다.
+    _ARTICLE_CHECKBOX_SIZE = 13
+    # 상자와 제N조 글자 사이 틈. 별과 상자 사이(2px)보다 넉넉히 두어야
+    # 상자가 글자에 붙어 보이지 않는다.
+    _ARTICLE_CHECKBOX_TEXT_GAP = 6
+    # 왼쪽 여백은 별(24)+틈(2)+상자(13)+틈(6)=45px에서 본문 문서가 이미
+    # 두고 있는 DETAIL_DOCUMENT_MARGIN(12px)을 뺀 만큼이면 된다. 그러면
+    # 별이 본문 왼쪽 끝(1px)에 붙는다. 이 값은 formatting.py의
+    # ``ARTICLE_BODY_LEFT_MARGIN``과 **반드시 같아야** 한다. 한쪽만 바꾸면
+    # 항(①)이 조문 제목보다 앞으로 튀어나온다.
+    _ARTICLE_FAVORITE_HEADING_MARGIN = 34.0
     # 결과표에서 남는 폭을 흡수하는 열(명칭). 글자가 가장 긴 열이라
     # 여기가 늘어나야 표가 넓어져도 오른쪽에 빈 바탕이 남지 않는다.
     NAME_COLUMN = 3
@@ -469,7 +485,7 @@ class ResourceSearchTab(QWidget):
     # 좌우 끝까지 이어 붙이므로 이 값은 그 아래 내용에만 쓴다.
     BODY_SIDE_MARGIN = 12
     BODY_TOP_MARGIN = 12
-    # 국가법령정보센터의 원문 저장 기능으로 전문 HWPX를 받는다.
+    # 국가법령정보센터의 원문 저장 기능으로 전문 한글 문서(HWP)를 받는다.
     HWP_EXPORT_BUTTON_ENABLED = True
 
     def __init__(
@@ -557,6 +573,10 @@ class ResourceSearchTab(QWidget):
         # 3단비교 단추와 같은 조문 앵커를 쓰지만, 비교 자료가 없어도 모든
         # 조문에 보여야 하므로 별도 목록으로 관리한다.
         self._article_favorite_buttons: list[QPushButton] = []
+        # 별 오른쪽의 조문 선택 상자와, 지금 문서에서 체크해 둔 조 번호.
+        # 체크한 것이 하나도 없으면 다운로드는 전문을 받는다.
+        self._article_checkboxes: list[QToolButton] = []
+        self._checked_article_jos: set[str] = set()
         self._three_stage_anchor_positions: dict[str, int] = {}
         self._three_stage_position_pending = False
         self._pending_three_stage_link_request: dict[str, str] | None = None
@@ -1237,8 +1257,8 @@ class ResourceSearchTab(QWidget):
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
         self.pinned_headline.hide()
-        # 사이트 저장 창에서 전문 HWPX를 내려받는다. 제목 줄 오른쪽에 두어
-        # 본문을 어디까지 굴려도 같이 따라온다.
+        # 사이트 저장 창에서 전문 한글 문서(HWP)를 내려받는다. 제목 줄
+        # 오른쪽에 두어 본문을 어디까지 굴려도 같이 따라온다.
         self.hwp_export_button = QToolButton()
         self.hwp_export_button.setObjectName("hwpExportButton")
         self.hwp_export_button.setIcon(QIcon(str(DOWNLOAD_ICON_PATH)))
@@ -1246,12 +1266,26 @@ class ResourceSearchTab(QWidget):
         self.hwp_export_button.setFixedSize(28, 28)
         self.hwp_export_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.hwp_export_button.setToolTip(
-            "국가법령정보센터에서 이 법령 전문 HWPX를 다운로드 폴더에 내려받습니다."
+            "국가법령정보센터에서 이 전문 한글 문서를 다운로드 폴더에 내려받습니다."
         )
         self.hwp_export_button.setAccessibleName("한글 문서 다운로드")
         self.hwp_export_button.clicked.connect(self._download_detail_to_hwpx)
         self.hwp_export_button.hide()
+        # 브라우저처럼 다운로드 단추 바로 아래에 펴는 받은 파일 목록.
+        # 하단 상태줄에 "다운로드 완료"를 띄우는 대신 여기에 보여 준다.
+        self._completed_downloads: list[Path] = []
+        self._download_menu = QMenu(self)
+        self._download_menu.setObjectName("articleDownloadMenu")
+        # 받은 파일 목록을 펴는 단추. 창 머리글(API 설정 왼쪽)에 서며,
+        # 본문의 다운로드 단추와 갈라 두어야 "받아 둔 파일을 열려다가
+        # 또 받는" 일이 없다. 창 쪽에서 set_download_list_button으로 준다.
+        self._download_list_button: QToolButton | None = None
         self._law_hwpx_download_worker = None
+        # 별표ㆍ서식 파일 받기. 여러 개를 잇달아 누를 수 있으므로 목록으로
+        # 붙들어 둔다(파이썬이 먼저 거둬 가면 스레드가 끊긴다).
+        self._annex_file_workers: list[AnnexFileDownloadWorker] = []
+        # 목록에서 지운 파일. 브라우저처럼 줄을 그어 남겨 둔다.
+        self._removed_downloads: set[Path] = set()
         # 제목 줄과 저장 단추를 한 띠로 묶는다. 바탕을 깔아 두면 본문과
         # 구분되어 상단에 늘 붙어 있는 줄로 읽힌다.
         self.pinned_headline_bar = QFrame()
@@ -1867,6 +1901,8 @@ class ResourceSearchTab(QWidget):
             "memos": [],
             "base_foregrounds": [],
             "three_stage_articles": [],
+            # 내려받으려고 체크해 둔 조 번호. 탭을 다녀와도 그대로 둔다.
+            "checked_article_jos": [],
             # 별표 목록은 화면 하나가 아니라 탭마다 다르다. 함께 저장해
             # 두지 않으면 다른 탭을 다녀온 뒤 별표를 눌러도 반응이 없다.
             "annex_entries": [],
@@ -2072,6 +2108,7 @@ class ResourceSearchTab(QWidget):
                     dict(article)
                     for article in self._current_three_stage_articles
                 ],
+                "checked_article_jos": sorted(self._checked_article_jos),
                 "render_highlight_terms": list(self.highlight_terms),
                 "annex_entries": [
                     dict(entry) for entry in self._annex_section_entries
@@ -2305,6 +2342,7 @@ class ResourceSearchTab(QWidget):
                 dict(article)
                 for article in self._current_three_stage_articles
             ]
+            state["checked_article_jos"] = sorted(self._checked_article_jos)
         finally:
             self._restoring_document = False
             # 화면 갱신을 다시 열기 전에 문서 레이아웃을 지금 당장
@@ -3233,11 +3271,13 @@ class ResourceSearchTab(QWidget):
         for button in (
             *self._three_stage_buttons,
             *self._article_favorite_buttons,
+            *self._article_checkboxes,
         ):
             button.hide()
             button.deleteLater()
         self._three_stage_buttons = []
         self._article_favorite_buttons = []
+        self._article_checkboxes = []
         self._three_stage_anchor_positions = {}
 
     def _set_three_stage_articles(
@@ -3245,6 +3285,17 @@ class ResourceSearchTab(QWidget):
     ) -> None:
         """현재 법령 조문의 3단비교 버튼과 본문 내 하위법령 링크를 구성."""
         self._clear_three_stage_buttons()
+        # 체크해 둔 조문은 문서마다 따로 기억한다. 새 문서를 그릴 때는
+        # 저장해 둔 것이 없으므로 자연히 빈 값이 되어 전문을 받는다.
+        saved_state = self._document_states.get(self._active_document_key)
+        self._checked_article_jos = {
+            str(jo)
+            for jo in (
+                saved_state.get("checked_article_jos") or []
+                if isinstance(saved_state, dict)
+                else []
+            )
+        }
         self._current_three_stage_articles = [
             {
                 "anchor": str(article.get("anchor") or ""),
@@ -3252,6 +3303,7 @@ class ResourceSearchTab(QWidget):
                 "jo": str(article.get("jo") or ""),
                 "law_id": str(article.get("law_id") or ""),
                 "law_name": str(article.get("law_name") or ""),
+                "target": str(article.get("target") or "law"),
                 "subordinate_links": [
                     dict(link)
                     for link in article.get("subordinate_links", [])
@@ -3259,7 +3311,13 @@ class ResourceSearchTab(QWidget):
                     and link.get("href")
                     and link.get("text")
                 ],
-                "comparison_available": article.get("comparison_available"),
+                # 3단비교는 법률·시행령·시행규칙이 짝을 이루는 법령에만
+                # 있다. 행정규칙·자치법규에서는 단추를 내내 숨긴다.
+                "comparison_available": (
+                    article.get("comparison_available")
+                    if str(article.get("target") or "law") == "law"
+                    else False
+                ),
             }
             for article in articles
             if isinstance(article, dict)
@@ -3277,6 +3335,7 @@ class ResourceSearchTab(QWidget):
 
         viewport = self.detail_view.viewport()
         star_size = self._ARTICLE_FAVORITE_SIZE
+        checkbox_size = self._ARTICLE_CHECKBOX_SIZE
         for article in self._current_three_stage_articles:
             favorite_button = QPushButton(viewport)
             favorite_button.setObjectName("articleFavoriteButton")
@@ -3295,6 +3354,45 @@ class ResourceSearchTab(QWidget):
             )
             favorite_button.hide()
             self._article_favorite_buttons.append(favorite_button)
+
+            # 별 오른쪽의 선택 상자. 체크한 조문만 골라 내려받는다.
+            #
+            # QCheckBox를 쓰면 안 된다. 전역 스타일시트가 indicator를 16px로
+            # 두고 spacing까지 붙여서, 위젯을 16px로 고정하면 네모가 잘려
+            # 왼쪽 테두리만 남은 가느다란 막대로 그려진다(실측: sizeHint
+            # 25px 대 실제 16px). spacing을 0으로 눌러도 마찬가지였다.
+            # 체크 가능한 QToolButton을 네모로 직접 칠하면 꺼짐·켜짐 모두
+            # 온전하게 나온다.
+            checkbox = QToolButton(viewport)
+            checkbox.setObjectName("articleDownloadToggle")
+            checkbox.setCheckable(True)
+            checkbox.setFixedSize(checkbox_size, checkbox_size)
+            checkbox.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            checkbox.setCursor(Qt.CursorShape.PointingHandCursor)
+            checkbox.setStyleSheet(
+                "QToolButton#articleDownloadToggle {"
+                "background:white; border:1px solid #738398;"
+                "border-radius:3px; margin:0px; padding:0px;}"
+                "QToolButton#articleDownloadToggle:hover {"
+                "border:1px solid #2679bd;}"
+                "QToolButton#articleDownloadToggle:checked {"
+                "background:#1768aa; border:1px solid #1768aa;"
+                # 파란 바탕만 두면 켜졌는지 알기 어렵다. 다른 체크상자와
+                # 같은 흰 v 표시를 얹는다.
+                f"image: url({CHECK_ICON_PATH.as_posix()});}}"
+            )
+            checkbox.setToolTip(f"{article['label']}만 골라 내려받습니다.")
+            checkbox.setAccessibleName(f"{article['label']} 내려받기 선택")
+            checkbox.setChecked(
+                str(article.get("jo") or "") in self._checked_article_jos
+            )
+            checkbox.toggled.connect(
+                lambda checked=False, jo=str(article.get("jo") or ""): (
+                    self._set_article_download_checked(jo, checked)
+                )
+            )
+            checkbox.hide()
+            self._article_checkboxes.append(checkbox)
 
             button = QPushButton("3단", viewport)
             button.setObjectName("threeStageArticleButton")
@@ -3407,7 +3505,11 @@ class ResourceSearchTab(QWidget):
             law_id = str(article.get("law_id") or "")
             jo = str(article.get("jo") or "")
             law_name = str(article.get("law_name") or "")
-            row = self._law_row(law_id, law_name) if law_id and jo else None
+            row = (
+                self._law_row(law_id, law_name, str(article.get("target") or "law"))
+                if law_id and jo
+                else None
+            )
             favorite = False
             if row is not None:
                 keys = favorite_keys.get(law_id)
@@ -3446,13 +3548,35 @@ class ResourceSearchTab(QWidget):
                 "QPushButton#articleFavoriteButton:hover {color:#e2a400;}"
             )
 
+    def _set_article_download_checked(self, jo: str, checked: bool) -> None:
+        """조문 선택 상자를 켜고 끈 결과를 지금 문서 기준으로 기억한다."""
+        jo = str(jo or "")
+        if not jo:
+            return
+        if checked:
+            self._checked_article_jos.add(jo)
+        else:
+            self._checked_article_jos.discard(jo)
+        state = self._document_states.get(self._active_document_key)
+        if isinstance(state, dict):
+            state["checked_article_jos"] = sorted(self._checked_article_jos)
+        count = len(self._checked_article_jos)
+        self.status_label.setText(
+            f"조문 {count}개를 골랐습니다. 다운로드하면 고른 조문만 받습니다."
+            if count else "고른 조문이 없어 전문을 받습니다."
+        )
+
     def _article_is_favorite(self, article: dict[str, object]) -> bool:
         """조문 하나가 즐겨찾기인지. 꺼낸 창의 별표도 이 값을 본다."""
         law_id = str(article.get("law_id") or "")
         jo = str(article.get("jo") or "")
         if not law_id or not jo:
             return False
-        row = self._law_row(law_id, str(article.get("law_name") or ""))
+        row = self._law_row(
+            law_id,
+            str(article.get("law_name") or ""),
+            str(article.get("target") or "law"),
+        )
         if row is None:
             return False
         return self.law_cache.is_article_favorite(row, jo)
@@ -3465,7 +3589,8 @@ class ResourceSearchTab(QWidget):
         jo = str(article.get("jo") or "")
         law_name = str(article.get("law_name") or "")
         label = str(article.get("label") or self._law_reference_label(jo))
-        row = self._law_row(law_id, law_name) if law_id and jo else None
+        target = str(article.get("target") or "law")
+        row = self._law_row(law_id, law_name, target) if law_id and jo else None
         if row is None:
             self.status_label.setText("이 조문은 즐겨찾기에 걸 수 없습니다.")
             return
@@ -3804,37 +3929,47 @@ class ResourceSearchTab(QWidget):
             for button in (
                 *self._three_stage_buttons,
                 *self._article_favorite_buttons,
+                *self._article_checkboxes,
             ):
                 button.hide()
             return
-        for article, button in zip(
+        gap = self._ARTICLE_FAVORITE_GAP
+        text_gap = self._ARTICLE_CHECKBOX_TEXT_GAP
+        for article, button, checkbox in zip(
             self._current_three_stage_articles,
             self._article_favorite_buttons,
+            self._article_checkboxes,
         ):
             position = self._three_stage_anchor_positions.get(article["anchor"])
             if position is None:
                 button.hide()
+                checkbox.hide()
                 continue
             cursor = QTextCursor(self.detail_view.document())
             cursor.setPosition(position)
             rect = self.detail_view.cursorRect(cursor)
-            button_x = max(
-                1,
-                rect.left() - button.width() - self._ARTICLE_FAVORITE_GAP,
-            )
+            # 왼쪽부터 별, 선택 상자, 조문 제목 순으로 놓는다. 상자와
+            # 글자 사이만 틈을 더 준다.
+            checkbox_x = max(1, rect.left() - checkbox.width() - text_gap)
+            button_x = max(1, checkbox_x - button.width() - gap)
             # 줄 높이가 단추보다 크다. 위에 맞추면 별이 조문 제목보다
             # 떠 보이므로 그 줄의 한가운데에 놓는다.
             button_y = rect.top() + (rect.height() - button.height()) // 2
+            checkbox_y = rect.top() + (rect.height() - checkbox.height()) // 2
             visible = (
                 rect.bottom() >= 0
                 and button_y <= viewport.height()
             )
             if not visible:
                 button.hide()
+                checkbox.hide()
                 continue
             button.move(button_x, button_y)
             button.show()
             button.raise_()
+            checkbox.move(checkbox_x, checkbox_y)
+            checkbox.show()
+            checkbox.raise_()
         for article, button in zip(
             self._current_three_stage_articles,
             self._three_stage_buttons,
@@ -7417,6 +7552,14 @@ class ResourceSearchTab(QWidget):
                 raw = url.toString()[len("annexopen:") :]
             self._open_annex_entry_preview(raw)
             return
+        if url.scheme() in ("annexsave", "annexsavepdf"):
+            raw = (url.path() or "").strip("/")
+            if not raw:
+                raw = url.toString().split(":", 1)[1]
+            self._download_annex_file(
+                raw, pdf=url.scheme() == "annexsavepdf"
+            )
+            return
         if url.scheme() == "annexzoom":
             self._change_annex_preview_zoom(url.toString()[len("annexzoom:") :])
             return
@@ -9963,12 +10106,91 @@ class ResourceSearchTab(QWidget):
         self.result_table.viewport().update()
         self._refresh_document_tab_favorites()
 
-    def _law_row(self, law_id: str, name: str = "") -> dict[str, object] | None:
-        config = RESOURCE_CATEGORIES.get("law")
+    def _repair_article_favorite_row(
+        self, row: dict[str, object]
+    ) -> dict[str, object]:
+        """``law``로 잘못 적힌 행정규칙ㆍ자치법규 조문 즐겨찾기를 바로잡는다.
+
+        예전 판은 조문 별을 걸 때 종류를 늘 ``law``로 적었다. 이미 그렇게
+        저장해 둔 즐겨찾기는 고칠 길이 없으므로, 열 때 같은 ID의 저장본이
+        어느 종류로 있는지 보고 되돌린다. 법령 저장본이 있으면 그대로 둔다.
+        """
+        if str(row.get("target") or "") != "law":
+            return row
+        law_id = str(row.get("id") or "")
+        if not law_id:
+            return row
+        name = str(row.get("name") or "")
+        law_probe = self._law_row(law_id, name, "law")
+        if law_probe is not None and self._has_document_record(law_probe):
+            return row
+        for target in ("ordin", "admrul"):
+            probe = self._law_row(law_id, name, target)
+            if probe is None:
+                continue
+            if self._has_document_record(probe):
+                return {**row, **probe}
+        return row
+
+    def _has_document_record(self, row: dict[str, object]) -> bool:
+        """이 행으로 저장해 둔 '본문'이 있는지. 조문 즐겨찾기 쪽지는 뺀다.
+
+        조항호목 즐겨찾기만 담은 기록(``article_favorites``)은 본문도 원문도
+        없는 쪽지다. 이것을 본문으로 세면, 종류가 잘못 적힌 그 쪽지 자신이
+        "법령 저장본이 있다"는 근거가 되어 바로잡을 수 없다.
+        """
+        record = self.law_cache.load_for_row(row)
+        if not isinstance(record, dict):
+            record = self.law_cache.load_snapshot(row)
+        if not isinstance(record, dict):
+            return False
+        if str(record.get("kind") or "") == "article_favorites":
+            return False
+        return bool(
+            record.get("payload")
+            or record.get("detail_payload")
+            or record.get("html")
+        )
+
+    def _article_favorite_target(self, law_id: str) -> str:
+        """조문 즐겨찾기를 걸 문서의 종류. 지금 보고 있는 문서에서 가져온다.
+
+        예전에는 늘 ``law``로 적었다. 행정규칙ㆍ자치법규 본문에서 조문 별을
+        누르면 그 조문이 '법령 ID …'로 저장되고, 나중에 즐겨찾기에서 누르면
+        법령 조문 API를 그 ID로 부르다 빈손으로 돌아왔다. 화면은 그대로
+        멈춰 직전에 보던 문서가 남아, "눌러도 엉뚱한 법령이 열린다"로
+        보였다.
+        """
+        law_id = str(law_id or "")
+        for candidate in (
+            self._document_tab_row(self._active_document_key),
+            self.pending_row,
+        ):
+            if not isinstance(candidate, dict):
+                continue
+            target = str(candidate.get("target") or "")
+            if target in ("admrul", "ordin") and str(
+                candidate.get("id") or ""
+            ) == law_id:
+                return target
+        return "law"
+
+    def _law_row(
+        self, law_id: str, name: str = "", target: str = "law"
+    ) -> dict[str, object] | None:
+        """조문 즐겨찾기가 쓰는 최소한의 행을 만든다.
+
+        ``target``으로 법령·행정규칙·자치법규를 구분한다. 모르는 종류는
+        예전처럼 법령으로 본다.
+        """
+        target = str(target or "law")
+        if target not in RESOURCE_CATEGORIES:
+            target = "law"
+        config = RESOURCE_CATEGORIES.get(target)
         if config is None or "detail_target" not in config:
             return None
         return {
-            "target": "law",
+            "target": target,
             "id": law_id,
             "label": str(config["label"]),
             "name": name or law_id,
@@ -10018,7 +10240,7 @@ class ResourceSearchTab(QWidget):
         mok: str = "",
     ) -> None:
         """다른 검색 화면의 조문 별이 쓰는 추가·해제 공용 진입점."""
-        row = self._law_row(law_id, name)
+        row = self._law_row(law_id, name, self._article_favorite_target(law_id))
         if row is None:
             self.status_label.setText("이 항목은 즐겨찾기에 걸 수 없습니다.")
             return
@@ -10057,7 +10279,7 @@ class ResourceSearchTab(QWidget):
         별을 걸 수 있어서, 조문 하나를 거는 데 법령 전문을 받아 화면까지
         열었다(조문검색에서 별을 누르면 전문이 뜨던 자리다).
         """
-        row = self._law_row(law_id, name)
+        row = self._law_row(law_id, name, self._article_favorite_target(law_id))
         if row is None:
             self.status_label.setText("이 항목은 즐겨찾기에 걸 수 없습니다.")
             return
@@ -10826,7 +11048,9 @@ class ResourceSearchTab(QWidget):
         때까지 짧게 몇 번 더 확인한다.
         """
         jo = str(row.get("keyword_jo") or "")
-        if str(row.get("target") or "") != "law" or not jo:
+        # 행정규칙ㆍ자치법규의 조문 즐겨찾기도 이 길로 전문을 열고 그 조문
+        # 자리에서 시작한다(둘 다 조항호목 API가 없다).
+        if str(row.get("target") or "") not in ("law", "admrul", "ordin") or not jo:
             return
         key = f"{row['target']}:{row['id'] or row['name']}"
         provision = str(row.get("keyword_provision") or "").strip()
@@ -10967,9 +11191,12 @@ class ResourceSearchTab(QWidget):
             )
             return
         state = self._document_states[self._active_document_key]
+        cached_entries = self._cached_annex_entries(record)
         state.update(
             {
-                "html": str(record.get("html") or ""),
+                "html": self._relink_saved_annex_downloads(
+                    str(record.get("html") or ""), cached_entries
+                ),
                 # defer_restore가 만든 빈 QTextDocument를 완성 문서로
                 # 오인하면 원문 없는 자치법규 저장 HTML을 전혀 읽지 않는다.
                 "document": None,
@@ -10981,14 +11208,47 @@ class ResourceSearchTab(QWidget):
                     record.get("font_size") or self.detail_font_size
                 ),
                 "memos": list(record.get("memos") or []),
-                "annex_entries": self._cached_annex_entries(record),
+                "annex_entries": cached_entries,
                 "scroll": 0,
             }
+        )
+        # 이 길은 저장해 둔 HTML을 그대로 되살리므로 _set_detail_document를
+        # 거치지 않는다. 붙박이 제목 줄을 여기서 채워야 저장본으로 여는
+        # 자치법규에도 머리글이 서고, 그 위의 'API 갱신'ㆍ한글 다운로드
+        # 단추가 함께 보인다(띠가 없으면 단추들도 같이 숨는다).
+        self._set_pinned_headline(
+            str(record.get("name") or row.get("name") or ""), "", ""
         )
         self._restore_document_state(self._active_document_key)
         self.status_label.setText(
             f"{row['label']} ID {row['id']} 저장된 본문 열기"
         )
+
+    @staticmethod
+    def _relink_saved_annex_downloads(
+        html: str, entries: list[dict[str, str]]
+    ) -> str:
+        """저장해 둔 HTML의 별표 내려받기 주소를 앱 안에서 받는 주소로 바꾼다.
+
+        예전 저장본은 사이트 주소(``flDownload.do``)를 그대로 걸어 두었다.
+        그 HTML을 그대로 되살리면 그 문서에서만 기본 브라우저가 떠서, 받은
+        파일이 프로그램 밖으로 나가고 머리글의 다운로드 목록에도 잡히지
+        않는다. 저장본을 다시 만들지 않고 링크만 갈아 끼운다.
+        """
+        if not html or "flDownload.do" not in html:
+            return html
+        for index, entry in enumerate(entries):
+            for key, scheme in (
+                ("file_url", "annexsave"),
+                ("pdf_url", "annexsavepdf"),
+            ):
+                url = str(entry.get(key) or "")
+                if not url:
+                    continue
+                target = f'href="{scheme}:{index}"'
+                html = html.replace(f'href="{escape(url, quote=True)}"', target)
+                html = html.replace(f'href="{url}"', target)
+        return html
 
     @staticmethod
     def _cached_annex_entries(
@@ -11578,6 +11838,11 @@ class ResourceSearchTab(QWidget):
         # 돌아갔다. 새 탭의 빈 상태는 원래 값이 0이므로 별도 처리가
         # 필요하지 않다.
         preserved_scroll = int(state.get("scroll", 0) or 0)
+        restored_entries = [
+            dict(entry)
+            for entry in self._law_annex_entries(record.get("payload"))
+        ]
+        html = self._relink_saved_annex_downloads(html, restored_entries)
         state.update(
             {
                 "html": html,
@@ -11596,10 +11861,7 @@ class ResourceSearchTab(QWidget):
                 # _restore_document_state가 이 값으로 화면의 별표 목록을
                 # 덮어쓰기 때문에, 비워 두면 프로그램을 껐다 켠 뒤 저장
                 # 본문을 열었을 때 별표가 보이는데 눌러도 펼쳐지지 않았다.
-                "annex_entries": [
-                    dict(entry)
-                    for entry in self._law_annex_entries(record.get("payload"))
-                ],
+                "annex_entries": restored_entries,
                 # 기존 QTextDocument를 재사용하는 빠른 경로에서도 아래 상태가
                 # 그대로 사용된다. 여기서 빈 목록을 넣으면 검색 후 크게 보기로
                 # 전환할 때 저장 파일의 메모 띠지가 모두 사라진다.
@@ -11636,7 +11898,12 @@ class ResourceSearchTab(QWidget):
         ):
             # 저장내역에서 부모 법령을 직접 열 때도 검색 결과와 같은
             # 경로를 쓴다. 기존 즐겨찾기는 API 성공 후 save()가 보존한다.
-            self._request_resource_detail(dict(row))
+            # 예전 판이 종류를 늘 ``law``로 적어 둔 행정규칙ㆍ자치법규
+            # 쪽지는 여기서 바로잡는다. 그대로 두면 법령 API를 그 ID로
+            # 불러 빈손으로 돌아오고, 화면에는 직전 문서가 남는다.
+            self._request_resource_detail(
+                dict(self._repair_article_favorite_row(row))
+            )
             return
         if not isinstance(row, dict) or not isinstance(payload, dict):
             raise ValueError("저장된 법령 파일에 본문 정보가 없습니다.")
@@ -11759,6 +12026,20 @@ class ResourceSearchTab(QWidget):
         jo = str(unit.get("jo") or "")
         if not jo:
             raise ValueError("즐겨찾기 조문 번호를 찾지 못했습니다.")
+
+        source_row = self._repair_article_favorite_row(source_row)
+        if str(source_row.get("target") or "") in ("admrul", "ordin"):
+            # 행정규칙ㆍ자치법규에는 조항호목 API가 없다. 전문을 열고 그
+            # 조문 자리로 내려간다. 예전에는 법령 조문 API를 이 ID로 불러
+            # 빈손으로 돌아왔고, 화면에는 직전에 보던 문서가 그대로 남아
+            # "눌러도 엉뚱한 법령이 열린다"로 보였다.
+            row = dict(source_row)
+            row["keyword_jo"] = jo
+            row["keyword_provision"] = str(unit.get("label") or "")
+            if not self._request_resource_detail(row, force_api=force_api):
+                return False
+            self._schedule_keyword_article_scroll(row)
+            return True
 
         cached_payload = (
             None if force_api else self._load_favorite_article_cache(source_row, unit)
@@ -12390,12 +12671,81 @@ class ResourceSearchTab(QWidget):
             return metadata
         return [(REPEAL_NOTICE_LABEL, notice), *metadata]
 
+    # 붙박이 제목 줄을 두는 문서. 셋 다 사이트 저장 창과 API 재조회가
+    # 있어, 이 줄에 붙는 'API 갱신'ㆍ한글 다운로드 단추가 쓸모 있다.
+    PINNED_HEADLINE_TARGETS = ("law", "admrul", "ordin")
+
+    @classmethod
+    def _resource_headline_subtitle(cls, row: object) -> str:
+        """행정규칙ㆍ자치법규의 법제처식 머리글 줄을 행 정보로 만든다.
+
+        ``[시행 2026. 7. 8.] [국토교통부훈령 제1967호, 2026. 7. 8., 타법개정]``
+        처럼 국가법령정보센터 본문 머리글과 같은 표기를 쓴다. 본문 API
+        응답이 아니라 목록 행(``raw``)에서 만들므로, 저장본으로 여는
+        자치법규처럼 응답을 들고 있지 않은 화면에서도 같은 줄이 나온다.
+        """
+        if not isinstance(row, dict):
+            return ""
+        target = str(row.get("target") or "")
+        raw = row.get("raw")
+        raw = raw if isinstance(raw, dict) else {}
+        if target == "admrul":
+            # 소관부처와 종류를 붙여 ``국토교통부훈령``으로 읽는다.
+            issuer = json_text(raw.get("소관부처명")) or str(
+                row.get("organization") or ""
+            )
+            kind = json_text(raw.get("행정규칙종류"))
+            revision = json_text(raw.get("제개정구분명"))
+        elif target == "ordin":
+            issuer = json_text(raw.get("지자체기관명")) or str(
+                row.get("organization") or ""
+            )
+            kind = json_text(raw.get("자치법규종류"))
+            revision = json_text(raw.get("제개정구분명"))
+        else:
+            return ""
+        effective = cls._headline_date(str(row.get("effective") or ""))
+        promulgated = cls._headline_date(str(row.get("date") or ""))
+        number = str(row.get("number") or "").lstrip("0")
+
+        parts: list[str] = []
+        if effective:
+            parts.append(f"[시행 {effective}]")
+        issuer_kind = f"{issuer}{kind}".strip()
+        inner = ", ".join(
+            item
+            for item in (
+                f"{issuer_kind} 제{number}호" if issuer_kind and number else "",
+                promulgated,
+                revision,
+            )
+            if item
+        )
+        if inner:
+            parts.append(f"[{inner}]")
+        return " ".join(parts)
+
     def _set_pinned_headline(
         self, title: str, short_name: str, subtitle: str
     ) -> None:
-        """본문 위에 붙박이로 남는 제목 줄. 법령이 아니면 감춘다."""
+        """본문 위에 붙박이로 남는 제목 줄.
+
+        법령ㆍ행정규칙ㆍ자치법규 전문에만 둔다. 예전에는 법령에만 떠서,
+        이 줄에 얹히는 'API 갱신'과 한글 다운로드 단추가 행정규칙ㆍ
+        자치법규에서는 아예 보이지 않았다.
+        """
+        row = self._document_tab_row(self._active_document_key)
+        if row is None and isinstance(self.pending_row, dict):
+            row = self.pending_row
+        target = str(row.get("target") or "") if isinstance(row, dict) else ""
+        if not short_name and not subtitle:
+            subtitle = self._resource_headline_subtitle(row)
         headline = law_headline_text(short_name, subtitle)
         text = ""
+        # 시행일ㆍ발령번호가 비어 머리글 줄을 못 만든 문서도 제목만으로
+        # 띠를 세운다. 띠가 없으면 그 위의 단추들까지 같이 사라진다.
+        if not headline and title and target in ("admrul", "ordin"):
+            headline = title
         if headline:
             parts = [f'<span style="font-size:13px;">{escape(title)}</span>']
             if short_name:
@@ -12430,10 +12780,15 @@ class ResourceSearchTab(QWidget):
         )
         self.pinned_headline.show()
         # 조문 하나만 열린 법령 행은 전문 다운로드 대상으로 보이지 않게 한다.
+        # 사이트 저장 창이 있는 법령·행정규칙·자치법규 전문에서만 보인다.
         state = self._document_states.get(self._active_document_key)
         row = state.get("row") if isinstance(state, dict) else None
-        is_law = isinstance(row, dict) and row.get("target") == "law"
-        self.hwp_export_button.setVisible(self.HWP_EXPORT_BUTTON_ENABLED and is_law)
+        downloadable = isinstance(row, dict) and row.get("target") in (
+            "law", "admrul", "ordin"
+        )
+        self.hwp_export_button.setVisible(
+            self.HWP_EXPORT_BUTTON_ENABLED and downloadable
+        )
         self.pinned_headline_bar.show()
 
     def _pinned_headline_parts(self) -> tuple[str, str]:
@@ -12486,6 +12841,318 @@ class ResourceSearchTab(QWidget):
             f"{saved.name} 으로 저장했습니다. 한글에서 열어 .hwp로 다시 저장할 수 있습니다."
         )
 
+    def set_download_list_button(self, button: QToolButton) -> None:
+        """창 머리글의 다운로드 목록 단추를 넘겨받아 연결한다.
+
+        본문의 다운로드 단추는 받기만 하고, 받아 둔 파일을 여는 일은
+        이 단추가 맡는다. 받은 것이 하나도 없으면 숨겨 둔다.
+        """
+        self._download_list_button = button
+        button.clicked.connect(self._show_download_popup)
+        # 받은 것이 없어도 숨기지 않는다. 자리가 들쭉날쭉하면 누를 때마다
+        # 옆의 'API 설정'이 좌우로 밀려 머리글이 들썩인다. 대신 받아 둔
+        # 파일이 있는지만 알려 주고, 옅게/진하게는 단추가 알아서 그린다.
+        button.setVisible(True)
+        if hasattr(button, "set_has_files"):
+            button.set_has_files(bool(self._completed_downloads))
+
+    def _download_folder(self) -> str:
+        """받은 파일을 둘 곳. 윈도우의 '다운로드' 폴더를 그대로 쓴다."""
+        path = QStandardPaths.writableLocation(
+            QStandardPaths.StandardLocation.DownloadLocation
+        )
+        return path or str(Path.home() / "Downloads")
+
+    def _download_tray_started(self) -> None:
+        """머리글 단추의 동그라미를 채우기 시작한다."""
+        tray = self._download_list_button
+        if tray is not None and hasattr(tray, "start_progress"):
+            tray.start_progress()
+
+    def _download_tray_failed(self) -> None:
+        tray = self._download_list_button
+        if tray is not None and hasattr(tray, "fail_progress"):
+            tray.fail_progress()
+
+    def _register_completed_download(self, saved_path: str) -> Path:
+        """받은 파일을 목록 맨 위에 올리고 머리글 단추에 알린다.
+
+        전문 다운로드와 별표ㆍ서식 다운로드가 같은 목록에 쌓인다. 다 받으면
+        브라우저처럼 목록이 저절로 펴져, 방금 받은 것이 무엇인지 그 자리에서
+        보이고 바로 눌러 열 수 있다.
+        """
+        path = Path(saved_path)
+        # 같은 파일을 다시 받으면 목록에 두 줄이 되지 않게 위로 올리기만 한다.
+        # 별도 창의 본문 컨트롤러는 본 창과 같은 목록 객체를 나눠 쓴다
+        # (attach_reader). 새 목록으로 바꾸지 말고 그 자리에서 고친다.
+        self._completed_downloads[:] = [
+            item for item in self._completed_downloads if item != path
+        ]
+        self._completed_downloads.insert(0, path)
+        del self._completed_downloads[10:]
+        # 지웠던 파일을 다시 받았으면 그어 둔 줄을 걷는다.
+        self._removed_downloads.discard(path)
+        # 별도 창에서 받았으면 본 창 머리글 단추도 진하게 바꿔 둔다.
+        shared = getattr(self, "_shared_download_source", None)
+        shared_tray = getattr(shared, "_download_list_button", None)
+        if shared_tray is not None and hasattr(shared_tray, "set_has_files"):
+            shared_tray.set_has_files(True)
+        tray = self._download_list_button
+        if tray is not None:
+            tray.setVisible(True)
+            if hasattr(tray, "set_has_files"):
+                tray.set_has_files(True)
+            if hasattr(tray, "finish_progress"):
+                tray.finish_progress()
+            # 채우던 동그라미가 한 바퀴를 마치는 것과 같이 보이도록
+            # 이번 신호 처리가 끝난 뒤에 띄운다.
+            QTimer.singleShot(0, self._show_download_popup)
+        return path
+
+    def _download_annex_file(self, raw_index: str, *, pdf: bool = False) -> None:
+        """별표ㆍ서식 원본을 브라우저 없이 프로그램 안에서 받는다."""
+        if not self._annex_section_entries:
+            state = self._document_states.get(self._active_document_key)
+            if isinstance(state, dict):
+                self._annex_section_entries = [
+                    dict(entry)
+                    for entry in (state.get("annex_entries") or [])
+                    if isinstance(entry, dict)
+                ]
+        found = self._annex_entry_at(raw_index)
+        if found is None:
+            self.status_label.setText("받을 별표·서식을 찾지 못했습니다.")
+            return
+        _index, entry = found
+        url = str(entry.get("pdf_url" if pdf else "file_url") or "")
+        if not url:
+            self.status_label.setText("이 별표·서식에는 받을 파일이 없습니다.")
+            return
+        title = self._annex_display_title(entry)
+        # 같은 파일을 두 번 누르면 스레드만 늘어난다. 도는 중이면 알리고 만다.
+        if any(worker.url == url for worker in self._annex_file_workers):
+            self.status_label.setText(f"{title} 을(를) 받는 중입니다.")
+            return
+
+        worker = AnnexFileDownloadWorker(
+            url, self._download_folder(), suggested_name=title, parent=self
+        )
+        self._annex_file_workers.append(worker)
+        self._download_tray_started()
+
+        def downloaded(saved_path: str) -> None:
+            path = self._register_completed_download(saved_path)
+            self.status_label.setText(f"{path.name} 저장 완료")
+
+        def failed(message: str) -> None:
+            self._download_tray_failed()
+            QMessageBox.warning(
+                self,
+                "별표·서식 다운로드 실패",
+                f"{title} 을(를) 받지 못했습니다.\n\n{message}",
+            )
+            self.status_label.setText("별표·서식 다운로드 실패")
+
+        def finished() -> None:
+            if worker in self._annex_file_workers:
+                self._annex_file_workers.remove(worker)
+            worker.deleteLater()
+
+        worker.progress.connect(self.status_label.setText)
+        worker.succeeded.connect(downloaded)
+        worker.failed.connect(failed)
+        worker.finished.connect(finished)
+        self.status_label.setText(f"{title} 내려받는 중")
+        worker.start()
+
+    def _download_is_gone(self, path: Path) -> bool:
+        """목록의 이 파일이 이미 없어졌는지. 지운 것과 밖에서 옮긴 것 모두."""
+        if path in self._removed_downloads:
+            return True
+        try:
+            return not path.is_file()
+        except OSError:
+            return True
+
+    def _delete_downloaded_file(self, path: Path) -> None:
+        """다운로드 목록에서 고른 파일을 휴지통으로 보낸다.
+
+        줄은 지우지 않고 남겨 둔 채 글자에 줄을 긋는다(브라우저와 같다).
+        잘못 눌러도 휴지통에서 되살릴 수 있으므로 되묻지 않는다.
+        """
+        try:
+            delete_downloaded_file(path)
+        except OSError as error:
+            QMessageBox.warning(
+                self,
+                "파일을 지우지 못함",
+                f"파일을 지우지 못했습니다.\n{path}\n\n{error}",
+            )
+            return
+        self._removed_downloads.add(path)
+        self.status_label.setText(f"{path.name} 을(를) 휴지통으로 보냈습니다.")
+        # 목록을 그 자리에서 다시 그린다. 지운 줄에 바로 줄이 그어진다.
+        QTimer.singleShot(0, self._show_download_popup)
+
+    def _open_downloaded_file(self, path: Path) -> None:
+        """다운로드 목록에서 고른 파일을 연결된 프로그램으로 연다."""
+        if not path.is_file():
+            QMessageBox.warning(
+                self, "파일을 열 수 없음", f"파일이 없습니다.\n{path}"
+            )
+            return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.resolve()))):
+            QMessageBox.warning(
+                self,
+                "파일을 열 수 없음",
+                f"연결된 프로그램에서 파일을 열지 못했습니다.\n{path}",
+            )
+
+    def _show_download_popup(self, anchor: QWidget | None = None) -> None:
+        """받은 파일 목록을 다운로드 단추 바로 아래에 편다.
+
+        브라우저의 다운로드 목록과 같은 자리다. 하단 상태줄까지 눈을
+        옮기지 않아도 방금 무엇을 받았는지 그 자리에서 보인다.
+        """
+        # 단추가 늘 서 있으므로, 아직 받은 것이 없을 때도 눌리면 답을
+        # 해 줘야 한다. 아무 일도 일어나지 않으면 고장으로 보인다.
+        # 목록은 창 머리글의 다운로드 단추 아래에 편다. 그 단추가 아직
+        # 없으면(예전 배치나 시험 환경) 본문의 다운로드 단추에 붙인다.
+        # 별도 창은 자기 단추를 anchor로 넘긴다.
+        button = anchor or self._download_list_button or self.hwp_export_button
+        menu = self._download_menu
+        menu.clear()
+        # 전역 스타일시트의 ``QMenu::item:selected``(#f0f1f2)가 위젯 항목
+        # 뒤에 회색을 깔고, ``QMenu::item``의 min-width 150px과 좌우 패딩
+        # 58px이 팝업을 넓힌다. 이 팝업에서만 셋 다 지운다. 항목의 강조는
+        # 각 줄이 자기 배경으로 직접 처리한다.
+        menu.setStyleSheet(
+            "QMenu#articleDownloadMenu {background:white;"
+            "border:1px solid #cfd8e3; border-radius:6px; padding:4px;}"
+            "QMenu#articleDownloadMenu::item {background:transparent;"
+            "min-width:0px; min-height:0px; padding:0px; margin:0px;"
+            "border-radius:0px;}"
+            "QMenu#articleDownloadMenu::item:selected {background:transparent;}"
+            "QMenu#articleDownloadMenu::separator {background:transparent;"
+            "height:1px; margin:2px 6px;}"
+        )
+        # 목록을 펼 단추가 있는 창. 별도 창의 단추면 그 창 안에 둔다.
+        window = button.window()
+        # 창 안에 들어갈 만한 폭을 먼저 구하고, 그 가운데 3/5만 쓴다.
+        # 파일 이름은 이 폭에 맞춰 줄을 바꾼다(아래 라벨이 setWordWrap).
+        full_width = max(220, min(420, window.width() - 48))
+        max_width = max(140, full_width * 3 // 5)
+
+        # 맨 윗줄: 왼쪽에 "다운로드", 오른쪽에 폴더 열기 아이콘.
+        header = QWidget(menu)
+        # 전역 스타일의 회색 바탕이 머리글ㆍ글자 뒤에 깔리지 않게 비운다.
+        # 줄 음영은 커서를 올렸을 때 DownloadFileRow가 직접 그린다.
+        header.setObjectName("downloadPopupHeader")
+        header.setStyleSheet("QWidget#downloadPopupHeader {background:transparent;}")
+        header_row = QHBoxLayout(header)
+        header_row.setContentsMargins(8, 4, 6, 4)
+        header_row.setSpacing(6)
+        title = QLabel("다운로드", header)
+        title.setStyleSheet(
+            "background:transparent; color:#4a5462; font-size:12px; font-weight:700;"
+        )
+        header_row.addWidget(title, 1)
+        folder_button = QToolButton(header)
+        folder_button.setIcon(QIcon(str(FOLDER_OPEN_ICON_PATH)))
+        folder_button.setIconSize(QSize(15, 15))
+        folder_button.setFixedSize(21, 21)
+        folder_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        folder_button.setToolTip("다운로드 폴더를 엽니다.")
+        folder_button.setStyleSheet(
+            "QToolButton {border:none; background:transparent; padding:0;}"
+            "QToolButton:hover {background:#eef3f9; border-radius:4px;}"
+        )
+        # 받은 것이 없으면 열어 보일 폴더도 정해지지 않는다. 그 줄만 뺀다.
+        if self._completed_downloads:
+            folder = self._completed_downloads[0].parent
+            folder_button.clicked.connect(
+                lambda _checked=False, target=folder: (
+                    menu.close(),
+                    QDesktopServices.openUrl(QUrl.fromLocalFile(str(target))),
+                )
+            )
+            header_row.addWidget(folder_button, 0)
+        else:
+            folder_button.hide()
+        header.setFixedWidth(max_width)
+        header_action = QWidgetAction(menu)
+        header_action.setDefaultWidget(header)
+        menu.addAction(header_action)
+        menu.addSeparator()
+
+        if not self._completed_downloads:
+            empty = QLabel("받은 파일이 없습니다.", menu)
+            empty.setFixedWidth(max_width)
+            empty.setStyleSheet(
+                "QLabel {background:transparent; color:#8a929c; font-size:12px;"
+                " padding:6px 8px;}"
+            )
+            empty.setAttribute(
+                Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
+            )
+            empty_action = QWidgetAction(menu)
+            empty_action.setDefaultWidget(empty)
+            menu.addAction(empty_action)
+
+        # 파일 이름은 한 줄로 늘이지 말고 접는다. 긴 법령명이 그대로
+        # 이어지면 팝업이 화면 너비만큼 넓어졌다.
+        for path in self._completed_downloads:
+            gone = self._download_is_gone(path)
+            row = DownloadFileRow(path.name, QIcon(str(TRASH_ICON_PATH)), menu)
+            row.setFixedWidth(max_width)
+            row.label.setToolTip(
+                f"{path}\n(지운 파일입니다. 휴지통에서 되살릴 수 있습니다.)"
+                if gone
+                else str(path)
+            )
+            row.label.setStyleSheet(
+                "QLabel {background:transparent; color:%s; font-size:12px;"
+                " padding:2px 0;}"
+                % ("#9aa1a9" if gone else "#1f2a37")
+            )
+            if gone:
+                # 브라우저처럼 지운 파일은 목록에 남기되 글자 가운데에 줄을
+                # 긋는다. 방금 무엇을 지웠는지 그 자리에서 보인다.
+                struck = row.label.font()
+                struck.setStrikeOut(True)
+                row.label.setFont(struck)
+            row.set_deletable(not gone)
+            row.deleteRequested.connect(
+                lambda file_path=path: self._delete_downloaded_file(file_path)
+            )
+
+            action = QWidgetAction(menu)
+            action.setDefaultWidget(row)
+            action.triggered.connect(
+                lambda _checked=False, file_path=path: (
+                    self._open_downloaded_file(file_path)
+                )
+            )
+            menu.addAction(action)
+
+        if not button.isVisible():
+            return
+        # 단추 왼쪽 아래를 기준으로 하되, 프로그램 창 밖으로 나가지 않게
+        # 안쪽으로 민다.
+        origin = button.mapToGlobal(button.rect().bottomLeft())
+        window_rect = QRect(window.mapToGlobal(QPoint(0, 0)), window.size())
+        hint = menu.sizeHint()
+        left_limit = window_rect.left() + 8
+        x = min(
+            max(origin.x(), left_limit),
+            max(left_limit, window_rect.right() - hint.width() - 8),
+        )
+        y = min(
+            origin.y(),
+            max(window_rect.top() + 8, window_rect.bottom() - hint.height() - 8),
+        )
+        menu.popup(QPoint(x, y))
+
     def _download_detail_to_hwpx(self) -> None:
         """공식 사이트의 파일을 기본 다운로드 폴더에 바로 내려받는다."""
         if self._law_hwpx_download_worker is not None:
@@ -12493,8 +13160,11 @@ class ResourceSearchTab(QWidget):
             return
         state = self._document_states.get(self._active_document_key)
         row = state.get("row") if isinstance(state, dict) else None
-        if not isinstance(row, dict) or row.get("target") != "law":
-            self.status_label.setText("법령 전문을 먼저 열어 주세요.")
+        kind = str(row.get("target") or "") if isinstance(row, dict) else ""
+        # 사이트 저장 창은 법령·행정규칙·자치법규에 모두 있고, 세 종류의
+        # 저장 엔드포인트가 다르다. 종류를 그대로 넘겨 구분한다.
+        if kind not in ("law", "admrul", "ordin"):
+            self.status_label.setText("법령·행정규칙·자치법규 전문을 먼저 열어 주세요.")
             return
         law_id = str(row.get("id") or "")
         title, headline = self._pinned_headline_parts()
@@ -12503,30 +13173,36 @@ class ResourceSearchTab(QWidget):
             f"{date_match.group(1)}{int(date_match.group(2)):02d}{int(date_match.group(3)):02d}"
             if date_match else ""
         )
-        path = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation)
-        if not path:
-            path = str(Path.home() / "Downloads")
-        bar = getattr(self, "_shared_status_bar", None)
+        path = self._download_folder()
         document_key = self._active_document_key
-        worker = LawHwpxDownloadWorker(law_id, title, effective_date, path)
+        # 체크한 조문이 있으면 그 조문만, 하나도 없으면 전문을 받는다.
+        # 본문에 나온 차례를 그대로 지켜야 사이트가 순서대로 엮어 준다.
+        chosen = [
+            str(article.get("jo") or "")
+            for article in self._current_three_stage_articles
+            if str(article.get("jo") or "") in self._checked_article_jos
+        ]
+        worker = LawHwpxDownloadWorker(
+            kind, law_id, title, effective_date, path, articles=chosen or None
+        )
         self._law_hwpx_download_worker = worker
         self.hwp_export_button.setEnabled(False)
 
         def show_progress(message: str) -> None:
-            if bar is not None:
-                bar.set_download_progress(message)
+            # 하단 상태줄에는 다운로드 상태를 띄우지 않는다. 진행 상황은
+            # 본문 화면의 상태 문구와 다운로드 단추 아래 목록으로만 알린다.
             if self._active_document_key == document_key:
                 self.status_label.setText(message)
 
         def downloaded(saved_path: str) -> None:
-            if bar is not None:
-                bar.add_completed_download(saved_path)
+            # 하단 상태줄에는 완료를 띄우지 않는다. 받은 파일은 다운로드
+            # 단추 바로 아래 목록에 브라우저처럼 보여 준다.
+            path = self._register_completed_download(saved_path)
             if self._active_document_key == document_key:
-                self.status_label.setText(f"{Path(saved_path).name} 저장 완료")
+                self.status_label.setText(f"{path.name} 저장 완료")
 
         def failed(message: str) -> None:
-            if bar is not None:
-                bar.set_download_failed()
+            self._download_tray_failed()
             QMessageBox.warning(self, "한글 문서 다운로드 실패", message)
             if self._active_document_key == document_key:
                 self.status_label.setText("한글 문서 다운로드 실패")
@@ -12541,8 +13217,8 @@ class ResourceSearchTab(QWidget):
         worker.failed.connect(failed)
         worker.finished.connect(finished)
         self.status_label.setText("국가법령정보센터 한글 문서 준비 중")
-        if bar is not None:
-            bar.set_download_progress("국가법령정보센터 한글 문서 준비 중")
+        # 머리글의 다운로드 단추가 받는 동안 동그라미를 채운다.
+        self._download_tray_started()
         worker.start()
 
     @classmethod
@@ -12776,8 +13452,24 @@ class ResourceSearchTab(QWidget):
             law_annexes or [],
             toc_entries=toc_entries if build_toc else None,
         )
+        # 조문 옆 별과 선택 상자는 사이트 저장 창이 있는 세 종류 모두에
+        # 붙인다. 3단비교만 법령 전용이라 목록에 종류를 함께 남긴다.
+        controls_target = (
+            str(self.pending_row.get("target") or "")
+            if build_toc and isinstance(self.pending_row, dict)
+            else ""
+        )
+        if controls_target == "law_article":
+            controls_target = "law"
+        if controls_target not in ("law", "admrul", "ordin"):
+            controls_target = ""
+        controls_id = (
+            str(self.pending_row.get("law_id") or self.pending_row.get("id") or "")
+            if controls_target
+            else ""
+        )
         three_stage_articles: list[dict[str, object]] = []
-        if is_law_document and current_law_id:
+        if controls_target and controls_id:
             for depth, label, anchor in toc_entries:
                 if depth != 4:
                     continue
@@ -12792,8 +13484,9 @@ class ResourceSearchTab(QWidget):
                             unit_match.group("jo"),
                             unit_match.group("jo_branch") or "",
                         ),
-                        "law_id": current_law_id,
+                        "law_id": controls_id,
                         "law_name": title,
+                        "target": controls_target,
                     }
                 )
         # 3단비교 버튼 자리를 위한 본문 오른쪽 여백을 목차를 채운 뒤에
@@ -12867,16 +13560,19 @@ class ResourceSearchTab(QWidget):
             # vertical-align으로 가운데를 맞춘다.
             icon_style = 'style="vertical-align:middle;"'
             icons: list[str] = []
+            # 링크 주소를 그대로 걸면 Qt가 바깥 브라우저에 넘겨, 받은 파일이
+            # 프로그램 밖으로 나가고 머리글의 다운로드 목록에도 잡히지
+            # 않았다. 자체 주소로 걸어 프로그램 안에서 받는다.
             if file_url:
                 icons.append(
-                    f'<a href="{escape(file_url, quote=True)}">'
+                    f'<a href="annexsave:{index}">'
                     f'<img src="{icon_data_uri(ANNEX_HWP_ICON_PATH)}" '
                     f'width="16" height="22" {icon_style} alt="원본 내려받기">'
                     "</a>"
                 )
             if pdf_url:
                 icons.append(
-                    f'<a href="{escape(pdf_url, quote=True)}">'
+                    f'<a href="annexsavepdf:{index}">'
                     f'<img src="{icon_data_uri(ANNEX_PDF_ICON_PATH)}" '
                     f'width="16" height="22" {icon_style} alt="PDF 내려받기">'
                     "</a>"

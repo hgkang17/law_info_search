@@ -14,7 +14,7 @@ import os
 import re
 import tempfile
 from pathlib import Path
-from urllib.parse import parse_qs, urljoin, urlsplit
+from urllib.parse import parse_qs, unquote, urljoin, urlsplit
 
 import requests
 
@@ -194,6 +194,218 @@ def download_law_file(url: str, *, use_cache: bool = True) -> bytes:
 download_law_pdf = download_law_file
 
 
+# 저장한 파일 이름에 쓸 수 없는 글자. 윈도우 기준으로 막는다.
+_UNSAFE_FILE_NAME = re.compile(r'[\\/:*?"<>|\r\n\t]+')
+# 첫 바이트로 알아보는 확장자. 법제처 별표ㆍ서식은 대개 HWP(구형 OLE)나
+# HWPX(ZIP)로 오고, PDF 링크는 PDF로 온다.
+_MAGIC_SUFFIXES = (
+    (b"%PDF-", ".pdf"),
+    (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1", ".hwp"),
+    (b"PK\x03\x04", ".hwpx"),
+    (b"{\\rtf", ".rtf"),
+    (b"\x89PNG\r\n\x1a\n", ".png"),
+    (b"\xff\xd8\xff", ".jpg"),
+)
+_CONTENT_TYPE_SUFFIXES = {
+    "application/pdf": ".pdf",
+    "application/haansofthwp": ".hwp",
+    "application/x-hwp": ".hwp",
+    "application/vnd.hancom.hwp": ".hwp",
+    "application/hwp": ".hwp",
+    "application/vnd.hancom.hwpx": ".hwpx",
+    "application/zip": ".hwpx",
+    "application/msword": ".doc",
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+}
+
+
+def safe_file_name(name: str, *, fallback: str = "별표서식") -> str:
+    """경로에 쓸 수 없는 글자를 걷어낸 파일 이름(확장자 없이)."""
+    cleaned = _UNSAFE_FILE_NAME.sub(" ", str(name or ""))
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" .")
+    return cleaned[:120].strip() or fallback
+
+
+def _restore_header_commas(name: str) -> str:
+    """법제처가 파일 이름의 쉼표 대신 보내는 ``¸``를 쉼표로 되돌린다.
+
+    Content-Disposition에서 쉼표는 값을 가르는 글자라 서버가 그대로 보내지
+    못한다. 법제처는 세디유(U+00B8)로 바꿔 보내므로, 실제로 받아 보면
+    ``종류¸ 건축``처럼 남는다(별표 제목 원문은 ``종류, 건축``이다).
+    이 글자가 우리말 별표 이름에 쓰일 일은 없으므로 되돌려도 안전하다.
+    """
+    return str(name or "").replace("¸", ",")
+
+
+def _header_file_name(disposition: str) -> str:
+    """Content-Disposition에서 서버가 붙인 파일 이름을 꺼낸다.
+
+    법제처는 ``filename="...";`` 하나만 보낼 때도 있고 RFC 5987의
+    ``filename*=UTF-8''...`` 를 함께 보낼 때도 있다. 한글 이름은 EUC-KR로
+    보내 놓고 헤더는 latin-1로 읽히므로, 눈에 보이는 글자로 되돌린다.
+    """
+    text = str(disposition or "")
+    if not text:
+        return ""
+    extended = re.search(
+        r"filename\*\s*=\s*([^\';]+)'[^\';]*'([^;]+)", text, re.IGNORECASE
+    )
+    if extended is not None:
+        charset = extended.group(1).strip() or "utf-8"
+        try:
+            return _restore_header_commas(
+                unquote(
+                    extended.group(2).strip(),
+                    encoding=charset,
+                    errors="strict",
+                )
+            )
+        except (LookupError, UnicodeDecodeError):
+            pass
+    plain = re.search(r'filename\s*=\s*"([^"]+)"', text, re.IGNORECASE)
+    if plain is None:
+        plain = re.search(r"filename\s*=\s*([^;]+)", text, re.IGNORECASE)
+    if plain is None:
+        return ""
+    raw = plain.group(1).strip().strip('"')
+    if not raw:
+        return ""
+    if "%" in raw:
+        for charset in ("utf-8", "euc-kr"):
+            try:
+                decoded = unquote(raw, encoding=charset, errors="strict")
+            except (LookupError, UnicodeDecodeError):
+                continue
+            if decoded:
+                return _restore_header_commas(decoded)
+    # requests는 헤더를 latin-1로 읽는다. 원래 바이트로 되돌린 뒤 한국
+    # 사이트가 흔히 쓰는 차례대로 풀어 본다.
+    try:
+        raw_bytes = raw.encode("latin-1")
+    except UnicodeEncodeError:
+        return _restore_header_commas(raw)
+    for charset in ("utf-8", "euc-kr", "cp949"):
+        try:
+            return _restore_header_commas(raw_bytes.decode(charset))
+        except (LookupError, UnicodeDecodeError):
+            continue
+    return _restore_header_commas(raw)
+
+
+def _suffix_for(data: bytes, content_type: str, name: str) -> str:
+    """받은 내용에 맞는 확장자. 이름에 이미 있으면 그대로 둔다."""
+    existing = Path(name or "").suffix.lower()
+    if existing and len(existing) <= 6:
+        return existing
+    for magic, suffix in _MAGIC_SUFFIXES:
+        if data.startswith(magic):
+            return suffix
+    base = str(content_type or "").split(";", 1)[0].strip().lower()
+    return _CONTENT_TYPE_SUFFIXES.get(base, ".hwp")
+
+
+def _unique_path(folder: Path, stem: str, suffix: str) -> Path:
+    """같은 이름이 있으면 브라우저처럼 ``(2)``를 붙여 비켜 간다."""
+    candidate = folder / f"{stem}{suffix}"
+    index = 2
+    while candidate.exists():
+        candidate = folder / f"{stem} ({index}){suffix}"
+        index += 1
+        if index > 999:
+            raise ValueError("같은 이름의 파일이 너무 많습니다.")
+    return candidate
+
+
+def save_law_file(
+    url: str,
+    destination: str | Path,
+    *,
+    suggested_name: str = "",
+    progress=None,
+) -> Path:
+    """별표ㆍ서식 원본을 브라우저 없이 받아 ``destination`` 폴더에 저장한다.
+
+    본문 링크를 누르면 지금까지는 기본 브라우저가 떠서 그쪽 다운로드
+    폴더에 떨어졌다. 프로그램 안에서 받아야 받은 목록에 함께 쌓이고,
+    어떤 파일이 어디로 갔는지가 한 자리에서 보인다.
+
+    파일 이름은 사이트가 알려 준 이름을 먼저 쓰고, 없으면 별표 제목을
+    쓴다. 확장자는 이름에 있으면 그대로, 없으면 받은 내용의 첫 바이트로
+    가린다(법제처는 Content-Type을 옥텟 스트림으로만 줄 때가 있다).
+    """
+    notify = progress or (lambda _message: None)
+    folder = Path(destination)
+    folder.mkdir(parents=True, exist_ok=True)
+
+    notify("국가법령정보센터 파일 받는 중")
+    data, header_name, content_type = _fetch_law_file(url)
+    if not data:
+        raise ValueError("빈 파일을 받았습니다.")
+
+    name = header_name or suggested_name
+    suffix = _suffix_for(data, content_type, name)
+    stem = safe_file_name(Path(name or "").stem or name)
+    target = _unique_path(folder, stem, suffix)
+    # 쓰다 만 파일이 목록에 뜨지 않도록 임시 이름으로 다 쓴 뒤 옮긴다.
+    handle, temporary = tempfile.mkstemp(dir=str(folder))
+    try:
+        with os.fdopen(handle, "wb") as file:
+            file.write(data)
+        os.replace(temporary, target)
+    except OSError:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
+    notify(f"{target.name} 저장 완료")
+    return target
+
+
+def _fetch_law_file(url: str) -> tuple[bytes, str, str]:
+    """파일 내용과 사이트가 알려 준 이름ㆍ종류를 함께 돌려준다."""
+    current_url = str(url).strip()
+    for _redirect in range(_MAX_REDIRECTS + 1):
+        if not is_allowed_law_file_url(current_url):
+            raise ValueError("공식 law.go.kr HTTPS 주소의 파일만 받을 수 있습니다.")
+        response = requests.get(
+            current_url,
+            timeout=(5, 30),
+            allow_redirects=False,
+            stream=True,
+            headers=REQUEST_HEADERS,
+        )
+        if response.is_redirect or response.is_permanent_redirect:
+            location = response.headers.get("Location", "")
+            response.close()
+            if not location:
+                raise ValueError("파일 리디렉션 주소가 없습니다.")
+            current_url = urljoin(current_url, location)
+            continue
+        response.raise_for_status()
+        declared_size = int(response.headers.get("Content-Length", "0") or 0)
+        if declared_size > _MAX_FILE_BYTES:
+            response.close()
+            raise ValueError("파일 크기가 50MB 제한을 초과합니다.")
+        name = _header_file_name(response.headers.get("Content-Disposition", ""))
+        content_type = response.headers.get("Content-Type", "")
+        chunks: list[bytes] = []
+        received = 0
+        try:
+            for chunk in response.iter_content(chunk_size=64 * 1024):
+                if not chunk:
+                    continue
+                received += len(chunk)
+                if received > _MAX_FILE_BYTES:
+                    raise ValueError("파일 크기가 50MB 제한을 초과합니다.")
+                chunks.append(chunk)
+        finally:
+            response.close()
+        return b"".join(chunks), name, content_type
+    raise ValueError("파일 리디렉션이 너무 많습니다.")
+
+
 _LAW_SITE_ROOT = "https://www.law.go.kr"
 # 변환 뷰어를 여는 공식 요청 경로. 자치법규ㆍ행정규칙 별표가 서로 다르다.
 _ORDINANCE_ANNEX_VIEWER_PATH = "/LSW/ordinBylContentsInfoR.do"
@@ -324,3 +536,47 @@ def download_ordinance_annex_pages(
             raise ValueError(f"자치법규 별표 {index + 1}쪽 이미지가 올바르지 않습니다.")
         pages.append(data)
     return pages, total
+
+
+def delete_downloaded_file(path: str | Path) -> None:
+    """받아 둔 파일을 지운다. 윈도우에서는 휴지통으로 보낸다.
+
+    다운로드 목록의 삭제 단추는 한 번 누르면 끝이라 되돌릴 방법이 있어야
+    한다. 윈도우 탐색기와 같은 방식(``SHFileOperationW`` + ``FOF_ALLOWUNDO``)
+    으로 보내 두면 잘못 눌러도 휴지통에서 되살릴 수 있다. 휴지통을 쓸 수
+    없는 자리(다른 운영체제, 네트워크 드라이브 등)에서는 바로 지운다.
+    """
+    target = Path(path)
+    if not target.exists():
+        return
+    if os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class _SHFILEOPSTRUCTW(ctypes.Structure):
+                _fields_ = [
+                    ("hwnd", wintypes.HWND),
+                    ("wFunc", wintypes.UINT),
+                    ("pFrom", wintypes.LPCWSTR),
+                    ("pTo", wintypes.LPCWSTR),
+                    ("fFlags", ctypes.c_uint16),
+                    ("fAnyOperationsAborted", wintypes.BOOL),
+                    ("hNameMappings", wintypes.LPVOID),
+                    ("lpszProgressTitle", wintypes.LPCWSTR),
+                ]
+
+            # FO_DELETE=3, FOF_SILENT=4, FOF_NOCONFIRMATION=0x10,
+            # FOF_ALLOWUNDO=0x40, FOF_NOERRORUI=0x400
+            operation = _SHFILEOPSTRUCTW(
+                None, 3, f"{target.resolve()}\0\0", None,
+                0x4 | 0x10 | 0x40 | 0x400, False, None, None,
+            )
+            result = ctypes.windll.shell32.SHFileOperationW(
+                ctypes.byref(operation)
+            )
+            if result == 0 and not operation.fAnyOperationsAborted:
+                return
+        except (OSError, AttributeError, ImportError):
+            pass
+    target.unlink()

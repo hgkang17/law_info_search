@@ -45,9 +45,22 @@ def test_header_shows_active_document_without_binding_global_ai(qt_app) -> None:
         # 머리글에는 로고만 둔다. 프로그램 이름 라벨은 없앴다.
         assert window.header_card.findChild(QLabel, "appNameLabel") is None
         assert window.header_card.findChild(QLabel, "logoLabel") is not None
+        # API 설정ㆍ즐겨찾기 칩은 머리글 오른쪽에 가로로 둔다.
         assert window.header_card.layout().indexOf(
             window.oc_api_settings_button
         ) >= 0
+        assert window.header_card.layout().indexOf(
+            window.favorite_project_button
+        ) >= 0
+        assert (
+            window.header_card.layout().indexOf(window.favorite_project_button)
+            < window.header_card.layout().indexOf(window.oc_api_settings_button)
+        )
+        assert window.favorite_project_button.height() == (
+            window.oc_api_settings_button.height()
+        )
+        assert not window.favorite_project_button.text().startswith("★")
+        assert "9pt" in window.favorite_project_menu.styleSheet()
         assert window.ai_review_tab.context_source is None
         assert resource.ai_chat_panel.context_source == resource._chat_context
         assert resource.ai_chat_panel.minimumWidth() == 0
@@ -417,9 +430,14 @@ def test_closing_active_document_in_reading_mode_returns_to_previous_page(
 
 
 def test_favorite_article_opens_in_full_reading_mode_with_back_button(
-    qt_app,
+    qt_app, tmp_path, monkeypatch
 ) -> None:
     """즐겨찾기 조항호목도 전문과 같은 크게 보기와 복귀 단추를 쓴다."""
+    # 창은 실제 캐시 폴더를 그대로 읽는다. 격리하지 않으면 개발 PC에
+    # 저장해 둔 진짜 본문이 열려, 아래 가짜 payload 대신 그 내용이 뜬다.
+    monkeypatch.setattr(
+        "ui.main_window.LAW_CACHE_DIR", tmp_path / "law-cache"
+    )
     window = LawSearchWindow()
     try:
         record = {

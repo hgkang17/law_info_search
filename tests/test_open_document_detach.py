@@ -636,3 +636,74 @@ def test_dragging_a_single_tab_onto_another_window_joins_on_release(qt_app):
         for detached in tuple(DetachedDocumentWindow._windows):
             detached.close()
         qt_app.processEvents()
+
+
+def test_detached_tabs_show_the_full_two_line_title_and_underline(qt_app):
+    """본 창 띠처럼 두 줄 제목을 다 보이고 선택 밑줄이 잘리지 않는다."""
+    window = LawSearchWindow()
+    window.resize(1400, 900)
+    window.show()
+    try:
+        token = _fill_expc_document(window)
+        window.expc_tab._active_detail_row["name"] = "국토의 계획 및 이용에 관한 법률 시행령"
+        window.expc_tab._active_detail_row["short_name"] = "국토계획법 시행령"
+        window._refresh_open_documents()
+        main_text = window.open_document_tabs.tabText(
+            window._open_document_index_for_token(token)
+        )
+        window.open_document_tabs.detachRequested.emit(token, QPoint(300, 300))
+        qt_app.processEvents()
+        detached = window._detached_document_windows[0]
+        detached.show()
+        qt_app.processEvents()
+        bar = detached.document_tabs
+        assert bar.tabText(0) == main_text == "국토계획법\n시행령"
+        assert bar.elideMode() == Qt.TextElideMode.ElideNone
+        # 탭 한 칸(밑줄 포함)이 탭 줄 안에 다 들어간다.
+        assert bar.tabRect(0).height() <= bar.height()
+        detached.close()
+    finally:
+        window.close()
+        qt_app.processEvents()
+
+
+def test_detached_window_has_its_own_download_list_button(qt_app, tmp_path):
+    """별도 창 머리글에도 다운로드 목록 단추가 최소화 왼쪽에 있다."""
+    from ui.dialogs import DetachedCaptionButton
+    from ui.widgets import DownloadTrayButton
+
+    window = LawSearchWindow()
+    window.show()
+    try:
+        detached = DetachedDocumentWindow("본문", "<p>본문</p>", parent=window)
+        detached.show()
+        qt_app.processEvents()
+        row = detached.header.layout()
+        tray = detached.download_list_button
+        assert isinstance(tray, DownloadTrayButton)
+        minimize = next(
+            b for b in detached.header.findChildren(DetachedCaptionButton)
+            if b.kind == "minimize"
+        )
+        assert row.indexOf(tray) < row.indexOf(minimize)
+        assert tray.geometry().right() < minimize.geometry().left()
+
+        # 받은 파일은 본 창과 같은 목록이다. 누르면 이 창 단추 아래에 편다.
+        resource = window.resource_tab
+        path = tmp_path / "별도창 받은.hwp"
+        path.write_bytes(b"hwp")
+        resource._register_completed_download(str(path))
+        resource._download_menu.close()
+        tray.click()
+        qt_app.processEvents()
+        menu = resource._download_menu
+        assert menu.isVisible()
+        # 본 창 단추가 아니라 이 창 단추 바로 아래에 붙는다.
+        anchor = tray.mapToGlobal(tray.rect().bottomLeft())
+        assert abs(menu.geometry().top() - anchor.y()) <= 4
+        assert detached.frameGeometry().contains(menu.geometry().topLeft())
+        menu.close()
+        detached.close()
+    finally:
+        window.close()
+        qt_app.processEvents()

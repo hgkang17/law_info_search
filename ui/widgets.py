@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from html import escape
 import json
-from math import cos, pi, sin
+from math import cos, exp, pi, sin
 from pathlib import Path
 import re
 from PySide6.QtCore import (
@@ -580,19 +580,19 @@ def configure_expanding_column(
 
 
 class _CollapseAwareHandle(QSplitterHandle):
-    """옆 칸이 접히면 그 칸 이름을 세로로 적은 띠로 바뀌는 분할선 손잡이.
+    """옆 칸이 접히면 파란 음영 띠로 바뀌는 분할선 손잡이.
 
     처음에는 회색 손잡이에 작은 삼각형만 그렸다. 무엇이 접혔는지 알 수
     없고, 옆 칸을 체크 해제로 숨겼을 때도 크기 0으로 읽혀 체크된 칸 옆에
-    접힘 표시가 떴다. 지금은 접힌 칸만 이름 띠로 보이고, 누르면 펼친다.
+    접힘 표시가 떴다. 접힌 칸만 음영 띠로 남기고, 누르면 펼친다. 세로
+    글자는 쓰지 않는다 — 바탕 음영만으로 접힘을 알린다.
     """
 
+    # 예전 세로 글자 띠에 쓰던 바탕색. 접힌 칸 표시로 그대로 둔다.
     STRIP_BACKGROUND = "#eef1f5"
     STRIP_HOVER_BACKGROUND = "#e1edf8"
     STRIP_BORDER = "#cfd6df"
-    STRIP_TEXT = "#4f5d6e"
-    STRIP_HOVER_TEXT = "#1768aa"
-    # 접힌 칸 이름을 세로로 적을 띠 폭.
+    # 접힌 칸 음영 띠 폭.
     STRIP_WIDTH = 24
     # 눌러 되살릴 때 접힌 칸에 줄 폭.
     RESTORE_SIZE = 180
@@ -603,8 +603,11 @@ class _CollapseAwareHandle(QSplitterHandle):
         super().__init__(orientation, parent)
         self._press_position: QPoint | None = None
         self._dragged = False
-        self._hovered = False
-        self._collapsed_cache = -1
+        # 띠 여럿을 나란히 그릴 수 있으므로, 어느 칸 위에 커서가 있는지를
+        # 참ㆍ거짓이 아니라 자리 번호로 든다(-1이면 벗어나 있음).
+        self._hover_slot = -1
+        self._collapsed_cache: tuple[int, ...] = ()
+        self.setMouseTracking(True)
         self.setToolTip("칸 경계입니다. 끌어서 넓히거나 좁힙니다.")
 
     def _own_index(self) -> int:
@@ -614,124 +617,193 @@ class _CollapseAwareHandle(QSplitterHandle):
                 return index
         return -1
 
-    def collapsed_index(self) -> int:
-        """이 띠가 대신 보여 줄 접힌 칸 번호. 없으면 -1.
+    def collapsed_indices(self) -> tuple[int, ...]:
+        """이 손잡이가 대신 보여 줄 접힌 칸 번호들. 없으면 빈 튜플.
 
-        손잡이 i는 칸 i 앞에 붙는다. 칸 i가 접혔으면 그 칸을 맡는다.
-        첫 칸은 앞 손잡이가 없으므로, 보이는 첫 칸이 접혔을 때만 바로
-        뒤 손잡이가 맡는다. 체크 해제로 숨긴 칸도 크기가 0이지만 접힌
-        칸으로 보지 않는다.
+        손잡이 i는 칸 i 앞에 붙으므로 칸 i가 접혔으면 그 칸을 맡는다.
+        첫 칸에는 앞 손잡이가 없어 바로 뒤 손잡이가 대신 맡는데, 그
+        손잡이가 자기 칸도 함께 접혀 있으면 예전에는 자기 칸만 맡고 첫
+        칸은 아무도 맡지 않았다. 그래서 왼쪽 끝까지 끌어 두 칸을 접으면
+        첫 칸이 이름 띠도 없이 통째로 사라져, 체크박스를 껐다 켜야만
+        돌아왔다. 이제 한 손잡이가 칸 둘까지 나란히 맡는다.
+
+        체크 해제로 숨긴 칸도 크기가 0이지만 접힌 칸으로 보지 않는다.
         """
         splitter = self.splitter()
         mine = self._own_index()
         if mine < 0 or splitter.widget(mine).isHidden():
-            return -1
+            return ()
         sizes = splitter.sizes()
-        if sizes[mine] == 0:
-            return mine
+        owned: list[int] = []
         visible_before = [
             index
             for index in range(mine)
             if not splitter.widget(index).isHidden()
         ]
         if len(visible_before) == 1 and sizes[visible_before[0]] == 0:
-            return visible_before[0]
-        return -1
+            owned.append(visible_before[0])
+        if sizes[mine] == 0:
+            owned.append(mine)
+        return tuple(owned)
 
-    def collapsed_title(self) -> str:
-        index = self.collapsed_index()
+    def collapsed_index(self) -> int:
+        """맡은 칸 가운데 첫 번째. 없으면 -1."""
+        owned = self.collapsed_indices()
+        return owned[0] if owned else -1
+
+    def _title_of(self, index: int) -> str:
         if index < 0:
             return ""
         widget = self.splitter().widget(index)
         return str(widget.property("collapsedTitle") or "").strip()
 
+    def collapsed_titles(self) -> list[str]:
+        return [self._title_of(index) for index in self._collapsed_cache]
+
+    def collapsed_title(self) -> str:
+        return self._title_of(self.collapsed_index())
+
+    def _slot_rect(self, slot: int) -> QRect:
+        """맡은 칸 가운데 ``slot`` 번째 띠가 차지할 자리."""
+        count = len(self._collapsed_cache)
+        rect = self.rect()
+        if count <= 0 or not 0 <= slot < count:
+            return QRect()
+        if self.orientation() == Qt.Orientation.Horizontal:
+            width = rect.width() / count
+            left = round(rect.left() + width * slot)
+            right = round(rect.left() + width * (slot + 1))
+            return QRect(left, rect.top(), max(1, right - left), rect.height())
+        height = rect.height() / count
+        top = round(rect.top() + height * slot)
+        bottom = round(rect.top() + height * (slot + 1))
+        return QRect(rect.left(), top, rect.width(), max(1, bottom - top))
+
+    def _slot_at(self, position: QPoint) -> int:
+        for slot in range(len(self._collapsed_cache)):
+            if self._slot_rect(slot).contains(position):
+                return slot
+        return -1
+
     def sync_collapsed_state(self) -> bool:
         """접힘 상태가 바뀌었으면 폭ㆍ안내를 고치고 참을 돌려준다."""
-        index = self.collapsed_index()
-        if index == self._collapsed_cache:
+        owned = self.collapsed_indices()
+        changed = owned != self._collapsed_cache
+        if changed:
+            self._collapsed_cache = owned
+            self._hover_slot = -1
+            if not owned:
+                self.setToolTip("칸 경계입니다. 끌어서 넓히거나 좁힙니다.")
+            else:
+                titles = [title for title in self.collapsed_titles() if title]
+                names = "ㆍ".join(f"'{title}'" for title in titles)
+                name = f"{names} 칸" if names else "이 칸"
+                self.setToolTip(
+                    f"{name}이 접혀 있습니다. 누르면 다시 펼칩니다."
+                )
+        # 전역 QSplitter::handle { width:8px } 가 sizeHint를 눌러 접힌
+        # 음영 띠가 8px로 줄어 안 보일 수 있다. 접힌 동안은 고정 폭으로
+        # 이기고, 매 동기화마다 다시 걸어 스타일 재적용에도 버틴다.
+        if owned:
+            strip = self.STRIP_WIDTH * len(owned)
+            if self.orientation() == Qt.Orientation.Horizontal:
+                if (
+                    self.minimumWidth() != strip
+                    or self.maximumWidth() != strip
+                ):
+                    self.setFixedWidth(strip)
+                    changed = True
+            elif (
+                self.minimumHeight() != strip
+                or self.maximumHeight() != strip
+            ):
+                self.setFixedHeight(strip)
+                changed = True
+        elif self._clear_strip_width():
+            # 체크 해제로 칸을 숨기면 owned가 비는데, 고정 폭만 풀고
+            # 실제 폭을 안 줄이면 24px 손잡이가 그대로 남아 "두꺼워진"
+            # 것처럼 보인다. 일반 손잡이 폭으로 되돌린다.
+            changed = True
+        if changed:
+            self.updateGeometry()
+            self.update()
+        return changed
+
+    def _clear_strip_width(self) -> bool:
+        """접힘 음영 띠 고정 폭을 풀고 일반 손잡이 두께로 되돌린다."""
+        splitter = self.splitter()
+        normal = max(1, splitter.handleWidth())
+        horizontal = self.orientation() == Qt.Orientation.Horizontal
+        stuck = (
+            (horizontal and self.width() > normal)
+            or (not horizontal and self.height() > normal)
+            or self.minimumWidth() == self.maximumWidth()
+            or self.minimumHeight() == self.maximumHeight()
+        )
+        if not stuck:
             return False
-        self._collapsed_cache = index
-        if index < 0:
-            self._hovered = False
-            self.setToolTip("칸 경계입니다. 끌어서 넓히거나 좁힙니다.")
+        if horizontal:
+            self.setFixedWidth(normal)
+            self.setMinimumWidth(0)
+            self.setMaximumWidth(16777215)
         else:
-            title = self.collapsed_title()
-            name = f"'{title}' 칸" if title else "이 칸"
-            self.setToolTip(f"{name}이 접혀 있습니다. 누르면 다시 펼칩니다.")
-        self.updateGeometry()
-        self.update()
+            self.setFixedHeight(normal)
+            self.setMinimumHeight(0)
+            self.setMaximumHeight(16777215)
         return True
 
     def sizeHint(self) -> QSize:
         size = super().sizeHint()
-        if self._collapsed_cache < 0:
+        count = len(self._collapsed_cache)
+        if count <= 0:
             return size
+        strip = self.STRIP_WIDTH * count
         if self.orientation() == Qt.Orientation.Horizontal:
-            size.setWidth(max(size.width(), self.STRIP_WIDTH))
+            size.setWidth(strip)
         else:
-            size.setHeight(max(size.height(), self.STRIP_WIDTH))
+            size.setHeight(strip)
         return size
 
     def paintEvent(self, event) -> None:
-        if self._collapsed_cache < 0:
+        if not self._collapsed_cache:
             super().paintEvent(event)
             return
         painter = QPainter(self)
-        rect = self.rect()
-        painter.fillRect(
-            rect,
-            QColor(
-                self.STRIP_HOVER_BACKGROUND
-                if self._hovered
-                else self.STRIP_BACKGROUND
-            ),
-        )
-        painter.setPen(QColor(self.STRIP_BORDER))
-        if self.orientation() == Qt.Orientation.Horizontal:
-            painter.drawLine(rect.topLeft(), rect.bottomLeft())
-            painter.drawLine(rect.topRight(), rect.bottomRight())
-        else:
-            painter.drawLine(rect.topLeft(), rect.topRight())
-            painter.drawLine(rect.bottomLeft(), rect.bottomRight())
-        title = self.collapsed_title()
-        if title:
-            painter.setPen(
+        for slot, _owned_index in enumerate(self._collapsed_cache):
+            rect = self._slot_rect(slot)
+            if rect.isEmpty():
+                continue
+            hovered = slot == self._hover_slot
+            painter.fillRect(
+                rect,
                 QColor(
-                    self.STRIP_HOVER_TEXT if self._hovered else self.STRIP_TEXT
-                )
+                    self.STRIP_HOVER_BACKGROUND
+                    if hovered
+                    else self.STRIP_BACKGROUND
+                ),
             )
-            painter.setFont(self.font())
-            metrics = QFontMetrics(self.font())
+            painter.setPen(QColor(self.STRIP_BORDER))
             if self.orientation() == Qt.Orientation.Horizontal:
-                # 한글은 옆으로 눕히기보다 한 글자씩 세로로 쌓아야 읽힌다.
-                line = metrics.height()
-                y = rect.top() + 10
-                for char in title:
-                    if char.isspace():
-                        y += line // 2
-                        continue
-                    if y + line > rect.bottom() - 6:
-                        break
-                    painter.drawText(
-                        QRect(rect.left(), y, rect.width(), line),
-                        int(Qt.AlignmentFlag.AlignCenter),
-                        char,
-                    )
-                    y += line
+                painter.drawLine(rect.topLeft(), rect.bottomLeft())
+                painter.drawLine(rect.topRight(), rect.bottomRight())
             else:
-                painter.drawText(rect, int(Qt.AlignmentFlag.AlignCenter), title)
+                painter.drawLine(rect.topLeft(), rect.topRight())
+                painter.drawLine(rect.bottomLeft(), rect.bottomRight())
         painter.end()
 
+    def _set_hover_slot(self, slot: int) -> None:
+        if slot == self._hover_slot:
+            return
+        self._hover_slot = slot
+        self.update()
+
     def enterEvent(self, event) -> None:
-        if self._collapsed_cache >= 0:
-            self._hovered = True
-            self.update()
+        if self._collapsed_cache:
+            self._set_hover_slot(self._slot_at(event.position().toPoint()))
         super().enterEvent(event)
 
     def leaveEvent(self, event) -> None:
-        if self._hovered:
-            self._hovered = False
-            self.update()
+        self._set_hover_slot(-1)
         super().leaveEvent(event)
 
     def mousePressEvent(self, event) -> None:
@@ -740,12 +812,31 @@ class _CollapseAwareHandle(QSplitterHandle):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:
+        position = event.position().toPoint()
+        if self._collapsed_cache and self._press_position is None:
+            # 누르지 않고 지나갈 때는 어느 띠 위인지만 따라간다.
+            self._set_hover_slot(self._slot_at(position))
         if self._press_position is not None and not self._dragged:
-            moved = event.position().toPoint() - self._press_position
+            moved = position - self._press_position
             if moved.manhattanLength() <= self.CLICK_SLOP:
                 # 누르다 손이 조금 떨린 것으로 접힌 칸이 1~2px 열리지 않게 한다.
                 return
             self._dragged = True
+            if self._collapsed_cache:
+                # 접힌 띠를 끌면 Qt 기본 동작은 옆 칸만 늘리고 접힌 칸은
+                # 0인 채 음영 띠를 남긴다. 끄는 순간에 먼저 되살린 뒤
+                # 일반 손잡이처럼 이어서 끌리게 한다.
+                slot = self._slot_at(self._press_position)
+                target = (
+                    self._collapsed_cache[slot]
+                    if 0 <= slot < len(self._collapsed_cache)
+                    else self._collapsed_cache[0]
+                )
+                if self.restore_collapsed(target):
+                    # 같은 움직임으로 Qt 기본 끌기까지 넘기면 방금 연
+                    # 칸을 다시 0으로 접어 버린다. 이번 이동은 여기서 끝낸다.
+                    self._press_position = position
+                    return
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:
@@ -754,19 +845,28 @@ class _CollapseAwareHandle(QSplitterHandle):
             and self._press_position is not None
             and not self._dragged
         )
+        slot = self._slot_at(self._press_position) if clicked else -1
         self._press_position = None
         super().mouseReleaseEvent(event)
-        if clicked and self._collapsed_cache >= 0:
-            self.restore_collapsed()
+        if clicked and self._collapsed_cache:
+            # 누른 자리의 띠를 편다. 자리를 못 찾으면 맡은 첫 칸을 편다.
+            self.restore_collapsed(
+                self._collapsed_cache[slot] if slot >= 0 else None
+            )
 
     def mouseDoubleClickEvent(self, event) -> None:
-        if not self.restore_collapsed():
+        slot = self._slot_at(event.position().toPoint())
+        target = self._collapsed_cache[slot] if slot >= 0 else None
+        if not self.restore_collapsed(target):
             super().mouseDoubleClickEvent(event)
 
-    def restore_collapsed(self) -> bool:
+    def restore_collapsed(self, index: int | None = None) -> bool:
         """접힌 칸을 가장 넓은 칸의 폭을 조금 나눠 받아 되살린다."""
-        target = self.collapsed_index()
-        if target < 0:
+        owned = self.collapsed_indices()
+        if not owned:
+            return False
+        target = owned[0] if index is None else int(index)
+        if target not in owned:
             return False
         splitter = self.splitter()
         sizes = splitter.sizes()
@@ -790,17 +890,37 @@ class _CollapseAwareHandle(QSplitterHandle):
 
 
 class CollapseAwareSplitter(QSplitter):
-    """칸을 0까지 줄여 감췄을 때 그 자리를 이름 띠로 남기는 분할 화면.
+    """칸을 0까지 줄여 감췄을 때 그 자리를 파란 음영 띠로 남기는 분할 화면.
 
     즐겨찾기처럼 칸이 여럿인 화면에서 폭을 끝까지 줄이면 칸이 통째로
     사라져, 무엇이 숨었는지도 어디를 끌어야 다시 나오는지도 알 수 없었다.
-    접힌 칸 자리에 칸 이름을 세로로 적은 띠를 두고, 누르면 되살린다.
-    칸 위젯의 ``collapsedTitle`` 속성이 띠에 적을 이름이다.
+    접힌 칸 자리에 음영 띠를 두고, 누르면 되살린다. 칸 위젯의
+    ``collapsedTitle`` 속성은 안내 말에 쓴다.
     """
+
+    # 넘친 폭을 덜어 낼 때 열린 칸에 남겨 두는 최소 폭. 이보다 더 줄이면
+    # 덜어 내려다 옆 칸까지 접어 버린다.
+    MIN_OPEN_SIZE = 60
+    # QWidget 기본 최대 크기. 바깥 리사이즈 때 잠깐 풀어 새 폭을 받는다.
+    _UNLIMITED_SPAN = 16777215
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
+        self.setObjectName("collapseAwareSplitter")
         self._refreshing_handles = False
+        # 바깥(창ㆍ부모)이 준 폭. 손잡이가 띠로 넓어지며 self.width()가
+        # 커져도 이 값을 기준으로 칸을 줄여 띠가 창 밖으로 안 밀리게 한다.
+        self._available_span = 0
+        # sizeHint가 불어나도 부모가 따라 커지지 않게 한다. 부모가 커지면
+        # 오른쪽 띠가 창 밖으로 밀려 "아예 안 보이는" 상태가 된다.
+        if self.orientation() == Qt.Orientation.Horizontal:
+            self.setSizePolicy(
+                QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding
+            )
+        else:
+            self.setSizePolicy(
+                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored
+            )
 
     def createHandle(self) -> QSplitterHandle:
         return _CollapseAwareHandle(self.orientation(), self)
@@ -810,12 +930,41 @@ class CollapseAwareSplitter(QSplitter):
         self._refresh_handles()
 
     def resizeEvent(self, event) -> None:
+        if not self._refreshing_handles:
+            # 창이 커질 때는 이전에 걸어 둔 최대 폭을 풀어 새 공간을 받는다.
+            self.setMaximumWidth(self._UNLIMITED_SPAN)
+            self.setMaximumHeight(self._UNLIMITED_SPAN)
         super().resizeEvent(event)
+        if not self._refreshing_handles:
+            span = (
+                self.width()
+                if self.orientation() == Qt.Orientation.Horizontal
+                else self.height()
+            )
+            if span > 0:
+                self._available_span = span
         self._refresh_handles()
 
     def moveSplitter(self, position: int, index: int) -> None:
         super().moveSplitter(position, index)
         self._refresh_handles()
+
+    def sizeHint(self) -> QSize:
+        return self._cap_to_available(super().sizeHint())
+
+    def minimumSizeHint(self) -> QSize:
+        return self._cap_to_available(super().minimumSizeHint())
+
+    def _cap_to_available(self, hint: QSize) -> QSize:
+        """띠 손잡이 때문에 sizeHint가 불어 부모가 함께 커지지 않게 막는다."""
+        span = self._available_span
+        if span <= 0:
+            return hint
+        if self.orientation() == Qt.Orientation.Horizontal:
+            hint.setWidth(min(hint.width(), span))
+        else:
+            hint.setHeight(min(hint.height(), span))
+        return hint
 
     def event(self, event) -> bool:
         result = super().event(event)
@@ -837,8 +986,66 @@ class CollapseAwareSplitter(QSplitter):
                     changed = handle.sync_collapsed_state() or changed
             if changed:
                 self.refresh()
+                self._fit_within_width()
         finally:
             self._refreshing_handles = False
+
+    def _fit_within_width(self) -> None:
+        """이름 띠가 넓어진 만큼 넘친 폭을 넓은 칸에서 덜어 낸다.
+
+        접힌 칸의 손잡이는 7px에서 이름 띠 폭(24px, 둘이면 48px)으로
+        넓어진다. 그런데 Qt는 늘어난 손잡이 폭을 다른 칸에서 빼 주지
+        않고, 분할기 위젯 자체를 그 만큼 키운다. ``self.width()``로
+        넘침을 재면 이미 커진 뒤라 항상 0이 되어, 오른쪽 띠가 창 밖으로
+        밀려 아예 안 보였다. 바깥 리사이즈 때 기억해 둔 ``_available_span``
+        을 기준으로 넓은 칸부터 덜어 내고, 겉넓이도 그 폭으로 되돌린다.
+        """
+        horizontal = self.orientation() == Qt.Orientation.Horizontal
+        available = self._available_span
+        if available <= 0:
+            available = self.width() if horizontal else self.height()
+        if available <= 0:
+            return
+        sizes = list(self.sizes())
+        used = sum(sizes)
+        for index in range(1, self.count()):
+            handle = self.handle(index)
+            if handle.isVisible():
+                hint = handle.sizeHint()
+                used += hint.width() if horizontal else hint.height()
+        overflow = used - available
+        if overflow > 0:
+            # 열려 있는 칸만, 넓은 쪽부터 덜어 낸다. 덜다가 0이 되면 그
+            # 칸까지 접혀 버리므로 최소 폭은 남긴다.
+            minimum = self.MIN_OPEN_SIZE
+            order = sorted(
+                (
+                    index
+                    for index in range(self.count())
+                    if sizes[index] > minimum
+                ),
+                key=lambda index: -sizes[index],
+            )
+            for index in order:
+                if overflow <= 0:
+                    break
+                take = min(overflow, sizes[index] - minimum)
+                sizes[index] -= take
+                overflow -= take
+            super().setSizes(sizes)
+        # 칸 합만 줄여도 이미 커진 위젯 폭은 그대로라 띠가 밖으로 남는다.
+        if horizontal:
+            self.setMaximumWidth(available)
+            if self.width() != available:
+                self.resize(available, self.height())
+        else:
+            self.setMaximumHeight(available)
+            if self.height() != available:
+                self.resize(self.width(), available)
+        self.updateGeometry()
+        parent = self.parentWidget()
+        if parent is not None:
+            parent.updateGeometry()
 
 
 def configure_horizontal_splitter(splitter: QSplitter) -> None:
@@ -1388,6 +1595,291 @@ class SearchProgressBar(QWidget):
         painter.setBrush(gradient)
         painter.drawRoundedRect(glow, radius, radius)
         painter.end()
+
+
+class DownloadTrayButton(QToolButton):
+    """머리글에 늘 서 있는 다운로드 표시.
+
+    인터넷 브라우저의 다운로드 단추와 같은 자리, 같은 노릇이다. 받은
+    것이 없어도 숨지 않는다 — 숨었다 나타나면 그때마다 옆의 'API 설정'
+    까지 좌우로 밀려 머리글이 들썩인다.
+
+    받는 동안에는 테두리 동그라미가 12시에서 시계 방향으로 차오른다.
+    파일 크기를 미리 알 수 없는 저장 창을 거쳐 받으므로 퍼센트를 셀 수
+    없다. 대신 흐른 시간에 따라 차오르되 갈수록 더디게 해 ``CEILING``
+    언저리에 머물다가, 다 받은 순간 한 바퀴를 채우고 잠시 뒤 원래
+    모습으로 돌아간다. 거짓으로 100%를 먼저 보여 주지 않으면서도
+    "지금 돌고 있다"와 "다 됐다"가 눈에 그대로 보인다.
+    """
+
+    TICK_MS = 40
+    # 시간만으로 채우는 동안 넘지 않는 한계와, 그 한계에 다가가는 빠르기.
+    CEILING = 0.92
+    TIME_CONSTANT_MS = 3500.0
+    # 다 받은 뒤 한 바퀴를 마저 채우는 시간과, 채운 채로 머무는 시간.
+    FINISH_MS = 260
+    HOLD_MS = 1100
+
+    # 검정ㆍ회색 계열. 머리글의 파란 글자들과 다투지 않게 무채색으로 둔다.
+    IDLE_RING = "#dee1e6"
+    IDLE_MARK = "#9aa1a9"
+    READY_RING = "#c6cbd2"
+    READY_MARK = "#3b4148"
+    BUSY_TRACK = "#e2e5e9"
+    BUSY_FILL = "#2b3036"
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("downloadListButton")
+        self.setFixedSize(28, 28)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        self._has_files = False
+        self._busy = False
+        self._elapsed = 0.0
+        self._progress = 0.0
+
+        self._tick = QTimer(self)
+        self._tick.setInterval(self.TICK_MS)
+        self._tick.timeout.connect(self._advance)
+
+        self._finish = QVariantAnimation(self)
+        self._finish.setDuration(self.FINISH_MS)
+        self._finish.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._finish.valueChanged.connect(self._set_progress)
+        self._finish.finished.connect(self._start_hold)
+
+        self._hold = QTimer(self)
+        self._hold.setSingleShot(True)
+        self._hold.setInterval(self.HOLD_MS)
+        self._hold.timeout.connect(self._clear_ring)
+
+    # ── 상태 ────────────────────────────────────────────────────────
+    def set_has_files(self, has_files: bool) -> None:
+        """받아 둔 파일이 있는지 알려 준다. 있으면 진하게 그린다."""
+        has_files = bool(has_files)
+        if has_files == self._has_files:
+            return
+        self._has_files = has_files
+        self.update()
+
+    def start_progress(self) -> None:
+        """받기 시작. 동그라미를 처음부터 다시 채운다."""
+        self._finish.stop()
+        self._hold.stop()
+        self._busy = True
+        self._elapsed = 0.0
+        self._progress = 0.0
+        self._tick.start()
+        self.update()
+
+    def finish_progress(self) -> None:
+        """다 받았다. 남은 몫을 마저 채우고 잠시 보여 준다."""
+        self._tick.stop()
+        self._busy = False
+        if self._progress <= 0.0:
+            # 눈에 보이지도 않게 끝난 다운로드. 굳이 한 바퀴를 돌리지 않는다.
+            self._clear_ring()
+            return
+        self._finish.stop()
+        self._finish.setStartValue(float(self._progress))
+        self._finish.setEndValue(1.0)
+        self._finish.start()
+
+    def fail_progress(self) -> None:
+        """실패했다. 채우던 것을 지우고 원래 모습으로 돌린다."""
+        self._tick.stop()
+        self._finish.stop()
+        self._hold.stop()
+        self._busy = False
+        self._clear_ring()
+
+    # ── 내부 ────────────────────────────────────────────────────────
+    def _advance(self) -> None:
+        self._elapsed += self.TICK_MS
+        self._progress = self.CEILING * (
+            1.0 - exp(-self._elapsed / self.TIME_CONSTANT_MS)
+        )
+        self.update()
+
+    def _set_progress(self, value: object) -> None:
+        try:
+            self._progress = float(value)
+        except (TypeError, ValueError):
+            self._progress = 0.0
+        self.update()
+
+    def _start_hold(self) -> None:
+        self._hold.start()
+
+    def _clear_ring(self) -> None:
+        self._progress = 0.0
+        self._elapsed = 0.0
+        self.update()
+
+    # ── 그리기 ──────────────────────────────────────────────────────
+    def paintEvent(self, event) -> None:  # noqa: ARG002 - Qt가 주는 인자
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        bounds = QRectF(self.rect())
+        running = self._busy or self._progress > 0.0
+
+        if self.isDown():
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor("#e4e7ea"))
+            painter.drawEllipse(bounds.adjusted(0.5, 0.5, -0.5, -0.5))
+        elif self.underMouse():
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor("#eef0f3"))
+            painter.drawEllipse(bounds.adjusted(0.5, 0.5, -0.5, -0.5))
+
+        # 테두리 동그라미. 선 굵기의 절반만큼 안으로 들여야 잘리지 않는다.
+        ring_rect = bounds.adjusted(3.2, 3.2, -3.2, -3.2)
+        if running:
+            ring_color = QColor(self.BUSY_TRACK)
+            mark_color = QColor(self.BUSY_FILL)
+        elif self._has_files:
+            ring_color = QColor(self.READY_RING)
+            mark_color = QColor(self.READY_MARK)
+        else:
+            ring_color = QColor(self.IDLE_RING)
+            mark_color = QColor(self.IDLE_MARK)
+
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        track_pen = QPen(ring_color, 1.9)
+        track_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(track_pen)
+        painter.drawEllipse(ring_rect)
+
+        if self._progress > 0.0:
+            fill_pen = QPen(QColor(self.BUSY_FILL), 2.2)
+            fill_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(fill_pen)
+            # Qt의 각도는 1/16도이고 반시계가 +다. 12시(90°)에서 시작해
+            # 시계 방향으로 돌리려면 음수로 훑는다.
+            span = int(round(360 * 16 * min(1.0, self._progress)))
+            painter.drawArc(ring_rect, 90 * 16, -span)
+
+        # 가운데 아래 화살표. 동그라미 안에 들어앉는 크기로만 그린다.
+        center = ring_rect.center()
+        mark_pen = QPen(mark_color, 1.8)
+        mark_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        mark_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(mark_pen)
+        top = center.y() - 4.6
+        bottom = center.y() + 3.9
+        painter.drawLine(QPointF(center.x(), top), QPointF(center.x(), bottom))
+        head = QPainterPath()
+        head.moveTo(center.x() - 3.2, bottom - 3.2)
+        head.lineTo(center.x(), bottom)
+        head.lineTo(center.x() + 3.2, bottom - 3.2)
+        painter.drawPath(head)
+        painter.end()
+
+
+
+class DownloadFileRow(QWidget):
+    """다운로드 목록의 파일 한 줄. 커서를 올리면 음영과 휴지통이 함께 뜬다.
+
+    평소에는 바탕 없이 글자만 둔다. 커서가 줄 어디든 들어오면 글자와
+    휴지통을 한 덩어리로 감싸는 회색 음영을 깔고 휴지통을 드러낸다.
+    휴지통 단추는 제 바탕을 따로 그리지 않는다 — 글자 바탕과 휴지통
+    바탕이 두 조각으로 갈라져 보였다.
+
+    휴지통 자리는 늘 비워 둔다. 나타날 때 자리를 새로 만들면 긴 이름이
+    다시 접히며 줄 높이가 출렁인다.
+    """
+
+    deleteRequested = Signal()
+    # 예전 36px의 2/3.
+    BUTTON_SIZE = 24
+    HOVER_BACKGROUND = "#eef0f3"
+
+    def __init__(self, text: str, icon: QIcon, parent=None) -> None:
+        super().__init__(parent)
+        self.setObjectName("downloadFileRow")
+        self.setMouseTracking(True)
+        self._icon = icon
+        # 아래 _apply_reveal(False)가 실제로 한 번 돌게 참으로 시작한다.
+        # 거짓으로 두면 "바뀐 것이 없다"며 그냥 돌아가, 단추가 그림 없이
+        # 눌리는 상태로 남았다.
+        self._revealed = True
+        self._deletable = True
+        self._hovered = False
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 2, 4, 2)
+        layout.setSpacing(4)
+        self.label = QLabel(text, self)
+        self.label.setWordWrap(True)
+        # QMenu는 열려 있는 동안 마우스를 붙잡는다. 라벨이 누름을 직접
+        # 받으려 하면 메뉴가 먼저 처리해 버려 아무 일도 일어나지 않는다.
+        # 라벨은 글자만 그리게 두고, 누름은 메뉴가 내보내는 항목 신호로 받는다.
+        self.label.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
+        )
+        layout.addWidget(self.label, 1)
+
+        self.delete_button = QToolButton(self)
+        self.delete_button.setIconSize(QSize(17, 17))
+        self.delete_button.setFixedSize(self.BUTTON_SIZE, self.BUTTON_SIZE)
+        self.delete_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.delete_button.setToolTip("이 파일을 휴지통으로 보냅니다.")
+        self.delete_button.setStyleSheet(
+            "QToolButton {border:none; background:transparent; padding:0;}"
+        )
+        self.delete_button.clicked.connect(self.deleteRequested.emit)
+        # 여러 줄 이름에서도 위쪽에 붙지 않고 줄 가운데에 둔다.
+        layout.addWidget(
+            self.delete_button, 0, Qt.AlignmentFlag.AlignVCenter
+        )
+        self._apply_reveal(False)
+
+    def set_deletable(self, deletable: bool) -> None:
+        """이미 지운 줄은 휴지통을 내주지 않는다."""
+        self._deletable = bool(deletable)
+        if not self._deletable:
+            self._apply_reveal(False)
+
+    def _apply_reveal(self, revealed: bool) -> None:
+        revealed = bool(revealed) and self._deletable
+        if revealed == self._revealed:
+            return
+        self._revealed = revealed
+        # 자리는 그대로 두고 그림만 넣고 뺀다(숨기면 줄 높이가 출렁인다).
+        self.delete_button.setIcon(self._icon if revealed else QIcon())
+        self.delete_button.setEnabled(revealed)
+
+    def _set_hovered(self, hovered: bool) -> None:
+        hovered = bool(hovered)
+        self._apply_reveal(hovered)
+        if hovered != self._hovered:
+            self._hovered = hovered
+            self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        # 글자와 휴지통을 한 장의 음영으로 감싼다.
+        if self._hovered:
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(self.HOVER_BACKGROUND))
+            painter.drawRoundedRect(QRectF(self.rect()), 4, 4)
+            painter.end()
+        super().paintEvent(event)
+
+    def enterEvent(self, event) -> None:
+        self._set_hovered(True)
+        super().enterEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        self._set_hovered(self.rect().contains(event.position().toPoint()))
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self._set_hovered(False)
+        super().leaveEvent(event)
 
 
 class ResultOverlayLabel(QLabel):
@@ -4799,6 +5291,56 @@ class TabClickActivator(QObject):
                 else:
                     self.settled.emit()
         return super().eventFilter(watched, event)
+
+
+class ScrollChevronButton(QToolButton):
+    """탭 띠가 넘칠 때 좌우로 더 있음을 알리는 작은 화살표.
+
+    예전에는 일반 단추 바탕이 음영 박스처럼 보여, 휠로 넘길 수 있다는
+    힌트보다 덩치만 컸다. 선만 그린 ``<`` ``>`` 모양으로 바꾼다.
+    """
+
+    WIDTH = 18
+    HEIGHT = 30
+
+    def __init__(self, direction: str, parent=None) -> None:
+        super().__init__(parent)
+        self._direction = "left" if direction == "left" else "right"
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFixedSize(self.WIDTH, self.HEIGHT)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        hovered = self.underMouse() and self.isEnabled()
+        if hovered:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor("#e8edf3"))
+            painter.drawRoundedRect(self.rect().adjusted(1, 5, -1, -5), 4, 4)
+        if self.isEnabled():
+            color = QColor("#1768aa" if hovered else "#7a8494")
+        else:
+            color = QColor("#c4cad3")
+        pen = QPen(
+            color,
+            1.5,
+            Qt.PenStyle.SolidLine,
+            Qt.PenCapStyle.RoundCap,
+            Qt.PenJoinStyle.RoundJoin,
+        )
+        painter.setPen(pen)
+        cx = self.width() / 2
+        cy = self.height() / 2
+        # ``<`` / ``>`` 한 획씩. 너무 크면 탭 줄과 다투니 작은 치수로 둔다.
+        if self._direction == "left":
+            painter.drawLine(QPointF(cx + 2, cy - 5), QPointF(cx - 3, cy))
+            painter.drawLine(QPointF(cx - 3, cy), QPointF(cx + 2, cy + 5))
+        else:
+            painter.drawLine(QPointF(cx - 2, cy - 5), QPointF(cx + 3, cy))
+            painter.drawLine(QPointF(cx + 3, cy), QPointF(cx - 2, cy + 5))
+        painter.end()
 
 
 class TabStripScrollArea(QScrollArea):

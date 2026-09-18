@@ -537,10 +537,12 @@ def law_reference_html_text(
 
 
 # 조문 본문(항ㆍ호ㆍ목)이 시작하는 왼쪽 자리. 조문 제목 줄에는 즐겨찾기
-# 별 단추 자리를 내려고 같은 폭의 왼쪽 여백을 준다(ResourceSearchTab의
-# ``_ARTICLE_FAVORITE_HEADING_MARGIN``). 값을 맞춰 두어야 조와 항이 같은
-# 자리에서 시작한다.
-ARTICLE_BODY_LEFT_MARGIN = 22
+# 별과 내려받기 선택 상자 자리를 내려고 같은 폭의 왼쪽 여백을 준다
+# (ResourceSearchTab의 ``_ARTICLE_FAVORITE_HEADING_MARGIN``). 값을 맞춰
+# 두어야 조와 항이 같은 자리에서 시작한다. 한쪽만 바꾸면 항(①)이 조문
+# 제목보다 앞으로 튀어나온다. 호ㆍ목ㆍ세목은 이 값에서 파생되므로
+# 여기만 고치면 아래 위계가 모두 따라온다.
+ARTICLE_BODY_LEFT_MARGIN = 34
 
 
 # 개정 이력은 본문보다 한 단계 작게. 본문은 조절칸 기본 9.5pt인데

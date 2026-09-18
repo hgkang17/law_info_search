@@ -54,6 +54,7 @@ from ui.widgets import (
     DetailSearchBar,
     CornerCloseTabBar,
     DeferredWrapTextBrowser,
+    DownloadTrayButton,
     tab_preview_snapshot,
     PopupDragBar,
     PopupResizeHandle,
@@ -1644,14 +1645,24 @@ class DetachedDocumentWindow(QWidget):
         self.document_tabs.setExpanding(False)
         self.document_tabs.setMovable(True)
         self.document_tabs.setTabsClosable(False)
-        self.document_tabs.setElideMode(Qt.TextElideMode.ElideRight)
-        self.document_tabs.setFixedHeight(34)
+        # 본 창 '열린 본문' 띠와 같이 두 줄 제목을 줄이지 않고 다 보인다.
+        # 탭 한 칸은 두 줄 글자에 선택 밑줄(2px)까지 37px이다. 탭 줄을
+        # 그보다 낮게 묶으면 밑줄이 잘리고 Qt가 둘째 줄을 '…'로 줄인다.
+        self.document_tabs.setElideMode(Qt.TextElideMode.ElideNone)
+        self.document_tabs.setFixedHeight(38)
         self.document_tabs.currentChanged.connect(self._select_page)
         self.document_tabs.tabCloseRequested.connect(self._close_tab)
         self.document_tabs.detachRequested.connect(self._detach_tab)
         self.document_tabs.preview_provider = lambda page: (page.windowTitle(), tab_preview_snapshot(page.reader_splitter))
         self.document_tabs.drop_probe = lambda point: self.probe_reattach(point)
         row.addWidget(self.document_tabs, 1, Qt.AlignmentFlag.AlignTop)
+        # 본 창 머리글과 같은 다운로드 목록 단추. 이 창에서 받은 파일도
+        # 본 창 목록과 함께 쌓이고, 목록은 이 단추 아래에 펴진다.
+        self.download_list_button = DownloadTrayButton(self.header)
+        self.download_list_button.setToolTip("내려받은 파일 목록을 엽니다.")
+        self.download_list_button.clicked.connect(self._show_download_list)
+        row.addWidget(self.download_list_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        row.addSpacing(6)
         for kind, tip, callback in (
             ("minimize", "최소화", self.showMinimized),
             ("maximize", "최대화 / 복원", self.toggle_maximized),
@@ -1779,6 +1790,29 @@ class DetachedDocumentWindow(QWidget):
         self.document_tabs.setCurrentIndex(index)
         self.document_tabs.blockSignals(False)
         self._select_page(index)
+        self.bind_download_tray(page)
+
+    def bind_download_tray(self, page) -> None:
+        """페이지 본문 컨트롤러의 다운로드 표시를 이 창 단추로 돌린다.
+
+        페이지는 창 사이를 옮겨 다니므로 들어올 때마다 다시 묶는다.
+        """
+        reader = getattr(page, "source_reader", None)
+        if reader is None or not hasattr(reader, "_download_list_button"):
+            return
+        reader._download_list_button = self.download_list_button
+        self.download_list_button.set_has_files(
+            bool(getattr(reader, "_completed_downloads", None))
+        )
+
+    def _show_download_list(self) -> None:
+        page = self.current_page()
+        reader = getattr(page, "source_reader", None) if page is not None else None
+        if not hasattr(reader, "_show_download_popup"):
+            # 해석례ㆍ판례 같은 본문은 자기 목록이 없다. 본 창 목록을 편다.
+            reader = getattr(self.owner, "resource_tab", None)
+        if reader is not None and hasattr(reader, "_show_download_popup"):
+            reader._show_download_popup(anchor=self.download_list_button)
 
     def _select_page(self, index):
         if index >= 0:

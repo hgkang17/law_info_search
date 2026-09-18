@@ -237,7 +237,7 @@ class LawSearchTab(QWidget):
         scope_label = (
             "안건명"
             if self.is_central
-            else "해석례명" if self.is_expc else "판례명"
+            else "법령해석례명" if self.is_expc else "판례명"
         )
         self.scope_combo.addItem(scope_label, 1)
         self.scope_combo.addItem("본문", 2)

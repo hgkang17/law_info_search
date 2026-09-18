@@ -7,7 +7,9 @@ from pathlib import Path
 import sys
 import time
 
-from PySide6.QtCore import QEvent, QPoint, QRect, QSettings, Qt, QTimer, QUrl
+from PySide6.QtCore import (
+    QEvent, QPoint, QRect, QSettings, QSize, Qt, QTimer, QUrl,
+)
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -26,6 +28,8 @@ from PySide6.QtWidgets import (
     QSpacerItem,
     QStackedWidget,
     QTableWidgetItem,
+    QMenu,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -69,7 +73,9 @@ from ui.update_notes import show_update_history_dialog
 from ui.widgets import (
     ClickableLabel,
     CornerCloseTabBar,
+    DownloadTrayButton,
     GroupedNavigationList,
+    ScrollChevronButton,
     SharedStatusBar,
     TabClickActivator,
     TabStripScrollArea,
@@ -165,6 +171,56 @@ class LawSearchWindow(QMainWindow):
         super().showEvent(event)
         # 네이티브 제목줄까지 밝은 회색 작업공간에 이어지게 한다.
         apply_light_title_bar(self)
+        self._match_favorite_project_chip_height()
+
+    def _match_favorite_project_chip_height(self) -> None:
+        """프로젝트 칩 높이를 API 설정 단추와 같게 맞춘다."""
+        api = getattr(self, "oc_api_settings_button", None)
+        chip = getattr(self, "favorite_project_button", None)
+        if api is None or chip is None:
+            return
+        # 테마 스타일이 정한 API 높이를 기준으로 둘 다 못박는다.
+        # 칩 글자(12px)가 API(9pt)보다 커서 max-height만으로는 다시
+        # 커지므로, 글자 크기도 맞추고 마지막에 setFixedHeight로 잠근다.
+        height = max(api.height(), api.sizeHint().height(), 28)
+        api.setFixedHeight(height)
+        chip.setStyleSheet(
+            "QToolButton#favoriteProjectChip {"
+            f"min-height:{height}px; max-height:{height}px;"
+            "background:#fdf6e3; border:1px solid #ecd9a5;"
+            "border-radius:6px; padding:0 11px 0 8px;"
+            "color:#7a5d18; font-size:9pt;}"
+            "QToolButton#favoriteProjectChip:hover {background:#fbeecb;}"
+            "QToolButton#favoriteProjectChip::menu-indicator {"
+            "subcontrol-position:right center; subcontrol-origin:padding;"
+            "width:10px; right:3px;}"
+        )
+        chip.setFixedHeight(height)
+
+    def _clamp_favorite_project_menu(self) -> None:
+        """프로젝트 목록이 프로그램 창 밖으로 나가지 않게 안쪽으로 민다."""
+        menu = getattr(self, "favorite_project_menu", None)
+        if menu is None or not menu.isVisible():
+            return
+        window_rect = QRect(self.mapToGlobal(QPoint(0, 0)), self.size())
+        geo = menu.frameGeometry()
+        margin = 8
+        x = min(
+            max(geo.x(), window_rect.left() + margin),
+            max(
+                window_rect.left() + margin,
+                window_rect.right() - geo.width() - margin,
+            ),
+        )
+        y = min(
+            max(geo.y(), window_rect.top() + margin),
+            max(
+                window_rect.top() + margin,
+                window_rect.bottom() - geo.height() - margin,
+            ),
+        )
+        if x != geo.x() or y != geo.y():
+            menu.move(x, y)
 
     def _load_saved_api_key(self) -> str:
         # API 인증값은 QSettings에 평문으로 저장한다. 이전 버전의 DPAPI
@@ -437,18 +493,18 @@ class LawSearchWindow(QMainWindow):
             "QScrollArea { background: transparent; border: none; }"
             "QScrollArea > QWidget > QWidget { background: transparent; }"
         )
-        self.open_document_scroll_left = QPushButton("‹")
-        self.open_document_scroll_right = QPushButton("›")
+        self.open_document_scroll_left = ScrollChevronButton("left")
+        self.open_document_scroll_right = ScrollChevronButton("right")
         for button, name, tip in (
             (self.open_document_scroll_left, "openDocumentsScrollLeft", "이전 열린 본문 보기"),
             (self.open_document_scroll_right, "openDocumentsScrollRight", "다음 열린 본문 보기"),
         ):
             button.setObjectName(name)
-            button.setFixedHeight(30)
-            button.setFixedWidth(0)
-            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             button.setToolTip(tip)
             button.hide()
+            # 숨길 때는 폭을 0으로 접어 탭 띠와 전체 끄기 사이에 빈자리가
+            # 생기지 않게 한다. 보일 때만 화살표 폭을 되살린다.
+            button.setFixedWidth(0)
         self.open_document_scroll_left.clicked.connect(
             lambda: self.open_document_tab_strip.horizontalScrollBar().setValue(
                 self.open_document_tab_strip.horizontalScrollBar().value() - 120
@@ -501,11 +557,17 @@ class LawSearchWindow(QMainWindow):
         # 남는 자리는 모두 오른쪽에 몰아 준다. 이 여백이 없으면 탭과 단추가
         # 띠 가운데로 모여 왼쪽 끝에서 시작하지 않았다.
         self.open_documents_layout.addStretch(0)
-        self.open_document_api_refresh_button = QPushButton("API 갱신")
+        # 본문 제목 줄에 함께 서는 단추라 폭을 적게 쓰는 편이 낫다.
+        # 글자를 줄이고 두 줄로 접는다(AI 에이전트 단추와 같은 방식).
+        self.open_document_api_refresh_button = QPushButton("API\n갱신")
         self.open_document_api_refresh_button.setObjectName(
             "openDocumentApiRefresh"
         )
-        self.open_document_api_refresh_button.setFixedHeight(28)
+        self.open_document_api_refresh_button.setStyleSheet(
+            "QPushButton#openDocumentApiRefresh {font-size:11px;"
+            "line-height:12px; padding:1px 6px;}"
+        )
+        self.open_document_api_refresh_button.setFixedHeight(34)
         self.open_document_api_refresh_button.setCursor(
             Qt.CursorShape.PointingHandCursor
         )
@@ -530,7 +592,7 @@ class LawSearchWindow(QMainWindow):
             ("즐겨찾기", "favorites"),
             ("법령 검색", 1),
             ("중앙부처 질의회신", 2),
-            ("법령 해석례", 3),
+            ("법령해석례", 3),
             ("판례 검색", 4),
             ("AI 에이전트", "ai"),
             ("저장내역", "viewed"),
@@ -602,9 +664,54 @@ class LawSearchWindow(QMainWindow):
         close_row.addWidget(close_api_button)
         dialog_layout.addLayout(close_row)
 
+        # 지금 열려 있는 즐겨찾기 프로젝트. 별을 눌러 즐겨찾기에 넣으면
+        # 이 프로젝트로 들어가는데, 즐겨찾기 화면 밖에서는 어느 프로젝트가
+        # 열려 있는지 알 길이 없었다. 머리글에 늘 띄워 두고, 눌러서 바로
+        # 바꿀 수 있게 한다. API 설정 바로 왼쪽에 둔다.
+        self.favorite_project_button = QToolButton()
+        self.favorite_project_button.setObjectName("favoriteProjectChip")
+        self.favorite_project_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.favorite_project_button.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+        self.favorite_project_button.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextOnly
+        )
+        # 높이는 API 설정과 같게 맞춘다. 전역 스타일시트의
+        # QPushButton#ocApiSettingsButton 높이(테마별 28/30)를 따른다.
+        self.favorite_project_menu = QMenu(self.favorite_project_button)
+        self.favorite_project_menu.setObjectName("favoriteProjectMenu")
+        # 머리글 칩과 비슷한 크기로 읽기 쉽게 둔다.
+        self.favorite_project_menu.setStyleSheet(
+            "QMenu#favoriteProjectMenu {"
+            "font-size: 9pt; padding: 2px;}"
+            "QMenu#favoriteProjectMenu::item {"
+            "padding: 3px 10px;}"
+            "QMenu#favoriteProjectMenu::item:selected {"
+            "background: #eef3f9;}"
+        )
+        self.favorite_project_button.setMenu(self.favorite_project_menu)
+        self.favorite_project_menu.aboutToShow.connect(
+            self._fill_favorite_project_menu
+        )
+        # InstantPopup이 자리를 잡은 뒤 창 밖으로 삐져나오면 안쪽으로 민다.
+        self.favorite_project_menu.aboutToShow.connect(
+            lambda: QTimer.singleShot(0, self._clamp_favorite_project_menu)
+        )
+
+        # 내려받은 파일 목록. 인터넷 브라우저처럼 머리글 오른쪽에 늘 서
+        # 있고, 누르면 받은 파일 목록이 아래로 펴진다. 본문의 다운로드
+        # 단추는 받기만 하므로, 받아 둔 파일을 열려다가 새로 받아 버리는
+        # 일이 없다. 받은 것이 없어도 숨기지 않는다 — 숨었다 나타나면
+        # 그때마다 옆 단추가 좌우로 밀린다. 아이콘ㆍ차오르는 동그라미는
+        # 단추가 직접 그린다(DownloadTrayButton).
+        self.download_list_button = DownloadTrayButton()
+        self.download_list_button.setToolTip("내려받은 파일 목록을 엽니다.")
+        header_layout.addWidget(self.download_list_button)
+        header_layout.addWidget(self.favorite_project_button)
+
         self.oc_api_settings_button = QPushButton("API 설정")
         self.oc_api_settings_button.setObjectName("ocApiSettingsButton")
-        self.oc_api_settings_button.setFixedHeight(28)
         self.oc_api_settings_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.oc_api_settings_button.setToolTip(
             "법제처 API 인증키를 입력합니다."
@@ -612,6 +719,8 @@ class LawSearchWindow(QMainWindow):
         self.oc_api_settings_button.clicked.connect(self.open_oc_api_settings)
         header_layout.addWidget(self.oc_api_settings_button)
         self._refresh_oc_api_settings_button()
+        # 스타일시트가 단추 높이를 정한 뒤 칩 높이를 맞춘다.
+        QTimer.singleShot(0, self._match_favorite_project_chip_height)
         self._header_card = header
         root.addWidget(header)
 
@@ -648,6 +757,7 @@ class LawSearchWindow(QMainWindow):
         self.resource_tab.set_pinned_api_refresh_button(
             self.open_document_api_refresh_button
         )
+        self.resource_tab.set_download_list_button(self.download_list_button)
         self._api_refresh_layout = self.resource_tab.pinned_headline_row
         self.viewed_laws_tab = ViewedLawsTab(self.law_cache, self.tabs)
         self.viewed_laws_tab.openRequested.connect(self._open_viewed_law)
@@ -664,6 +774,10 @@ class LawSearchWindow(QMainWindow):
         self.favorites_tab.searchRequested.connect(
             self._search_favorite_in_resource_list
         )
+        self.favorites_tab.activeProjectChanged.connect(
+            self._show_favorite_project
+        )
+        self._show_favorite_project(self.favorites_tab.current_project_name())
         ai_container = QWidget()
         self.ai_container = ai_container
         ai_layout = QVBoxLayout(ai_container)
@@ -693,6 +807,22 @@ class LawSearchWindow(QMainWindow):
         self.central_tab.reference_tab = self.resource_tab
         self.expc_tab.reference_tab = self.resource_tab
         self.prec_tab.reference_tab = self.resource_tab
+        # 메뉴 이동 때 보관한 본문 위치를 사용자가 굴리는 대로 따라 고친다.
+        for source, tab in (
+            ("resource", self.resource_tab),
+            ("ai_search", self.ai_search_tab),
+            ("ai_related", self.ai_related_tab),
+            ("central", self.central_tab),
+            ("expc", self.expc_tab),
+            ("prec", self.prec_tab),
+        ):
+            view = getattr(tab, "detail_view", None)
+            if view is not None:
+                view.verticalScrollBar().valueChanged.connect(
+                    lambda value, source=source, tab=tab: (
+                        self._track_open_document_scroll(source, tab, value)
+                    )
+                )
         self.ai_tabs.addWidget(self.ai_related_tab)
         self.ai_tabs.addWidget(self.ai_search_tab)
         ai_layout.addWidget(self.ai_tabs)
@@ -790,7 +920,7 @@ class LawSearchWindow(QMainWindow):
                 "즐겨찾기",
                 "법령 검색",
                 "중앙부처 질의회신",
-                "법령 해석례",
+                "법령해석례",
                 "판례 검색",
             )
         )
@@ -947,11 +1077,12 @@ class LawSearchWindow(QMainWindow):
                     bar.maximum() > 0
                     and self.open_document_tab_strip.isVisible()
                 )
+                arrow_width = ScrollChevronButton.WIDTH if visible else 0
                 for button in (
                     self.open_document_scroll_left,
                     self.open_document_scroll_right,
                 ):
-                    button.setFixedWidth(24 if visible else 0)
+                    button.setFixedWidth(arrow_width)
                     button.setVisible(visible)
                 self.open_documents_layout.invalidate()
                 self.open_documents_layout.activate()
@@ -2074,6 +2205,35 @@ class LawSearchWindow(QMainWindow):
                     view.verticalScrollBar().value()
                 )
 
+    def _track_open_document_scroll(
+        self, source: str, tab: object, value: int
+    ) -> None:
+        """보관해 둔 열린 본문 위치를 보이는 본문의 실제 스크롤로 갱신.
+
+        보관값은 메뉴를 떠날 때만 적혀 그 뒤로 낡는다. 법률을 연 직후(맨
+        위) 다른 메뉴에 다녀오면 0이 남고, 그 뒤 법률을 읽다가 시행령에
+        갔다가 상단 띠로 법률을 다시 누르면 그 0으로 되살려 맨 위로
+        튀었다. 이미 보관 중인 토큰만, 화면에 보이고 내용을 갈아 끼우는
+        중이 아닐 때 고친다(숨은 본문의 임시 0은 적지 않는다).
+        """
+        view = getattr(tab, "detail_view", None)
+        if view is None or not view.isVisible():
+            return
+        if getattr(tab, "_restoring_document", False) or getattr(
+            tab, "_scroll_memory_suspended", 0
+        ):
+            return
+        if view.verticalScrollBar().maximum() <= 0:
+            return
+        if source == "resource":
+            token = f"resource:{getattr(tab, '_active_document_key', '')}"
+        else:
+            token = self._active_document_token
+            if not token.startswith(f"{source}:"):
+                return
+        if token in self._open_document_scrolls:
+            self._open_document_scrolls[token] = int(value)
+
     def _restore_open_document_scroll(self, token: str, tab: object) -> None:
         """본문의 최종 폭이 정해진 뒤 열린 탭의 절대 위치를 복원."""
         if token not in self._open_document_scrolls:
@@ -2348,6 +2508,43 @@ class LawSearchWindow(QMainWindow):
             if width > 0 and width == previous_width:
                 break
             previous_width = width
+
+    def _show_favorite_project(self, name: str = "") -> None:
+        """머리글의 프로젝트 칩에 지금 열린 즐겨찾기 프로젝트를 적는다."""
+        button = getattr(self, "favorite_project_button", None)
+        if button is None:
+            return
+        name = str(name or "").strip()
+        if not name:
+            name = self.favorites_tab.current_project_name()
+        shown = name if len(name) <= 12 else f"{name[:11]}…"
+        button.setText(shown if shown else "즐겨찾기")
+        button.setToolTip(
+            f"즐겨찾기 프로젝트 '{name}'이 열려 있습니다.\n"
+            "별을 눌러 넣는 즐겨찾기가 이 프로젝트로 들어갑니다.\n"
+            "눌러서 다른 프로젝트로 바꿀 수 있습니다."
+            if name
+            else "즐겨찾기 프로젝트를 고릅니다."
+        )
+
+    def _fill_favorite_project_menu(self) -> None:
+        """칩을 누르면 프로젝트 목록을 편다. 지금 것에는 표시를 남긴다."""
+        menu = self.favorite_project_menu
+        menu.clear()
+        current = self.favorites_tab.current_project_name()
+        for name in self.favorites_tab.project_names():
+            action = menu.addAction(f"✓ {name}" if name == current else f"   {name}")
+            action.triggered.connect(
+                lambda _checked=False, target=name: (
+                    self._switch_favorite_project(target)
+                )
+            )
+        if menu.isEmpty():
+            menu.addAction("프로젝트가 없습니다.").setEnabled(False)
+
+    def _switch_favorite_project(self, name: str) -> None:
+        if self.favorites_tab.open_project_by_name(name):
+            self._show_favorite_project(name)
 
     def _open_viewed_law(self, record: object) -> None:
         self._route_saved_record(record, reading_mode=True)

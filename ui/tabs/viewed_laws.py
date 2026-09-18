@@ -86,6 +86,8 @@ class ViewedLawsTab(QWidget):
     openRequested = Signal(object)
     searchRequested = Signal(str, str)
     allCachesDeleted = Signal()
+    # 머리글의 프로젝트 칩이 따라오도록 바뀔 때마다 알린다.
+    activeProjectChanged = Signal(str)
     FAVORITE_CATEGORIES = (
         ("law", "법령검색"),
         ("article", "조항호목"),
@@ -725,6 +727,30 @@ class ViewedLawsTab(QWidget):
             return ""
         return self.project_tabs.tabText(self.project_tabs.currentIndex())
 
+    def current_project_name(self) -> str:
+        """지금 열려 있는 즐겨찾기 프로젝트 이름. 머리글 칩이 쓴다."""
+        return self._current_project_name()
+
+    def project_names(self) -> list[str]:
+        """프로젝트 이름을 탭 차례대로."""
+        if self.project_tabs is None:
+            return []
+        return [
+            self.project_tabs.tabText(index)
+            for index in range(self.project_tabs.count())
+        ]
+
+    def open_project_by_name(self, name: str) -> bool:
+        """이름으로 프로젝트를 연다. 머리글 칩의 목록에서 고를 때 쓴다."""
+        if self.project_tabs is None:
+            return False
+        for index in range(self.project_tabs.count()):
+            if self.project_tabs.tabText(index) == name:
+                self.project_tabs.setCurrentIndex(index)
+                self._favorite_project_changed(index)
+                return True
+        return False
+
     def _is_common_favorite_view(self) -> bool:
         """예전 공통 목록 탭 자리. 지금은 쓰지 않는다."""
         return False
@@ -790,6 +816,7 @@ class ViewedLawsTab(QWidget):
         finally:
             self._saving_favorite_layout = False
         self.refresh()
+        self.activeProjectChanged.emit(self._current_project_name())
         self.status_label.setText(
             f"'{self._current_project_name()}' 프로젝트를 열었습니다."
         )
@@ -1044,7 +1071,45 @@ class ViewedLawsTab(QWidget):
                 self.favorite_tree = self.favorite_trees[visible_categories[0]]
             else:
                 self.favorite_tree = None
+        # 접혀 폭이 0인 채 체크를 껐다 켜면 음영 띠 손잡이만 두껍게
+        # 남는다. 다시 켠 칸에는 폭을 조금 되돌려 일반 칸으로 서게 한다.
+        self._restore_zero_width_visible_favorite_columns()
         QTimer.singleShot(0, self._sync_union_column_widths)
+
+    def _restore_zero_width_visible_favorite_columns(self) -> None:
+        """보이는 칸인데 폭이 0이면 옆 칸에서 조금 나눠 받는다."""
+        splitter = self.favorite_splitter
+        if splitter is None:
+            return
+        sizes = list(splitter.sizes())
+        zero_visible = [
+            index
+            for index, (category, _label) in enumerate(self.FAVORITE_CATEGORIES)
+            if (
+                self.favorite_category_cards[category].isVisible()
+                and sizes[index] == 0
+            )
+        ]
+        if not zero_visible:
+            return
+        from ui.widgets import _CollapseAwareHandle
+
+        restore = _CollapseAwareHandle.RESTORE_SIZE
+        for index in zero_visible:
+            donors = [
+                donor
+                for donor in range(len(sizes))
+                if donor not in zero_visible and sizes[donor] > 80
+            ]
+            if not donors:
+                break
+            donor = max(donors, key=lambda item: sizes[item])
+            take = min(restore, sizes[donor] - 80)
+            if take <= 0:
+                continue
+            sizes[index] = take
+            sizes[donor] -= take
+        splitter.setSizes(sizes)
 
     @staticmethod
     def _display_date(value: object) -> str:

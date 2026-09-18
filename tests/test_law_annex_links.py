@@ -143,8 +143,15 @@ def test_annex_links_are_rendered_after_articles(qt_app, tmp_path) -> None:
     assert icon_data_uri(ANNEX_HWP_ICON_PATH) in html
     assert icon_data_uri(ANNEX_PDF_ICON_PATH) in html
     assert "file:" not in html
-    assert "flDownload.do?flSeq=11" in html
-    assert "flDownload.do?flSeq=12" in html
+    # 내려받기 표시는 사이트 주소를 그대로 걸지 않는다. 주소를 걸면 Qt가
+    # 기본 브라우저에 넘겨, 받은 파일이 프로그램 밖으로 나가고 머리글의
+    # 다운로드 목록에도 잡히지 않는다. 자체 주소로 걸어 앱 안에서 받는다.
+    assert "flDownload.do" not in html
+    assert 'href="annexsave:0"' in html
+    assert 'href="annexsavepdf:0"' in html
+    # PDF가 없는 별지서식에는 PDF 표시를 걸지 않는다.
+    assert 'href="annexsave:1"' in html
+    assert 'href="annexsavepdf:1"' not in html
     # 굵은 글씨와 세 줄짜리 링크 묶음은 없앴다.
     assert "원본 다운로드" not in html
     assert "PDF 다운로드" not in html

@@ -59,6 +59,8 @@ datas = collect_data_files("hwpx") + playwright_datas + [
     ("spin_down.svg", "."),
     ("annex_hwp.svg", "."),
     ("download.svg", "."),
+    ("folder_open.svg", "."),
+    ("trash.svg", "."),
     ("annex_pdf.svg", "."),
     ("annex_expand.svg", "."),
     ("annex_collapse.svg", "."),

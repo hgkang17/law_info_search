@@ -102,6 +102,14 @@ ANNEX_HWP_ICON_PATH = APP_DIR / "annex_hwp.svg"
 DOWNLOAD_ICON_PATH = APP_DIR / "download.svg"
 
 
+# 다운로드 목록 맨 윗줄에서 받은 폴더를 여는 표시.
+FOLDER_OPEN_ICON_PATH = APP_DIR / "folder_open.svg"
+
+
+# 다운로드 목록에서 받은 파일을 휴지통으로 보내는 표시.
+TRASH_ICON_PATH = APP_DIR / "trash.svg"
+
+
 ANNEX_PDF_ICON_PATH = APP_DIR / "annex_pdf.svg"
 
 

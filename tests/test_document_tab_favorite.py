@@ -490,11 +490,16 @@ def test_full_law_body_has_article_favorite_stars_on_heading_left(tmp_path) -> N
     cursor = tab.detail_view.textCursor()
     cursor.setPosition(position)
     heading_rect = tab.detail_view.cursorRect(cursor)
-    assert first_star.geometry().right() < heading_rect.left()
+    # 왼쪽부터 별, 내려받기 선택 상자, 조문 제목 순으로 놓인다.
+    first_checkbox = tab._article_checkboxes[0]
+    assert first_checkbox.isVisible()
+    assert first_star.geometry().right() < first_checkbox.geometry().left()
+    assert first_checkbox.geometry().right() < heading_rect.left()
     assert first_star.width() == ResourceSearchTab._ARTICLE_FAVORITE_SIZE
+    assert first_checkbox.width() == ResourceSearchTab._ARTICLE_CHECKBOX_SIZE
     assert (
-        heading_rect.left() - first_star.geometry().right()
-        <= ResourceSearchTab._ARTICLE_FAVORITE_GAP + 1
+        heading_rect.left() - first_checkbox.geometry().right()
+        <= ResourceSearchTab._ARTICLE_CHECKBOX_TEXT_GAP + 1
     )
     assert (
         cursor.blockFormat().leftMargin()

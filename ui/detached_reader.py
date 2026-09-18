@@ -82,6 +82,11 @@ def attach_reader(page, source, payload):
     if isinstance(reader, ResourceSearchTab):
         reader._detached_reader = True
         reader._law_short_name_cache.update(source._law_short_name_cache)
+        # 받은 파일 목록은 본 창과 하나다. 어느 창에서 받든 같은 목록에
+        # 쌓이고, 다운로드 단추는 이 창 머리글의 단추를 쓴다.
+        reader._completed_downloads = source._completed_downloads
+        reader._removed_downloads = source._removed_downloads
+        reader._shared_download_source = source
         state = dict(payload["state"])
         document = state.get("document")
         # 원래 탭을 닫은 뒤 호출된다. 이미 뷰에서 떨어진 문서를 넘겨
@@ -103,6 +108,9 @@ def attach_reader(page, source, payload):
                                    payload.get("text", ""),
                                    getattr(source, "_visible_memos", []),
                                    payload.get("scroll", 0))
+    bind = getattr(page.window(), "bind_download_tray", None)
+    if callable(bind):
+        bind(page)
     sync_reader_state(page)
 
 

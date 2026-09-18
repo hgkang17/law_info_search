@@ -10,12 +10,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 from PySide6.QtCore import QSettings
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLabel, QWidgetAction
 
 from storage.cache import LawDocumentCache
 from storage.recent import RecentSearchManager
 from ui.tabs.resource_search import ResourceSearchTab
-from ui.widgets import SharedStatusBar
+from ui.widgets import DownloadTrayButton, SharedStatusBar
 from utils.hwp_export import (
     default_export_name,
     law_export_blocks,
@@ -134,7 +134,7 @@ def test_pinned_title_row_offers_the_hwp_button_for_a_law(qt_app, tmp_path, monk
         )
         qt_app.processEvents()
 
-        # 사이트의 전문 HWPX를 받는 버튼이 제목 줄에 표시된다.
+        # 사이트의 전문 한글 문서(HWP)를 받는 버튼이 제목 줄에 표시된다.
         assert not tab.hwp_export_button.isHidden()
         assert tab.HWP_EXPORT_BUTTON_ENABLED
         title, headline = tab._pinned_headline_parts()
@@ -142,6 +142,11 @@ def test_pinned_title_row_offers_the_hwp_button_for_a_law(qt_app, tmp_path, monk
         assert headline.startswith("[시행 2026. 1. 1.]")
         bar = SharedStatusBar()
         tab.use_shared_status(bar)
+        # 머리글의 다운로드 단추. 받은 것이 없어도 서 있어야 한다.
+        tray = DownloadTrayButton()
+        tray.show()
+        tab.set_download_list_button(tray)
+        assert tray.isVisible()
 
         started = []
 
@@ -157,8 +162,9 @@ def test_pinned_title_row_offers_the_hwp_button_for_a_law(qt_app, tmp_path, monk
                     callback() if value is None else callback(value)
 
         class StubWorker:
-            def __init__(self, law_id, name, date, path):
-                self.details = (law_id, name, date, path)
+            def __init__(self, kind, law_id, name, date, path, **kwargs):
+                self.details = (kind, law_id, name, date, path)
+                self.articles = kwargs.get("articles")
                 self.progress = StubSignal()
                 self.succeeded = StubSignal()
                 self.failed = StubSignal()
@@ -167,7 +173,7 @@ def test_pinned_title_row_offers_the_hwp_button_for_a_law(qt_app, tmp_path, monk
             def start(self):
                 started.append(self.details)
                 self.progress.emit("다운로드 중")
-                self.succeeded.emit(str(tmp_path / "국토기본법.hwpx"))
+                self.succeeded.emit(str(tmp_path / "국토기본법.hwp"))
                 self.finished.emit()
 
             def deleteLater(self):
@@ -187,9 +193,90 @@ def test_pinned_title_row_offers_the_hwp_button_for_a_law(qt_app, tmp_path, monk
         )
         tab.hwp_export_button.click()
         assert started == [
-            ("001234", "국토기본법", "20260101", str(tmp_path))
+            ("law", "001234", "국토기본법", "20260101", str(tmp_path))
         ]
-        assert bar.download_button.text() == "다운로드 완료 ▾"
-        assert bar.download_menu.actions()[0].text() == "국토기본법.hwpx"
+        # 하단 상태줄에는 아무것도 띄우지 않는다. 받은 파일은 목록에만
+        # 쌓이고, 목록은 머리글의 다운로드 단추를 눌렀을 때 비로소 펴진다
+        # (받기와 열기를 갈라 두어야 열려다가 또 받는 일이 없다).
+        assert bar.download_button.isHidden()
+        assert [path.name for path in tab._completed_downloads] == [
+            "국토기본법.hwp"
+        ]
+        # 다 받으면 목록은 브라우저처럼 저절로 펴진다. 누르지 않아도
+        # 방금 받은 것이 무엇인지 그 자리에서 보인다.
+        qt_app.processEvents()
+        assert tray._has_files
+        assert tab._download_menu.isVisible()
+        # 목록의 파일 줄은 이름 라벨과 삭제 단추를 담은 줄 위젯이다.
+        names = [
+            action.defaultWidget().findChild(QLabel).text()
+            for action in tab._download_menu.actions()
+            if isinstance(action, QWidgetAction)
+            and action.defaultWidget() is not None
+            and action.defaultWidget().objectName() == "downloadFileRow"
+        ]
+        assert "국토기본법.hwp" in names
+        tab._download_menu.close()
     finally:
         tab.close()
+        tray.deleteLater()
+
+
+def test_download_tray_button_stays_and_fills_while_downloading(qt_app) -> None:
+    """받는 동안 동그라미가 차오르고, 끝나면 한 바퀴를 채운다."""
+    tray = DownloadTrayButton()
+    assert tray._progress == 0.0
+
+    tray.start_progress()
+    # 시간이 흐른 만큼 차오르되, 다 받기 전에는 한 바퀴를 채우지 않는다.
+    tray._elapsed = tray.TIME_CONSTANT_MS
+    tray._advance()
+    filling = tray._progress
+    assert 0.0 < filling < tray.CEILING
+
+    tray.finish_progress()
+    tray._finish.setCurrentTime(tray.FINISH_MS)
+    assert tray._progress == pytest.approx(1.0)
+
+    # 잠시 보여 준 뒤에는 원래 모습으로 돌아간다.
+    tray._clear_ring()
+    assert tray._progress == 0.0
+
+    # 실패하면 채우던 것을 지운다.
+    tray.start_progress()
+    tray._elapsed = tray.TIME_CONSTANT_MS
+    tray._advance()
+    tray.fail_progress()
+    assert tray._progress == 0.0
+    tray.deleteLater()
+
+
+def test_download_popup_answers_even_with_nothing_received(
+    qt_app, tmp_path
+) -> None:
+    """받은 것이 없을 때 눌러도 빈 목록으로 답한다(아무 일 없으면 고장으로 보인다)."""
+    settings = QSettings(
+        str(tmp_path / "empty.ini"), QSettings.Format.IniFormat
+    )
+    tab = ResourceSearchTab(
+        lambda: "",
+        RecentSearchManager(settings),
+        LawDocumentCache(tmp_path / "saved"),
+    )
+    tray = DownloadTrayButton()
+    tray.show()
+    try:
+        tab.set_download_list_button(tray)
+        tab._show_download_popup()
+        qt_app.processEvents()
+        texts = [
+            action.defaultWidget().text()
+            for action in tab._download_menu.actions()
+            if isinstance(action, QWidgetAction)
+            and isinstance(action.defaultWidget(), QLabel)
+        ]
+        assert "받은 파일이 없습니다." in texts
+        tab._download_menu.close()
+    finally:
+        tab.close()
+        tray.deleteLater()

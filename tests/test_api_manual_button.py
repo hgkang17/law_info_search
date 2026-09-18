@@ -66,6 +66,11 @@ def test_header_shows_api_settings_button_instead_of_key_box(qt_app) -> None:
         button = window.oc_api_settings_button
 
         assert header.layout().indexOf(button) >= 0
+        assert header.layout().indexOf(window.favorite_project_button) >= 0
+        assert (
+            header.layout().indexOf(window.favorite_project_button)
+            == header.layout().indexOf(button) - 1
+        )
         assert header.layout().indexOf(window.api_input) == -1
         assert window.api_input.parent() is window.oc_api_dialog
         assert window.api_manual_button.parent() is window.oc_api_dialog

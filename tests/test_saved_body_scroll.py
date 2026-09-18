@@ -22,6 +22,8 @@ def test_restoring_saved_body_preserves_existing_tab_scroll() -> None:
         _queue_three_stage_link_request=lambda _name: None,
         # 저장 화면 복원은 별표 목록도 문서 상태에 함께 담는다.
         _law_annex_entries=lambda _payload: [],
+        # 예전 저장본의 사이트 별표 주소를 앱 안 받기 링크로 바꾸는 단계.
+        _relink_saved_annex_downloads=lambda html, _entries: html,
     )
     record = {
         "render_snapshot_version": LAW_RENDER_SNAPSHOT_VERSION,

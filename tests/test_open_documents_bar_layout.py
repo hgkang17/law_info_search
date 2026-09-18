@@ -100,10 +100,12 @@ def test_open_documents_bar_stops_at_right_edge_and_shows_overflow_arrows(window
     assert bar.maximum() > 0
     assert main_window.open_document_scroll_left.isVisible()
     assert main_window.open_document_scroll_right.isVisible()
-    assert main_window.open_document_scroll_left.width() == 24
-    assert main_window.open_document_scroll_right.width() == 24
+    assert main_window.open_document_scroll_left.width() == 18
+    assert main_window.open_document_scroll_right.width() == 18
     assert not main_window.open_document_scroll_left.isEnabled()
     assert main_window.open_document_scroll_right.isEnabled()
+    assert main_window.open_document_scroll_left.text() == ""
+    assert main_window.open_document_scroll_right.text() == ""
     holder = main_window.open_documents_widget
     button = main_window.close_all_documents_button
     button_right = button.x() + button.width()

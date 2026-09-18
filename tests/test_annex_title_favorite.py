@@ -67,6 +67,13 @@ def test_annex_body_shows_a_star_left_of_the_title(tmp_path) -> None:
 
     tab._show_annex_links(dict(ANNEX_ROW))
     app.processEvents()
+    # 창 크기 조절용 "지연 줄바꿈"은 타이머가 뒤늦게 풀어 준다. 시험은 그
+    # 타이머를 기다리지 않으므로 본문이 최소 폭(80px)에 갇힌 채로 남고,
+    # 가운데 정렬 제목이 왼쪽 끝에 붙어 별과 겹쳐 보인다. 실제 창에서는
+    # 타이머가 돌아 제 폭을 찾는다. 여기서 같은 일을 지금 끝내 둔다.
+    tab.detail_view.settle_wrap_now()
+    tab._position_title_favorite()
+    app.processEvents()
 
     star = tab._title_favorite_button
     assert star.isVisible()
