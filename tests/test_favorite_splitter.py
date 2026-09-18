@@ -478,3 +478,42 @@ def test_mouse_drag_collapse_shows_the_strip_right_away(tmp_path) -> None:
     app.processEvents()
     assert strip.width() == strip.STRIP_WIDTH
     stack.close()
+
+
+def test_collapsed_strip_writes_the_title_vertically(tmp_path, monkeypatch) -> None:
+    """접힌 칸 음영 띠에 칸 이름을 한 글자씩 위에서 아래로 적는다."""
+    from PySide6.QtGui import QPainter
+
+    app = QApplication.instance() or QApplication([])
+    settings = QSettings(str(tmp_path / "title.ini"), QSettings.Format.IniFormat)
+    tab = ViewedLawsTab(
+        LawDocumentCache(tmp_path / "saved"), favorites_only=True, settings=settings
+    )
+    tab.resize(1200, 700)
+    tab.show()
+    app.processEvents()
+    splitter = tab.favorite_splitter
+    sizes = splitter.sizes()
+    sizes[0] += sizes[1]
+    sizes[1] = 0
+    splitter.setSizes(sizes)
+    app.processEvents()
+    strip = splitter.handle(1)
+    title = strip.collapsed_titles()[0]
+    assert title
+
+    drawn = []
+    original = QPainter.drawText
+
+    def record(painter, *args):
+        if len(args) == 3 and isinstance(args[2], str):
+            drawn.append((args[0].top(), args[2]))
+        return original(painter, *args)
+
+    monkeypatch.setattr(QPainter, "drawText", record)
+    strip.grab()
+    letters = [text for _top, text in drawn]
+    assert letters == [char for char in title if not char.isspace()]
+    tops = [top for top, _text in drawn]
+    assert tops == sorted(tops) and len(set(tops)) == len(tops)
+    tab.close()

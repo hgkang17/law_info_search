@@ -584,14 +584,16 @@ class _CollapseAwareHandle(QSplitterHandle):
 
     처음에는 회색 손잡이에 작은 삼각형만 그렸다. 무엇이 접혔는지 알 수
     없고, 옆 칸을 체크 해제로 숨겼을 때도 크기 0으로 읽혀 체크된 칸 옆에
-    접힘 표시가 떴다. 접힌 칸만 음영 띠로 남기고, 누르면 펼친다. 세로
-    글자는 쓰지 않는다 — 바탕 음영만으로 접힘을 알린다.
+    접힘 표시가 떴다. 접힌 칸만 음영 띠로 남기고, 누르면 펼친다. 띠에는
+    칸 이름을 한 글자씩 세로로 적는다.
     """
 
     # 예전 세로 글자 띠에 쓰던 바탕색. 접힌 칸 표시로 그대로 둔다.
     STRIP_BACKGROUND = "#eef1f5"
     STRIP_HOVER_BACKGROUND = "#e1edf8"
     STRIP_BORDER = "#cfd6df"
+    STRIP_TEXT = "#4f5d6e"
+    STRIP_HOVER_TEXT = "#1768aa"
     # 접힌 칸 음영 띠 폭.
     STRIP_WIDTH = 24
     # 눌러 되살릴 때 접힌 칸에 줄 폭.
@@ -789,7 +791,38 @@ class _CollapseAwareHandle(QSplitterHandle):
             else:
                 painter.drawLine(rect.topLeft(), rect.topRight())
                 painter.drawLine(rect.bottomLeft(), rect.bottomRight())
+            self._paint_strip_title(painter, rect, _owned_index, hovered)
         painter.end()
+
+    def _paint_strip_title(
+        self, painter: QPainter, rect: QRect, index: int, hovered: bool
+    ) -> None:
+        """접힌 칸 이름을 띠 안에 적는다. 가로 분할이면 한 글자씩 세로로."""
+        title = self._title_of(index)
+        if not title:
+            return
+        painter.setPen(
+            QColor(self.STRIP_HOVER_TEXT if hovered else self.STRIP_TEXT)
+        )
+        painter.setFont(self.font())
+        if self.orientation() != Qt.Orientation.Horizontal:
+            painter.drawText(rect, int(Qt.AlignmentFlag.AlignCenter), title)
+            return
+        # 한글은 옆으로 눕히기보다 한 글자씩 세로로 쌓아야 읽힌다.
+        line = QFontMetrics(self.font()).height()
+        y = rect.top() + 10
+        for char in title:
+            if char.isspace():
+                y += line // 2
+                continue
+            if y + line > rect.bottom() - 6:
+                break
+            painter.drawText(
+                QRect(rect.left(), y, rect.width(), line),
+                int(Qt.AlignmentFlag.AlignCenter),
+                char,
+            )
+            y += line
 
     def _set_hover_slot(self, slot: int) -> None:
         if slot == self._hover_slot:
