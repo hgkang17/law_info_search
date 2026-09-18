@@ -418,6 +418,10 @@ def _law_save_request(session, item_id, title, effective_date, articles=None):
         raise _FastDownloadUnavailable("사이트의 현행 부칙을 구분하지 못했습니다.")
 
     selected = _selected_articles("law", articles)
+    if selected:
+        # 사이트 저장 창에서 조문만 고르면 부칙 체크는 빠진다. 고른 조문만
+        # 받을 때 부칙까지 실어 보내면 우리 파일에만 부칙이 붙었다.
+        sequences = []
     params = {
         "trSeq": sequence, "efDvPop": "", "nwJoYnInfo": "", "efGubun": "",
         "ancYnChk": "0",
@@ -450,8 +454,12 @@ def _admin_rule_save_request(session, item_id, title, effective_date, articles=N
     # 주소에 실은 행정규칙일련번호로 문서를 고른 것을 믿는다.
     _check_title(title, _site_page_title(html))
     spec = _KINDS["admrul"]
-    appendix = _article_list(session, spec, item_id, str(spec["appendix_mode"]))
     selected = _selected_articles("admrul", articles)
+    # 조문을 골랐으면 부칙은 싣지 않는다(사이트 저장 창과 같다).
+    appendix = (
+        [] if selected
+        else _article_list(session, spec, item_id, str(spec["appendix_mode"]))
+    )
     if not selected:
         articles_found = _article_list(
             session, spec, item_id, str(spec["article_mode"])
@@ -491,8 +499,12 @@ def _ordinance_save_request(session, item_id, title, effective_date, articles=No
         _optional_site_input_value(html, "ordinNm") or _site_page_title(html),
     )
     spec = _KINDS["ordin"]
-    appendix = _article_list(session, spec, item_id, str(spec["appendix_mode"]))
     selected = _selected_articles("ordin", articles)
+    # 조문을 골랐으면 부칙은 싣지 않는다(사이트 저장 창과 같다).
+    appendix = (
+        [] if selected
+        else _article_list(session, spec, item_id, str(spec["appendix_mode"]))
+    )
     if not selected:
         articles_found = _article_list(
             session, spec, item_id, str(spec["article_mode"])

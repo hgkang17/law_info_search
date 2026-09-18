@@ -481,6 +481,57 @@ def test_selected_articles_turn_off_whole_document_for_a_law(tmp_path, monkeypat
     data = posted[-1][1]["data"]
     assert data["joAllCheck"] == ""
     assert data["joNo"] == "0001:00,0002:00"
+    # 사이트 저장 창처럼 조문만 고르면 부칙은 싣지 않는다.
+    assert data["arSeqs"] == ","
+    assert data["arIds"] == ""
+    assert "lastCheck" not in posted[-1][1]["params"]
+
+
+@pytest.mark.parametrize(
+    ("kind", "list_suffix", "expected_jo"),
+    [("admrul", "admRulJoListRInc.do", "0001-0000:00"),
+     ("ordin", "ordinJoListRInc_XML.do", "0001:00")],
+)
+def test_selected_articles_leave_out_the_appendix(
+    tmp_path, monkeypatch, kind, list_suffix, expected_jo
+):
+    """행정규칙ㆍ자치법규도 조문을 고르면 부칙 번호를 보내지 않는다."""
+    page_html = (
+        '<input id="ordinNm" value="시험 문서"><input id="gubun" value="KLAW">'
+    ).encode("utf-8")
+    posted = []
+
+    class Session:
+        def __init__(self):
+            self.headers = {}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def get(self, *_args, **_kwargs):
+            return _Response(page_html)
+
+        def post(self, url, **kwargs):
+            posted.append((url, kwargs))
+            if url.endswith(list_suffix):
+                return _Response(items=[{"cls": "arSeq", "joNo": "9997369"}])
+            return _Response(
+                _hwpml_bytes(), headers=_save_headers("시험 문서(훈령)(제1호)(20260701).hwp")
+            )
+
+    _install_session(monkeypatch, Session)
+
+    site.download_official_law_document(
+        kind, "2149501", "시험 문서", "20260701", tmp_path, articles=["000100"]
+    )
+
+    assert not any(url.endswith(list_suffix) for url, _kwargs in posted)
+    data = posted[-1][1]["data"]
+    assert data["joNo"] == expected_jo
+    assert data["arSeq"] == ""
 
 
 def test_selected_articles_never_fall_back_to_the_whole_document(tmp_path, monkeypatch):
