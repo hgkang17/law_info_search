@@ -911,6 +911,11 @@ class CollapseAwareSplitter(QSplitter):
         # 바깥(창ㆍ부모)이 준 폭. 손잡이가 띠로 넓어지며 self.width()가
         # 커져도 이 값을 기준으로 칸을 줄여 띠가 창 밖으로 안 밀리게 한다.
         self._available_span = 0
+        # 손잡이를 마우스로 끌 때 Qt는 C++ 안에서 moveSplitter를 불러
+        # 아래 Python 재정의를 거치지 않는다. 그래서 끌어 접은 직후에는
+        # 얇은 선으로 남았다가 다른 화면에 다녀와 레이아웃이 다시 돌 때에야
+        # 음영 띠로 바뀌었다. 끌기마다 나오는 신호로 바로 맞춘다.
+        self.splitterMoved.connect(lambda *_args: self._refresh_handles())
         # sizeHint가 불어나도 부모가 따라 커지지 않게 한다. 부모가 커지면
         # 오른쪽 띠가 창 밖으로 밀려 "아예 안 보이는" 상태가 된다.
         if self.orientation() == Qt.Orientation.Horizontal:

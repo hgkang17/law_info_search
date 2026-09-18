@@ -431,3 +431,50 @@ def test_union_favorites_start_unchecked_even_if_saved_on(tmp_path) -> None:
         assert tab.union_panel.isHidden()
     finally:
         tab.close()
+
+
+def test_mouse_drag_collapse_shows_the_strip_right_away(tmp_path) -> None:
+    """마우스로 끌어 접은 즉시 음영 띠가 되고, 다른 화면에 다녀와도 같다.
+
+    Qt 내부 끌기는 Python의 moveSplitter 재정의를 부르지 않아, 예전에는
+    얇은 선으로 남았다가 화면을 오간 뒤에야 띠로 바뀌었다.
+    """
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QStackedWidget, QWidget
+
+    app = QApplication.instance() or QApplication([])
+    settings = QSettings(str(tmp_path / "drag.ini"), QSettings.Format.IniFormat)
+    stack = QStackedWidget()
+    stack.resize(1300, 700)
+    tab = ViewedLawsTab(
+        LawDocumentCache(tmp_path / "saved"), favorites_only=True, settings=settings
+    )
+    other = QWidget()
+    stack.addWidget(tab)
+    stack.addWidget(other)
+    stack.show()
+    app.processEvents()
+    splitter = tab.favorite_splitter
+    handle = splitter.handle(2)
+    start = QPoint(handle.width() // 2, handle.height() // 2)
+    QTest.mousePress(handle, Qt.MouseButton.LeftButton, pos=start)
+    for step in range(1, 16):
+        QTest.mouseMove(handle, QPoint(start.x() - 40 * step, start.y()))
+        app.processEvents()
+    QTest.mouseRelease(
+        handle, Qt.MouseButton.LeftButton, pos=QPoint(start.x() - 600, start.y())
+    )
+    app.processEvents()
+
+    assert splitter.sizes()[1] == 0
+    strip = splitter.handle(1)
+    assert strip._collapsed_cache == (1,)
+    assert strip.width() == strip.STRIP_WIDTH
+
+    stack.setCurrentWidget(other)
+    app.processEvents()
+    stack.setCurrentWidget(tab)
+    app.processEvents()
+    assert strip.width() == strip.STRIP_WIDTH
+    stack.close()
