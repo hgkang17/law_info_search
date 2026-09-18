@@ -56,17 +56,47 @@ def attach_reader(page, source, payload):
     position = page.layout().indexOf(old_splitter)
     page.layout().removeWidget(old_splitter)
     old_splitter.hide()
-    reader.detail_card.setParent(page)
-    page.layout().insertWidget(position, reader.detail_card, 1)
+    chat_panel = getattr(reader, "ai_chat_panel", None)
+    if chat_panel is not None:
+        # 본 창 크게 보기처럼 본문 오른쪽에 AI 대화 패널을 붙인다.
+        # _show_ai_chat은 [목록, 본문, 대화] 세 칸 크기를 주므로 맨 앞에
+        # 늘 숨은 빈 칸을 하나 둔다.
+        from PySide6.QtWidgets import QSplitter, QWidget
+        from ui.widgets import configure_horizontal_splitter
+
+        splitter = QSplitter(Qt.Orientation.Horizontal, page)
+        splitter.setObjectName("detachedReaderSplitter")
+        placeholder = QWidget(splitter)
+        placeholder.hide()
+        splitter.addWidget(placeholder)
+        splitter.addWidget(reader.detail_card)
+        splitter.addWidget(chat_panel)
+        chat_panel.hide()
+        configure_horizontal_splitter(splitter)
+        splitter.setCollapsible(1, False)
+        splitter.setCollapsible(2, False)
+        splitter.setStretchFactor(1, 1)
+        page.layout().insertWidget(position, splitter, 1)
+        reader.main_splitter = splitter
+    else:
+        reader.detail_card.setParent(page)
+        page.layout().insertWidget(position, reader.detail_card, 1)
     reader.detail_card.layout().setContentsMargins(8, 8, 8, 8)
     reader.detail_card.show()
     # 검색 화면으로 돌아가는 단추와 중복 본문 탭은 창 바깥 탭이 맡는다.
-    for name in ("restore_view_button", "expand_detail_button", "detail_button",
-                 "document_tab_strip", "close_all_documents_button"):
+    hidden = ["restore_view_button", "detail_button",
+              "document_tab_strip", "close_all_documents_button"]
+    if chat_panel is None:
+        hidden.append("expand_detail_button")
+    for name in hidden:
         widget = getattr(reader, name, None)
         if widget is not None:
             widget.hide()
     reader._reading_mode = True
+    if chat_panel is not None:
+        # 크게 보기 단추 자리가 'AI 에이전트'가 된다(본 창 크게 보기와 같다).
+        reader._set_expand_button_mode("ai")
+        reader.expand_detail_button.show()
     reader.reading_mode_shortcut.setParent(page)
     reader.reading_mode_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
     reader.reading_mode_shortcut.activated.disconnect()

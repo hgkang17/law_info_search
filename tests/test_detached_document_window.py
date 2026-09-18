@@ -253,3 +253,44 @@ def test_detached_law_has_the_api_refresh_button(tmp_path, monkeypatch) -> None:
     assert requested == [(ROW["id"], True)]
     window.close()
     tab.close()
+
+
+def test_detached_law_can_open_the_ai_agent_panel(tmp_path) -> None:
+    """본 창 크게 보기처럼 별도창에서도 'AI 에이전트'로 대화 패널을 연다."""
+    app = QApplication.instance() or QApplication([])
+    tab = _tab(tmp_path)
+    payload = _payload()
+    assert tab.law_cache.save(dict(ROW), payload)
+    tab.resize(1200, 760)
+    tab.show()
+    tab.open_cached_law({"row": dict(ROW), "payload": payload})
+    app.processEvents()
+    tab._detach_document_tab(tab._active_document_key, QPoint(200, 200))
+    app.processEvents()
+    window = tab._detached_document_windows[0]
+    window.resize(1200, 760)
+    app.processEvents()
+    reader = window.current_page().source_reader
+    button = reader.expand_detail_button
+    assert button.isVisible()
+    assert button.text() == "AI\n에이전트"
+    panel = reader.ai_chat_panel
+    assert not panel.isVisible()
+    assert panel.window() is window
+
+    button.click()
+    app.processEvents()
+    assert panel.isVisible()
+    sizes = reader.main_splitter.sizes()
+    assert sizes[1] > 0 and sizes[2] > 0
+    # 패널이 본문 오른쪽에 붙는다.
+    assert panel.mapTo(window, QPoint(0, 0)).x() > reader.detail_card.mapTo(
+        window, QPoint(0, 0)
+    ).x()
+
+    button.click()
+    app.processEvents()
+    assert not panel.isVisible()
+    assert reader.detail_card.isVisible()
+    window.close()
+    tab.close()
