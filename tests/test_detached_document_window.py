@@ -218,3 +218,38 @@ def test_detached_window_star_toggles_the_article_favorite(tmp_path) -> None:
     assert tab.law_cache.is_article_favorite(dict(ROW), article["jo"])
     assert window._favorite_state(article) is True
     window.close()
+
+
+def test_detached_law_has_the_api_refresh_button(tmp_path, monkeypatch) -> None:
+    """본 창처럼 본문 제목 고정 줄 맨 오른쪽에 'API 갱신'이 있고 이 창 본문을 다시 받는다."""
+    from PySide6.QtWidgets import QPushButton
+
+    app = QApplication.instance() or QApplication([])
+    tab = _tab(tmp_path)
+    payload = _payload()
+    assert tab.law_cache.save(dict(ROW), payload)
+    tab.resize(1000, 700)
+    tab.show()
+    tab.open_cached_law({"row": dict(ROW), "payload": payload})
+    app.processEvents()
+    tab._detach_document_tab(tab._active_document_key, QPoint(200, 200))
+    app.processEvents()
+    window = tab._detached_document_windows[0]
+    reader = window.current_page().source_reader
+    button = reader.api_refresh_button
+    assert isinstance(button, QPushButton)
+    assert button.text() == "API\n갱신"
+    assert button.parent() is reader.pinned_headline_bar
+    row_layout = reader.pinned_headline_row
+    assert row_layout.indexOf(button) == row_layout.count() - 1
+    assert button.isEnabled()
+
+    requested = []
+    monkeypatch.setattr(
+        reader, "_request_resource_detail",
+        lambda row, force_api=False: requested.append((row["id"], force_api)),
+    )
+    button.click()
+    assert requested == [(ROW["id"], True)]
+    window.close()
+    tab.close()

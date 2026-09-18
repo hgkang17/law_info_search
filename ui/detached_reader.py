@@ -111,7 +111,94 @@ def attach_reader(page, source, payload):
     bind = getattr(page.window(), "bind_download_tray", None)
     if callable(bind):
         bind(page)
+    install_api_refresh_button(reader)
     sync_reader_state(page)
+
+
+def _refreshable_row(reader):
+    """이 창 본문을 API에서 다시 받을 수 있으면 그 행을, 아니면 None.
+
+    본 창 ``LawSearchWindow._refreshable_open_document``와 같은 규칙이다.
+    """
+    from ui.tabs.resource_search import ResourceSearchTab
+
+    if isinstance(reader, ResourceSearchTab):
+        row = reader._document_tab_row(reader._active_document_key)
+        if not isinstance(row, dict):
+            return None
+        target = str(row.get("target") or "")
+        if target == "law_article":
+            if not isinstance(row.get("source_row"), dict) or not isinstance(
+                row.get("favorite_unit"), dict
+            ):
+                return None
+        elif target not in {"law", "admrul", "ordin"}:
+            return None
+        return dict(row)
+    row = getattr(reader, "_active_detail_row", None)
+    if not isinstance(row, dict) or not row.get("detail_available"):
+        return None
+    return dict(row)
+
+
+def install_api_refresh_button(reader):
+    """본 창과 같은 'API 갱신' 단추를 이 창 본문 머리줄 맨 오른쪽에 단다."""
+    from PySide6.QtWidgets import QPushButton
+    from ui.tabs.resource_search import ResourceSearchTab
+
+    if getattr(reader, "api_refresh_button", None) is not None:
+        return reader.api_refresh_button
+    # AI 조문 본문처럼 본 창에서도 갱신 대상이 아닌 화면에는 달지 않는다.
+    if not isinstance(reader, ResourceSearchTab) and not hasattr(
+        reader, "detail_head_layout"
+    ):
+        return None
+    button = QPushButton("API\n갱신")
+    button.setObjectName("openDocumentApiRefresh")
+    button.setStyleSheet(
+        "QPushButton#openDocumentApiRefresh {font-size:11px;"
+        "line-height:12px; padding:1px 6px;}"
+    )
+    button.setFixedHeight(34)
+    button.setCursor(Qt.CursorShape.PointingHandCursor)
+    button.setToolTip("이 본문을 API에서 다시 받아 화면과 저장본을 갱신합니다.")
+    if isinstance(reader, ResourceSearchTab):
+        reader.set_pinned_api_refresh_button(button)
+    else:
+        button.setParent(reader.detail_card)
+        reader.detail_head_layout.addWidget(button)
+    reader.api_refresh_button = button
+
+    def busy():
+        worker = getattr(reader, "worker", None)
+        return bool(worker is not None and worker.isRunning())
+
+    def sync():
+        button.setEnabled(_refreshable_row(reader) is not None and not busy())
+
+    def refresh():
+        row = _refreshable_row(reader)
+        if row is None or busy():
+            return
+        if isinstance(reader, ResourceSearchTab):
+            if str(row.get("target") or "") == "law_article":
+                reader.open_cached_favorite_article(
+                    {"row": dict(row["source_row"]), "payload": {}},
+                    dict(row["favorite_unit"]),
+                    allow_full_fallback=False, force_api=True,
+                )
+            else:
+                reader._request_resource_detail(row, force_api=True)
+        else:
+            reader._request_detail(row, force_api=True)
+        worker = getattr(reader, "worker", None)
+        if worker is not None and worker.isRunning():
+            worker.finished.connect(sync)
+        sync()
+
+    button.clicked.connect(refresh)
+    sync()
+    return button
 
 
 def sync_reader_state(page):
