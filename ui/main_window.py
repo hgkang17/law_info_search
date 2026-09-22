@@ -3572,18 +3572,19 @@ class LawSearchWindow(QMainWindow):
             QToolButton#hwpExportButton:pressed {
                 background: #e2eaf3;
             }
-            /* 즐겨찾기에서 보여 줄 항목을 고르는 ⋯ 단추. 프로젝트 탭 줄
-               오른쪽 끝에 서고, 눌리면 체크박스 팝업이 열린다. */
+            /* 즐겨찾기의 배치 방향과 표시 항목을 고르는 보기 단추. 프로젝트
+               탭 줄 오른쪽 끝에 서고, 눌리면 설정 팝업이 열린다. */
             QToolButton#favoriteOptionsButton {
-                min-width: 30px;
-                max-width: 30px;
+                min-width: 50px;
+                max-width: 50px;
                 min-height: 30px;
                 max-height: 30px;
                 margin: 0;
-                padding: 0 0 4px 0;
+                padding: 0;
                 background: transparent;
                 color: #40566b;
-                font-size: 17px;
+                font-size: 9pt;
+                font-weight: 500;
                 border: 1px solid transparent;
                 border-radius: 6px;
             }

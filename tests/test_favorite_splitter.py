@@ -4,11 +4,89 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import QApplication, QFrame
 
 from storage.cache import LawDocumentCache
 from ui.tabs.viewed_laws import ViewedLawsTab
+
+
+def test_favorite_layout_can_switch_to_horizontal_and_is_restored(tmp_path) -> None:
+    """세로형ㆍ가로형 선택은 분할 방향을 바꾸고 다음 실행에도 남는다."""
+    app = QApplication.instance() or QApplication([])
+    settings = QSettings(str(tmp_path / "layout.ini"), QSettings.Format.IniFormat)
+    cache = LawDocumentCache(tmp_path / "saved-layout")
+    tab = ViewedLawsTab(cache, favorites_only=True, settings=settings)
+    try:
+        tab.resize(1200, 700)
+        tab.show()
+        app.processEvents()
+
+        assert tab.favorite_layout_mode == tab.FAVORITE_LAYOUT_VERTICAL
+        assert tab.favorite_splitter.orientation() == Qt.Orientation.Horizontal
+        assert tab.union_splitter.orientation() == Qt.Orientation.Horizontal
+        assert tab.favorite_layout_actions[tab.FAVORITE_LAYOUT_VERTICAL].isChecked()
+
+        tab.favorite_layout_actions[tab.FAVORITE_LAYOUT_HORIZONTAL].trigger()
+        app.processEvents()
+
+        assert tab.favorite_layout_mode == tab.FAVORITE_LAYOUT_HORIZONTAL
+        assert tab.favorite_splitter.orientation() == Qt.Orientation.Vertical
+        assert tab.union_splitter.orientation() == Qt.Orientation.Vertical
+        assert tab.favorite_layout_actions[tab.FAVORITE_LAYOUT_HORIZONTAL].isChecked()
+        assert settings.value(tab.FAVORITE_LAYOUT_MODE_KEY) == "horizontal"
+    finally:
+        tab.close()
+
+    restored = ViewedLawsTab(cache, favorites_only=True, settings=settings)
+    try:
+        restored.show()
+        app.processEvents()
+        assert restored.favorite_layout_mode == restored.FAVORITE_LAYOUT_HORIZONTAL
+        assert restored.favorite_splitter.orientation() == Qt.Orientation.Vertical
+        assert restored.favorite_layout_actions[
+            restored.FAVORITE_LAYOUT_HORIZONTAL
+        ].isChecked()
+    finally:
+        restored.close()
+
+
+def test_favorite_layout_keeps_separate_sizes_for_each_direction(tmp_path) -> None:
+    """세로형 폭과 가로형 높이를 서로 덮어쓰지 않는다."""
+    app = QApplication.instance() or QApplication([])
+    settings = QSettings(str(tmp_path / "sizes.ini"), QSettings.Format.IniFormat)
+    tab = ViewedLawsTab(
+        LawDocumentCache(tmp_path / "saved-sizes"),
+        favorites_only=True,
+        settings=settings,
+    )
+    try:
+        tab.resize(1200, 700)
+        tab.show()
+        app.processEvents()
+        splitter = tab.favorite_splitter
+        splitter.setSizes([100, 110, 120, 130, 140, 150])
+        expected_vertical_sizes = splitter.sizes()
+        tab._write_favorite_widths()
+        vertical_sizes = [
+            int(value) for value in settings.value("favorite_card_widths")
+        ]
+
+        tab.favorite_layout_actions[tab.FAVORITE_LAYOUT_HORIZONTAL].trigger()
+        app.processEvents()
+        splitter.setSizes([50, 60, 70, 80, 90, 100])
+        tab._write_favorite_widths()
+        horizontal_sizes = [
+            int(value) for value in settings.value("favorite_card_heights")
+        ]
+
+        assert vertical_sizes == expected_vertical_sizes
+        assert horizontal_sizes == splitter.sizes()
+        assert [
+            int(value) for value in settings.value("favorite_card_widths")
+        ] == vertical_sizes
+    finally:
+        tab.close()
 
 
 def test_favorite_columns_have_no_minimum_width_and_can_collapse(tmp_path) -> None:
@@ -388,6 +466,10 @@ def test_favorites_page_has_no_empty_heading_card(tmp_path) -> None:
         assert favorites.union_check.text() == "즐겨찾기 모아보기"
         assert favorites.union_check.objectName() == "favoriteCategoryCheck"
         assert not favorites.union_check.isChecked()
+        assert favorites.favorite_options_button.text() == "보기"
+        assert favorites.favorite_options_button.accessibleName() == (
+            "즐겨찾기 보기 설정"
+        )
         assert saved.folder_button.size() == saved.clear_cache_button.size()
         assert saved.folder_button.width() == saved.clear_cache_button.width()
         assert saved.folder_button.height() == saved.clear_cache_button.height()

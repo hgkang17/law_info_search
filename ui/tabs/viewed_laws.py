@@ -18,7 +18,16 @@ from storage.paths import (
     SEARCH_RESULT_CACHE_DIR,
 )
 from PySide6.QtCore import QSettings, QSize, QTimer, QUrl, Qt, Signal
-from PySide6.QtGui import QColor, QCursor, QDesktopServices, QIcon, QKeySequence, QShortcut
+from PySide6.QtGui import (
+    QAction,
+    QActionGroup,
+    QColor,
+    QCursor,
+    QDesktopServices,
+    QIcon,
+    QKeySequence,
+    QShortcut,
+)
 from PySide6.QtWidgets import QAbstractItemView, QCheckBox, QWidgetAction, QFrame, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMenu, QMessageBox, QPushButton, QSplitter, QStyle, QTabBar, QTableWidget, QTableWidgetItem, QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 import json
 import re
@@ -121,6 +130,13 @@ class ViewedLawsTab(QWidget):
     FAVORITE_ACTIVE_PROJECT_KEY = "favorite_active_project_v1"
     COMMON_FAVORITES_VIEW_ID = "__common_favorites__"
     FAVORITE_UNION_VIEW_KEY = "favorite_union_view_v1"
+    FAVORITE_LAYOUT_MODE_KEY = "favorite_layout_mode_v1"
+    FAVORITE_LAYOUT_VERTICAL = "vertical"
+    FAVORITE_LAYOUT_HORIZONTAL = "horizontal"
+    FAVORITE_SIZE_KEYS = {
+        FAVORITE_LAYOUT_VERTICAL: "favorite_card_widths",
+        FAVORITE_LAYOUT_HORIZONTAL: "favorite_card_heights",
+    }
     FAVORITE_VISIBLE_CATEGORIES_KEY = "favorite_visible_categories"
     FAVORITE_VISIBLE_CATEGORIES_VERSION_KEY = (
         "favorite_visible_categories_version"
@@ -216,6 +232,8 @@ class ViewedLawsTab(QWidget):
         self._favorite_project_row: QHBoxLayout | None = None
         self.favorite_options_button: QToolButton | None = None
         self.favorite_options_menu: QMenu | None = None
+        self.favorite_layout_actions: dict[str, QAction] = {}
+        self.favorite_layout_mode = self._load_favorite_layout_mode()
         if favorites_only:
             project_row = QHBoxLayout()
             project_row.setSpacing(7)
@@ -330,6 +348,30 @@ class ViewedLawsTab(QWidget):
             self.union_check.toggled.connect(self._union_favorites_toggled)
             self.favorite_options_menu = QMenu(self)
             self.favorite_options_menu.setObjectName("favoriteOptionsMenu")
+            self.favorite_options_menu.addSection("배치 방향")
+            layout_group = QActionGroup(self)
+            layout_group.setExclusive(True)
+            for mode, text in (
+                (self.FAVORITE_LAYOUT_VERTICAL, "세로형"),
+                (self.FAVORITE_LAYOUT_HORIZONTAL, "가로형"),
+            ):
+                action = QAction(text, self)
+                action.setCheckable(True)
+                action.setChecked(mode == self.favorite_layout_mode)
+                action.setToolTip(
+                    "자료 유형을 좌우의 세로 칸으로 봅니다."
+                    if mode == self.FAVORITE_LAYOUT_VERTICAL
+                    else "자료 유형을 위아래의 가로 칸으로 봅니다."
+                )
+                action.triggered.connect(
+                    lambda _checked=False, selected_mode=mode: (
+                        self._set_favorite_layout_mode(selected_mode)
+                    )
+                )
+                layout_group.addAction(action)
+                self.favorite_options_menu.addAction(action)
+                self.favorite_layout_actions[mode] = action
+            self.favorite_options_menu.addSeparator()
             self._add_menu_check(self.favorite_options_menu, self.union_check)
             self.favorite_options_menu.addSeparator()
             visible_categories = self._load_visible_favorite_categories()
@@ -348,15 +390,17 @@ class ViewedLawsTab(QWidget):
                 self._add_menu_check(self.favorite_options_menu, checkbox)
             self.favorite_options_button = QToolButton()
             self.favorite_options_button.setObjectName("favoriteOptionsButton")
-            self.favorite_options_button.setText("⋯")
-            self.favorite_options_button.setFixedSize(32, 32)
+            # 배치 방향 선택이 생긴 만큼 숨은 점 세 개보다 용도를 바로
+            # 읽을 수 있는 글자 단추가 낫다.
+            self.favorite_options_button.setText("보기")
+            self.favorite_options_button.setFixedSize(52, 32)
             self.favorite_options_button.setCursor(
                 Qt.CursorShape.PointingHandCursor
             )
             self.favorite_options_button.setToolTip(
-                "즐겨찾기에서 보여 줄 항목과 모아보기를 고릅니다."
+                "즐겨찾기의 배치 방향, 표시 항목과 모아보기를 고릅니다."
             )
-            self.favorite_options_button.setAccessibleName("즐겨찾기 표시 항목")
+            self.favorite_options_button.setAccessibleName("즐겨찾기 보기 설정")
             self.favorite_options_button.setMenu(self.favorite_options_menu)
             self.favorite_options_button.setPopupMode(
                 QToolButton.ToolButtonPopupMode.InstantPopup
@@ -392,13 +436,16 @@ class ViewedLawsTab(QWidget):
             cards_layout.setContentsMargins(0, 0, 0, 0)
             cards_layout.setSpacing(0)
             # 칸을 0까지 줄여도 그 자리가 손잡이에 남는 분할 화면을 쓴다.
-            splitter = CollapseAwareSplitter(Qt.Orientation.Horizontal)
+            splitter = CollapseAwareSplitter(
+                self._favorite_splitter_orientation()
+            )
             splitter.setChildrenCollapsible(True)
             splitter.setHandleWidth(7)
             for category, label in self.FAVORITE_CATEGORIES:
                 card = QFrame()
                 card.setObjectName("favoriteCategoryCard")
                 card.setMinimumWidth(0)
+                card.setMinimumHeight(0)
                 # 폭을 0까지 줄이면 분할선이 이 이름을 세로 띠로 남긴다.
                 card.setProperty("collapsedTitle", label.replace("\n", " "))
                 card_layout = QVBoxLayout(card)
@@ -545,7 +592,7 @@ class ViewedLawsTab(QWidget):
             union_label = QLabel("즐겨찾기 모아보기")
             union_label.setObjectName("favoriteUnionLabel")
             self.union_splitter = CollapseAwareSplitter(
-                Qt.Orientation.Horizontal
+                self._favorite_splitter_orientation()
             )
             self.union_splitter.setObjectName("favoriteUnionSplitter")
             self.union_splitter.setChildrenCollapsible(True)
@@ -553,6 +600,8 @@ class ViewedLawsTab(QWidget):
             for category, label in self.FAVORITE_CATEGORIES:
                 column = QWidget()
                 column.setObjectName("favoriteUnionColumn")
+                column.setMinimumWidth(0)
+                column.setMinimumHeight(0)
                 column.setProperty(
                     "collapsedTitle", label.replace("\n", " ")
                 )
@@ -994,6 +1043,53 @@ class ViewedLawsTab(QWidget):
             f"{self.FAVORITE_FOLDER_SETTINGS_KEY}/"
             f"{self.active_favorite_project}"
         )
+
+    def _load_favorite_layout_mode(self) -> str:
+        """사용자가 고른 즐겨찾기 카드 모양. 기존 화면은 세로형이다."""
+        if self.settings is None:
+            return self.FAVORITE_LAYOUT_VERTICAL
+        mode = str(
+            self.settings.value(
+                self.FAVORITE_LAYOUT_MODE_KEY,
+                self.FAVORITE_LAYOUT_VERTICAL,
+            )
+            or self.FAVORITE_LAYOUT_VERTICAL
+        )
+        if mode not in self.FAVORITE_SIZE_KEYS:
+            return self.FAVORITE_LAYOUT_VERTICAL
+        return mode
+
+    def _favorite_splitter_orientation(self) -> Qt.Orientation:
+        """세로형 카드는 좌우에, 가로형 카드는 위아래에 놓는다."""
+        if self.favorite_layout_mode == self.FAVORITE_LAYOUT_HORIZONTAL:
+            return Qt.Orientation.Vertical
+        return Qt.Orientation.Horizontal
+
+    def _set_favorite_layout_mode(self, mode: str) -> None:
+        """즐겨찾기 카드를 세로형 또는 가로형으로 바꾸고 선택을 기억한다."""
+        if mode not in self.FAVORITE_SIZE_KEYS:
+            return
+        action = self.favorite_layout_actions.get(mode)
+        if action is not None and not action.isChecked():
+            action.setChecked(True)
+        if mode == self.favorite_layout_mode:
+            return
+
+        # 방향을 바꾸기 전에 지금 방향의 칸 크기를 먼저 보관한다. 같은
+        # 숫자를 폭과 높이에 함께 쓰면 화면을 오갈 때 한쪽 배치가 무너진다.
+        self.flush_favorite_widths()
+        self._write_favorite_widths()
+        self.favorite_layout_mode = mode
+        if self.settings is not None:
+            self.settings.setValue(self.FAVORITE_LAYOUT_MODE_KEY, mode)
+            self.settings.sync()
+
+        orientation = self._favorite_splitter_orientation()
+        if self.favorite_splitter is not None:
+            self.favorite_splitter.setOrientation(orientation)
+        if self.union_splitter is not None:
+            self.union_splitter.setOrientation(orientation)
+        QTimer.singleShot(0, self._restore_favorite_widths)
 
     def _load_visible_favorite_categories(self) -> set[str]:
         """지난에 선택한 즐겨찾기 카드. 저장값이 없으면 모두 보인다."""
@@ -2390,8 +2486,9 @@ class ViewedLawsTab(QWidget):
     def _restore_favorite_widths(self) -> None:
         if self.favorite_splitter is None:
             return
+        size_key = self.FAVORITE_SIZE_KEYS[self.favorite_layout_mode]
         values: object = (
-            self.settings.value("favorite_card_widths", [])
+            self.settings.value(size_key, [])
             if self.settings is not None
             else []
         )
@@ -2463,8 +2560,9 @@ class ViewedLawsTab(QWidget):
     def _write_favorite_widths(self) -> None:
         if self.favorite_splitter is None or self.settings is None:
             return
+        size_key = self.FAVORITE_SIZE_KEYS[self.favorite_layout_mode]
         self.settings.setValue(
-            "favorite_card_widths", self.favorite_splitter.sizes()
+            size_key, self.favorite_splitter.sizes()
         )
         self.settings.sync()
     def _remove_favorite_path(self, path: str) -> None:
